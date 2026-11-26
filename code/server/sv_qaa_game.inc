@@ -175,6 +175,9 @@ byte qaa_scoreboardMailbox[0x24C];
 int qaa_scoreboardMailboxSize;
 bool qaa_scoreboardMailboxFull;
 
+/* The client's front end, for the menu traps (qcommon.h). */
+intptr_t ( *QAA_SV_GameUiTrap )( int trap, const int32_t *args );
+
 static int64_t QAA_GameSyscall( void *, qaa_module *, const qaa_syscall *call ) {
 	const int32_t *a = call->args;	// a[0] is the first argument
 	const auto vec = []( uint32_t p ) { return QAAVec3( p ); };
@@ -405,25 +408,31 @@ static int64_t QAA_GameSyscall( void *, qaa_module *, const qaa_syscall *call ) 
 		return 0;
 	}
 
-	// Xbox Live, achievements and the Scaleform menus. On the PC there is no
-	// Live session: the session-info words read 0, as retail reads without a
-	// session, and property writes have nowhere to go (PC deviation). The
-	// menu calls wait for M6.
+	// The Scaleform menus (M6): the client's front end, where there is one
+	// (docs/UI.md); a dedicated server has no menus and returns retail's
+	// values.
+	case QG_UI_GOTO_STACK_PATH:
+	case QG_UI_INGAME_MENU:
+	case QG_UI_COURSE_RESULTS:
+	case QG_UI_CACHE_SCORES:
+		if ( QAA_SV_GameUiTrap ) {
+			return QAA_SV_GameUiTrap( call->trap, a );
+		}
+		return call->trap == QG_UI_INGAME_MENU ? -1 : 0;
+
+	// Xbox Live and achievements. On the PC there is no Live session: the
+	// session-info words read 0, as retail reads without a session, and
+	// property writes have nowhere to go (PC deviation).
 	case QG_MATCH_END:
 	case QG_AWARD_ACHIEVEMENT:
-	case QG_UI_GOTO_STACK_PATH:
 	case QG_LIVE_SET_PROPERTY:
 	case QG_LIVE_MEMBER_SET1:
 	case QG_LIVE_MEMBER_SET0:
 	case QG_MATCH_ARM_END:
-	case QG_UI_COURSE_RESULTS:
 	case QG_LIVE_WRITE_LEADERBOARD:
-	case QG_UI_CACHE_SCORES:
 	case QG_LIVE_SET_GAMEMODE:
 	case QG_LIVE_SET_PROPERTY_1:
 		return 0;
-	case QG_UI_INGAME_MENU:
-		return -1;
 	case QG_LIVE_SESSION_INFO_4:
 	case QG_LIVE_SESSION_INFO_5:
 	case QG_LIVE_SESSION_INFO_1:

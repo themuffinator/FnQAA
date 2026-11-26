@@ -101,10 +101,17 @@ constexpr uint32_t FS_GETFILELIST = 0x82123080;
 constexpr uint32_t R_GETCOMMANDBUFFER = 0x821408A8;
 constexpr uint32_t SFUI_BACKEND_CTOR = 0x821687F0;
 constexpr uint32_t S_STARTLOCALSOUND = 0x82173418;
+constexpr uint32_t S_STARTBACKGROUNDTRACK = 0x82173470;
 constexpr uint32_t S_REGISTERSOUND = 0x82173DC0;
 constexpr uint32_t LANGUAGE_CODE = 0x82184DA8;
 constexpr uint32_t COUNTRY_CODE = 0x82184E58;
 constexpr uint32_t SYS_MILLISECONDS = 0x82185850;
+constexpr uint32_t IS_FULL_VERSION = 0x821856C8;
+constexpr uint32_t CAN_PLAY = 0x821859B8;
+constexpr uint32_t USER_SIGNED_IN = 0x821869D8;
+constexpr uint32_t SHOW_DEVICE_SELECTOR = 0x8218CA70;
+constexpr uint32_t START_LOAD = 0x8218BCE8;
+constexpr uint32_t START_SAVE = 0x8218BDB0;
 constexpr uint32_t D3D_RELEASE = 0x822021E0;
 constexpr uint32_t D3D_UNLOCK = 0x822023E8;
 constexpr uint32_t D3D_LOCKRECT = 0x82203EA0;
@@ -151,7 +158,7 @@ bool UiCall( uint32_t fn, std::initializer_list<uint64_t> r, uint64_t *r3 = null
 		}
 	}
 	if ( Api().qaa_guest_call_regs( Guest(), fn, rv, nr, fv, nf, r3, f1 ) != QAA_OK ) {
-		Com_Printf( S_COLOR_RED "QAA ui: guest call %08X failed: %s\n", fn, Api().qaa_guest_last_error( Guest() ) );
+		Com_Printf( S_COLOR_RED "QAA ui: guest call %08X failed: %s\n", fn, Api().qaa_guest_last_error( Guest() ) );
 		// the guest call chain, from the faulting frame's back chain (each
 		// frame saves its caller's LR at the caller's stack pointer - 8)
 		const char *error = Api().qaa_guest_last_error( Guest() );
@@ -314,7 +321,7 @@ inline uint32_t R( const qaa_hook_call *c, int k ) {	// r3 + k
 
 void Trace( const qaa_hook_call *c, const char *name ) {
 	if ( qaa_uiTrace && qaa_uiTrace->integer ) {
-		Com_Printf( "ui: %s(%08X, %08X, %08X, %08X) from %08X\n", name, R( c, 0 ), R( c, 1 ), R( c, 2 ), R( c, 3 ),
+		Com_Printf( "ui: %s(%08X, %08X, %08X, %08X) from %08X\n", name, R( c, 0 ), R( c, 1 ), R( c, 2 ), R( c, 3 ),
 			c->return_address );
 	}
 }
@@ -323,7 +330,7 @@ void Trace( const qaa_hook_call *c, const char *name ) {
  * Live, profiles and storage). Logged once. */
 void DefaultHook( void *, qaa_hook_call *c ) {
 	if ( warnedHooks.insert( c->address ).second ) {
-		Com_DPrintf( "QAA ui: unhandled engine call %08X (r3=%08X r4=%08X, from %08X)\n", c->address,
+		Com_DPrintf( "QAA ui: unhandled engine call %08X (r3=%08X r4=%08X, from %08X)\n", c->address,
 			R( c, 0 ), R( c, 1 ), c->return_address );
 	}
 	c->r[0] = 0;
@@ -337,7 +344,7 @@ void DefaultHook( void *, qaa_hook_call *c ) {
 void DefaultImportHook( void *, qaa_hook_call *c ) {
 	const bool xam = ( c->address >> 16 ) != 0;
 	if ( warnedHooks.insert( 0xF0000000u | c->address ).second ) {
-		Com_DPrintf( "QAA ui: unhandled %s import %u (from %08X)\n", xam ? "xam" : "xboxkrnl",
+		Com_DPrintf( "QAA ui: unhandled %s import %u (from %08X)\n", xam ? "xam" : "xboxkrnl",
 			c->address & 0xFFFF, c->return_address );
 	}
 	c->r[0] = xam ? 0 : 0xC0000001u;
@@ -538,6 +545,16 @@ void H_S_StartLocalSound( void *, qaa_hook_call *c ) {
 	}
 }
 
+/* 0x82173470(intro, loop): the background track, as the "playmusic"
+ * fscommand starts it (the menus' music; the files are XMA2 .xma beside
+ * the .wav names, FORMATS.md). */
+void H_S_StartBackgroundTrack( void *, qaa_hook_call *c ) {
+	const std::string intro = GStr( R( c, 0 ) ), loop = GStr( R( c, 1 ) );
+	if ( !intro.empty() || !loop.empty() ) {
+		S_StartBackgroundTrack( intro.c_str(), loop.c_str() );
+	}
+}
+
 /* The two-letter codes QAA builds its localisation paths from (0x82184DA8:
  * XGetLanguage, 0x82184E58: XGetLocale). PC deviation: English and the US,
  * as an Xbox set to English. */
@@ -547,6 +564,190 @@ void H_LanguageCode( void *, qaa_hook_call *c ) {
 
 void H_CountryCode( void *, qaa_hook_call *c ) {
 	GStrcpy( R( c, 0 ), "us", 3 );
+}
+
+/* -- licence and profile ---------------------------------------------------------------- */
+
+/* The per-controller profile records (0x498 bytes each; controller 0's
+ * is published by PublishProfile). */
+namespace profile {
+constexpr uint32_t XUID = 0x82A751A8, FLAGS = 0x82A751B0, SIGNED_IN = 0x82A751B4, GAMERTAG = 0x82A751C0;
+constexpr uint32_t STRIDE = 0x498;
+constexpr int GAMERTAG_SIZE = 16;
+}
+
+/* 0x821856C8: the full-game licence (retail caches XamContentGetLicenseMask
+ * bit 0 at 0x82CD9D6C); the menus' isFullVersion, achievements and saves
+ * ask it. PC deviation: the user's own copy of the package is the full
+ * game, so the licence is always held. */
+void H_IsFullVersion( void *, qaa_hook_call *c ) {
+	c->r[0] = 1;
+}
+
+/* 0x821859B8(controller): may this controller play, i.e. the full licence
+ * or a trial with time left of its hour (records +0x440/+0x448). With the
+ * licence always held this is retail's first branch. */
+void H_CanPlay( void *, qaa_hook_call *c ) {
+	const int32_t controller = static_cast<int32_t>( R( c, 0 ) );
+	c->r[0] = controller >= 0 && controller < 4 ? 1 : 0;
+}
+
+/* 0x821869D8(controller): signed in to a profile that is not a guest
+ * (retail: record +0xC non-zero and flags bit 1 clear). */
+void H_UserSignedIn( void *, qaa_hook_call *c ) {
+	const int32_t controller = static_cast<int32_t>( R( c, 0 ) );
+	if ( controller < 0 || controller >= 4 ) {
+		c->r[0] = 0;
+		return;
+	}
+	const uint32_t at = controller * profile::STRIDE;
+	c->r[0] = QAA_LoadU32( profile::SIGNED_IN + at ) != 0 && !( QAA_LoadU32( profile::FLAGS + at ) & 2 ) ? 1 : 0;
+}
+
+/* 0x8218CA70(controller, reshow): the storage device selector. Retail
+ * opens XShowDeviceSelectorUI with the overlapped at 0x82A76B70, and its
+ * engine-frame poll (0x8218C890) finishes the selection: the device id
+ * goes to 0x82A7DA54[controller] (FgApi.hasChosenStorage reads it) and
+ * the movies get DeviceSelectionComplete "%d %d", or, while 0x82C01C38 is
+ * set, MainDeviceSelectionComplete is invoked. PC deviation: there is one
+ * storage device, the user's home path, so the selector completes at once,
+ * from QAA_UI_Frame as the poll would. */
+namespace storage {
+constexpr uint32_t DEVICE_IDS = 0x82A7DA54;			// per controller
+constexpr uint32_t PENDING = 0x82C01C3C, MAIN_PENDING = 0x82C01C38, CONTROLLER = 0x827EC0A0;
+constexpr uint32_t SAVE_DIRTY = 0x82C01C30;
+constexpr uint32_t PC_DEVICE = 1;
+constexpr uint32_t QUEUE_EVENT = 0x82191098, QUEUE_INVOKE_MAIN = 0x8218E8A8;
+constexpr uint32_t S_COMPLETE = 0x820D13F8, S_D_D = 0x820BAD84;
+constexpr uint32_t S_MAIN_COMPLETE = 0x820D13C4, S_S_S = 0x820BAD3C;
+}
+
+void H_ShowDeviceSelector( void *, qaa_hook_call *c ) {
+	const int32_t controller = static_cast<int32_t>( R( c, 0 ) );
+	if ( QAA_LoadU32( storage::PENDING ) || controller < 0 || controller >= 4 ) {
+		return;
+	}
+	QAA_StoreU32( storage::SAVE_DIRTY, 1 );
+	QAA_StoreU32( storage::DEVICE_IDS + 4 * controller, 0 );
+	QAA_StoreU32( storage::CONTROLLER, static_cast<uint32_t>( controller ) );
+	QAA_StoreU32( storage::PENDING, 1 );
+}
+
+/* The completion half of 0x8218C890, for H_ShowDeviceSelector. The second
+ * value is retail's "the save container opened" (0x8218B1F0 == 0); the
+ * PC's container always opens. */
+void PollDeviceSelection() {
+	if ( !QAA_LoadU32( storage::PENDING ) ) {
+		return;
+	}
+	const uint32_t controller = QAA_LoadU32( storage::CONTROLLER );
+	QAA_StoreU32( storage::PENDING, 0 );
+	QAA_StoreU32( storage::DEVICE_IDS + 4 * controller, storage::PC_DEVICE );
+	QAA_StoreU32( storage::SAVE_DIRTY, 0 );
+	if ( QAA_LoadU32( storage::MAIN_PENDING ) == 1 ) {
+		const uint32_t user = GStrdup( va( "%u", controller ) ), opened = GStrdup( "1" );
+		UiCall( storage::QUEUE_INVOKE_MAIN, { storage::S_MAIN_COMPLETE, storage::S_S_S, user, opened } );
+		GFree( user );
+		GFree( opened );
+	} else {
+		UiCall( storage::QUEUE_EVENT, { storage::S_COMPLETE, storage::S_D_D, controller, 1 } );
+	}
+	QAA_StoreU32( storage::CONTROLLER, 0xFFFFFFFFu );
+	QAA_StoreU32( storage::MAIN_PENDING, 0 );
+}
+
+/* The profile save container. Retail keeps each profile's settings in a
+ * 0x2680-byte block (0x82A80318) in an Xbox save container: "startLoad"
+ * (0x8218BCE8) fires ConfigLoadStarted and opens it, "startSave"
+ * (0x8218BDB0) writes it, and the frame poll's state machine (0x8218C6xx)
+ * reports "<op>Complete" "%d" with the result. PC deviation: the settings
+ * the menus change are cvars the engine keeps in its own config, so the
+ * container operations succeed with nothing to read or write; their
+ * completion is reported from QAA_UI_Frame like the poll's. */
+namespace config {
+constexpr uint32_t SAVE_ENABLED = 0x827EC05C, APPLY_DEFAULTS = 0x82C01C10, APPLY_CONTROLLER = 0x827EC0F4;
+constexpr uint32_t FIRE_EVENT = 0x82190FE8, QUEUE_EVENT = 0x82191098, S_D = 0x820BC7B8;
+constexpr uint32_t S_SAVE_COMPLETE = 0x820D1320;
+enum { NONE, LOAD, SAVE } pending = NONE;
+uint32_t loadStarted, loadComplete;		// guest copies of the built names
+
+uint32_t GuestName( uint32_t &slot, const char *name ) {
+	if ( !slot ) {
+		slot = GStrdup( name );
+	}
+	return slot;
+}
+}
+
+void H_StartLoad( void *, qaa_hook_call * ) {
+	UiCall( config::FIRE_EVENT, { config::GuestName( config::loadStarted, "ConfigLoadStarted" ) } );
+	config::pending = config::LOAD;
+}
+
+/* (apply): returns whether a save began; retail returns its argument when
+ * saving is off. */
+void H_StartSave( void *, qaa_hook_call *c ) {
+	const uint32_t apply = R( c, 0 );
+	if ( !QAA_LoadU32( config::SAVE_ENABLED ) ) {
+		c->r[0] = apply;
+		return;
+	}
+	if ( apply ) {
+		QAA_StoreU32( config::APPLY_DEFAULTS, 1 );
+		const uint32_t live = QAA_LoadU32( addr::PROFILE_PTR );
+		QAA_StoreU32( config::APPLY_CONTROLLER, live ? QAA_LoadU32( live + 0x20 ) : 0 );
+	}
+	config::pending = config::SAVE;
+	c->r[0] = 1;
+}
+
+void PollConfigOperation() {
+	if ( config::pending == config::NONE ) {
+		return;
+	}
+	const uint32_t name = config::pending == config::LOAD
+		? config::GuestName( config::loadComplete, "ConfigLoadComplete" ) : config::S_SAVE_COMPLETE;
+	config::pending = config::NONE;
+	UiCall( config::QUEUE_EVENT, { name, config::S_D, 0 } );
+}
+
+/* Leaving a game. FgApi.exitGame (0x82190D98) only flags the session
+ * (bit 3 at +0x1FC of the session block at *0x82C01C04; bit 4 for Live
+ * games) and signals it; retail's session manager (0x82176370) then ends
+ * it (0x82177AB0): the client disconnects and the server stops, the menus
+ * go back to the main menu's stack (0x821779E0) and the client state is
+ * reset for them (0x821771F0). PC deviation: there are no Xbox Live
+ * sessions, so the flag is polled here and the session end is FnQL's
+ * disconnect; retail's course-results variant of the stack path (a
+ * finished single-player course) is not taken. */
+namespace session {
+constexpr uint32_t FLAGS = 0x1FC, END = 0x08, END_LIVE = 0x10;
+constexpr uint32_t GAME_MODE = 0x82C01C44, MODE_ARENA = 2;
+constexpr uint32_t QUEUE_INVOKE_MAIN = 0x8218E8A8, S_GOTO_STACK_PATH = 0x820D1824, S_S_S = 0x820BAD3C;
+constexpr uint32_t S_ARENA_STACK = 0x820CF744, S_SINGLEPLAYER_STACK = 0x820CF760, S_MAINMENU = 0x820D15C4;
+}
+
+void SyncKeyCatchers();
+
+void PollSessionEnd() {
+	const uint32_t block = QAA_LoadU32( addr::LIVE_STATE_PTR );
+	if ( !block ) {
+		return;
+	}
+	const uint32_t flags = QAA_LoadU32( block + session::FLAGS );
+	if ( !( flags & ( session::END | session::END_LIVE ) ) ) {
+		return;
+	}
+	QAA_StoreU32( block + session::FLAGS, flags & ~( session::END | session::END_LIVE ) );
+	Cbuf_ExecuteText( EXEC_APPEND, "disconnect\n" );
+	const uint32_t stack = QAA_LoadU32( session::GAME_MODE ) == session::MODE_ARENA
+		? session::S_ARENA_STACK : session::S_SINGLEPLAYER_STACK;
+	UiCall( session::QUEUE_INVOKE_MAIN, { session::S_GOTO_STACK_PATH, session::S_S_S, stack, session::S_MAINMENU } );
+	Cvar_Set( "cl_paused", "0" );
+	Key_SetCatcher( Key_GetCatcher() | KEYCATCH_UI );
+	SyncKeyCatchers();
+	Cvar_Set( "ui_messageReady", "1" );
+	Cvar_Set( "team", "" );
 }
 
 /* -- R_GetCommandBuffer --------------------------------------------------------------- */
@@ -637,7 +838,7 @@ bool LoadGImage( qaa_ui::Texture &t, uint32_t img ) {
 	case GIMG_DXT5:
 		return qaa_ui::DecodeDXT( format, src, w, h, t.rgba );
 	default:
-		Com_DPrintf( "QAA ui: GImage format %d not supported\n", format );
+		Com_DPrintf( "QAA ui: GImage format %d not supported\n", format );
 		return false;
 	}
 }
@@ -777,85 +978,34 @@ void H_D3D_LevelDesc( void *, qaa_hook_call *c ) {
 	QAA_StoreS32( desc + 0x1C, QAA_LoadS32( g + d3dtex::OFF_H ) );
 }
 
-/* Uncompressed and run-length TGA, 24 and 32 bits (the bot pictures). */
-bool DecodeTGA( const uint8_t *d, size_t n, qaa_ui::Texture &t ) {
-	if ( n < 18 ) {
-		return false;
-	}
-	const int idLen = d[0], type = d[2];
-	const int w = d[12] | ( d[13] << 8 ), h = d[14] | ( d[15] << 8 );
-	const int bpp = d[16], desc = d[17];
-	if ( ( type != 2 && type != 10 ) || ( bpp != 24 && bpp != 32 ) || w <= 0 || h <= 0 ) {
-		return false;
-	}
-	const int bytes = bpp / 8;
-	size_t at = 18 + idLen;
-	std::vector<uint8_t> px( static_cast<size_t>( w ) * h * 4 );
-	size_t count = static_cast<size_t>( w ) * h;
-	size_t i = 0;
-	auto put = [&]( const uint8_t *s ) {
-		px[i * 4 + 0] = s[2];
-		px[i * 4 + 1] = s[1];
-		px[i * 4 + 2] = s[0];
-		px[i * 4 + 3] = bytes == 4 ? s[3] : 255;
-		i++;
-	};
-	while ( i < count ) {
-		if ( type == 2 ) {
-			if ( at + bytes > n ) {
-				return false;
-			}
-			put( d + at );
-			at += bytes;
-			continue;
-		}
-		if ( at >= n ) {
-			return false;
-		}
-		const int hdr = d[at++];
-		const int run = ( hdr & 0x7F ) + 1;
-		if ( hdr & 0x80 ) {
-			if ( at + bytes > n ) {
-				return false;
-			}
-			for ( int k = 0; k < run && i < count; k++ ) {
-				put( d + at );
-			}
-			at += bytes;
-		} else {
-			for ( int k = 0; k < run && i < count; k++ ) {
-				if ( at + bytes > n ) {
-					return false;
-				}
-				put( d + at );
-				at += bytes;
-			}
-		}
-	}
-	t.width = w;
-	t.height = h;
-	t.rgba.resize( px.size() );
-	const bool topDown = ( desc & 0x20 ) != 0;
-	for ( int y = 0; y < h; y++ ) {
-		const int sy = topDown ? y : h - 1 - y;
-		std::memcpy( &t.rgba[static_cast<size_t>( y ) * w * 4], &px[static_cast<size_t>( sy ) * w * 4], static_cast<size_t>( w ) * 4 );
-	}
-	return true;
-}
-
 /* D3DXCreateTextureFromFileInMemoryEx(device, data, size, w, h, mips, usage,
  * format, pool, filter, mip filter, colour key, info, palette, texture*):
- * the last seven on the stack. */
+ * the last seven on the stack. SFUI's image loader (0x82194CE8) reads the
+ * size from the D3DXIMAGE_INFO (Width, Height, Depth, MipLevels, Format,
+ * ResourceType, ImageFileFormat) when the movie gives none. The files are
+ * DDS (the menus) or TGA (the bot pictures). */
 void H_D3DX_TextureFromMemory( void *, qaa_hook_call *c ) {
 	const uint32_t data = R( c, 1 ), size = R( c, 2 );
-	const uint32_t out = StackArg( c, 6 );
+	const uint32_t info = StackArg( c, 4 ), out = StackArg( c, 6 );
 	qaa_ui::Texture decoded;
-	if ( !data || !size || !DecodeTGA( static_cast<const uint8_t *>( QAA_Ptr( data ) ), size, decoded ) ) {
+	const uint8_t *bytes = data ? static_cast<const uint8_t *>( QAA_Ptr( data ) ) : nullptr;
+	const bool dds = bytes && size >= 4 && !std::memcmp( bytes, "DDS ", 4 );
+	if ( !bytes || !size || !( dds ? qaa_ui::DecodeDDS( bytes, size, decoded ) : qaa_ui::DecodeTGA( bytes, size, decoded ) ) ) {
 		if ( out ) {
 			QAA_StoreU32( out, 0 );
 		}
 		c->r[0] = 0x8876086Cu;
 		return;
+	}
+	if ( info ) {
+		std::memset( QAA_Ptr( info ), 0, 0x1C );
+		QAA_StoreS32( info + 0x00, decoded.width );
+		QAA_StoreS32( info + 0x04, decoded.height );
+		QAA_StoreS32( info + 0x08, 1 );
+		QAA_StoreS32( info + 0x0C, 1 );
+		QAA_StoreU32( info + 0x10, 0x18280186 );			// D3DFMT_A8R8G8B8
+		QAA_StoreU32( info + 0x14, 3 );					// D3DRTYPE_TEXTURE
+		QAA_StoreU32( info + 0x18, dds ? 4 : 2 );		// D3DXIFF_DDS, D3DXIFF_TGA
 	}
 	const uint32_t g = NewD3DTexture( decoded.width, decoded.height );
 	if ( g ) {
@@ -1131,7 +1281,7 @@ void DumpCanvas( const char *name ) {
 		tga[18 + i * 4 + 3] = straight[i * 4 + 3];
 	}
 	FS_WriteFile( name, tga.data(), static_cast<int>( tga.size() ) );
-	Com_Printf( "QAA ui: wrote %s (%dx%d, %d triangles)\n", name, w, h, canvas.Triangles() );
+	Com_Printf( "QAA ui: wrote %s (%dx%d, %d triangles)\n", name, w, h, canvas.Triangles() );
 }
 
 void UI_Dump_f( void ) {
@@ -1498,7 +1648,7 @@ void ExecuteList( uint32_t at, uint32_t end ) {
 			at += 4;
 			break;
 		default:
-			Com_DPrintf( "QAA ui: unknown render command %u\n", cmd );
+			Com_DPrintf( "QAA ui: unknown render command %u\n", cmd );
 			return;
 		}
 	}
@@ -1555,7 +1705,7 @@ void H_UiSyscall( void *, qaa_hook_call *c ) {
 	c->r[0] = 0;
 	switch ( trap ) {
 	case UIT_ERROR:
-		Com_Printf( S_COLOR_RED "QAA ui error: %s\n", str( 1 ).c_str() );
+		Com_Printf( S_COLOR_RED "QAA ui error: %s\n", str( 1 ).c_str() );
 		return;
 	case UIT_PRINT:
 		Com_Printf( "%s", str( 1 ).c_str() );
@@ -1701,7 +1851,7 @@ void H_UiSyscall( void *, qaa_hook_call *c ) {
 	}
 	default:
 		if ( warnedTraps.insert( trap ).second ) {
-			Com_DPrintf( "QAA ui: unhandled ui syscall %d (0x%X) from %08X\n", trap, trap, c->return_address );
+			Com_DPrintf( "QAA ui: unhandled ui syscall %d (0x%X) from %08X\n", trap, trap, c->return_address );
 		}
 		return;
 	}
@@ -1736,10 +1886,17 @@ const HookEntry hookTable[] = {
 	{ hook::R_GETCOMMANDBUFFER, H_R_GetCommandBuffer },
 	{ hook::SFUI_BACKEND_CTOR, H_BackendCtor },
 	{ hook::S_STARTLOCALSOUND, H_S_StartLocalSound },
+	{ hook::S_STARTBACKGROUNDTRACK, H_S_StartBackgroundTrack },
 	{ hook::S_REGISTERSOUND, H_S_RegisterSound },
 	{ hook::LANGUAGE_CODE, H_LanguageCode },
 	{ hook::COUNTRY_CODE, H_CountryCode },
 	{ hook::SYS_MILLISECONDS, H_Sys_Milliseconds },
+	{ hook::IS_FULL_VERSION, H_IsFullVersion },
+	{ hook::CAN_PLAY, H_CanPlay },
+	{ hook::USER_SIGNED_IN, H_UserSignedIn },
+	{ hook::SHOW_DEVICE_SELECTOR, H_ShowDeviceSelector },
+	{ hook::START_LOAD, H_StartLoad },
+	{ hook::START_SAVE, H_StartSave },
 	{ hook::D3D_RELEASE, H_D3D_Release },
 	{ hook::D3D_UNLOCK, H_D3D_Unlock },
 	{ hook::D3D_LOCKRECT, H_D3D_LockRect },
@@ -1856,11 +2013,6 @@ void PublishGlconfig() {
  * signed in to a local (offline) profile named after the player's "name"
  * cvar, as an Xbox with a local profile and no Live connection.
  */
-namespace profile {
-constexpr uint32_t XUID = 0x82A751A8, FLAGS = 0x82A751B0, SIGNED_IN = 0x82A751B4, GAMERTAG = 0x82A751C0;
-constexpr int GAMERTAG_SIZE = 16;
-}
-
 void PublishProfile() {
 	char name[MAX_NAME_LENGTH];
 	Q_strncpyz( name, Cvar_VariableString( "name" ), sizeof( name ) );
@@ -1899,15 +2051,37 @@ void PublishClientState() {
 	}
 	QAA_StoreU32( addr::CLS_STATE, static_cast<uint32_t>( cls.state ) );
 	QAA_StoreS32( addr::CLS_REALTIME, cls.realtime );
-	QAA_StoreU32( addr::CLS_KEYCATCHERS, static_cast<uint32_t>( Key_GetCatcher() ) & 0xF );
+	SyncKeyCatchers();
+}
+
+/* Retail has one cls.keyCatchers, which SFUI's disable/restorePlayerInput
+ * change in place; here the engine's and the guest's copies are merged.
+ * Whichever side changed since the last merge wins, the guest's first: the
+ * update thread may change it between the host's merges (it runs until it
+ * waits for its next frame), and copying the host's value over the guest's
+ * would undo a restorePlayerInput. */
+void SyncKeyCatchers() {
+	static int synced = -1;
+	const int guest = static_cast<int>( QAA_LoadU32( addr::CLS_KEYCATCHERS ) ) & 0xF;
+	const int host = Key_GetCatcher();
+	if ( synced >= 0 && guest != synced ) {
+		if ( ( host & 0xF ) != guest ) {
+			if ( qaa_uiTrace && qaa_uiTrace->integer ) {
+				Com_Printf( "QAA ui: key catchers %X -> %X\n", host, ( host & ~0xF ) | guest );
+			}
+			Key_SetCatcher( ( host & ~0xF ) | guest );
+		}
+		synced = guest;
+		return;
+	}
+	if ( ( host & 0xF ) != guest ) {
+		QAA_StoreU32( addr::CLS_KEYCATCHERS, static_cast<uint32_t>( host ) & 0xF );
+	}
+	synced = host & 0xF;
 }
 
 void CollectKeyCatchers() {
-	const int guest = static_cast<int>( QAA_LoadU32( addr::CLS_KEYCATCHERS ) ) & 0xF;
-	const int host = Key_GetCatcher();
-	if ( ( host & 0xF ) != guest ) {
-		Key_SetCatcher( ( host & ~0xF ) | guest );
-	}
+	SyncKeyCatchers();
 }
 
 /* ==== start-up ================================================================================ */
@@ -1972,7 +2146,7 @@ bool QAA_UI_Init( void ) {
 	}
 	InstallHooks();
 	if ( !RunCrtStartup() ) {
-		Com_Printf( S_COLOR_YELLOW "QAA ui: the C runtime start-up failed\n" );
+		Com_Printf( S_COLOR_YELLOW "QAA ui: the C runtime start-up failed\n" );
 		return false;
 	}
 	PublishGlconfig();
@@ -1984,16 +2158,18 @@ bool QAA_UI_Init( void ) {
 	}
 	sfui = QAA_LoadU32( addr::SFUI_STATE_PTR );
 	if ( !sfui ) {
-		Com_Printf( S_COLOR_YELLOW "QAA ui: SFUI did not start\n" );
+		Com_Printf( S_COLOR_YELLOW "QAA ui: SFUI did not start\n" );
 		return false;
 	}
-	Com_Printf( "QAA ui: Scaleform front end started (SFUI %08X, renderer %08X)\n", sfui, sfuiRenderer );
+	Com_Printf( "QAA ui: Scaleform front end started (SFUI %08X, renderer %08X)\n", sfui, sfuiRenderer );
 	uiReady = true;
+	QAA_SV_GameUiTrap = QAA_UI_GameTrap;
 	return true;
 }
 
 void QAA_UI_Shutdown( void ) {
 	uiReady = false;
+	QAA_SV_GameUiTrap = nullptr;
 }
 
 bool QAA_UI_Active( void ) {
@@ -2070,6 +2246,9 @@ void QAA_UI_Frame( void ) {
 	PublishClientState();
 	PublishProfile();
 	SyncAllMirrors();
+	PollDeviceSelection();
+	PollConfigOperation();
+	PollSessionEnd();
 	struct Collect {
 		~Collect() { CollectKeyCatchers(); }
 	} collect;
@@ -2104,18 +2283,6 @@ void QAA_UI_Frame( void ) {
 		}
 		updatesPending = true;
 	}
-	return;
-	if ( qaa_uiTrace->integer > 1 ) {
-		Com_Printf( "QAA ui: frame (state %d, catchers %d)\n", cls.state, Key_GetCatcher() );
-	}
-	if ( Api().qaa_guest_wait_thread_blocked( Guest(), thread, frame, 2000 ) != QAA_OK ) {
-		Com_DPrintf( "QAA ui: the update thread is busy\n" );
-		return;
-	}
-	Api().qaa_guest_set_event( Guest(), frame );
-	if ( Api().qaa_guest_wait_thread_blocked( Guest(), thread, frame, 5000 ) != QAA_OK ) {
-		Com_Printf( S_COLOR_YELLOW "QAA ui: the update thread did not finish its frame\n" );
-	}
 }
 
 void QAA_UI_Draw( void ) {
@@ -2138,7 +2305,7 @@ void QAA_UI_Draw( void ) {
 	}
 	ExecuteCommands();
 	if ( qaa_uiTrace->integer > 1 ) {
-		Com_Printf( "QAA ui: draw %s, %d triangles, movies %d\n", canvasDrawn ? "recorded" : "empty",
+		Com_Printf( "QAA ui: draw %s, %d triangles, movies %d\n", canvasDrawn ? "recorded" : "empty",
 			canvas.Triangles(), QAA_LoadS32( sfui + 0x21E8 ) );
 		std::string counts;
 		for ( int i = 0; i < 23; i++ ) {
@@ -2180,10 +2347,18 @@ bool QAA_UI_KeyEvent( int key, bool down, unsigned time ) {
 		~Collect() { CollectKeyCatchers(); }
 	} collect;
 	const bool uiHasKeys = ( QAA_LoadU32( addr::CLS_KEYCATCHERS ) & KEYCATCH_UI ) != 0;
+	if ( down && qaa_uiTrace && qaa_uiTrace->integer ) {
+		Com_Printf( "QAA ui: key %d (%d) catchers %X state %d paused %d\n", key, k,
+			QAA_LoadU32( addr::CLS_KEYCATCHERS ), cls.state, Cvar_VariableIntegerValue( "cl_paused" ) );
+	}
 	if ( !uiHasKeys ) {
 		if ( down && ( key == K_ESCAPE || key == K_PAD0_START ) && cls.state == CA_ACTIVE ) {
-			QAA_StoreU32( sfui + addr::SFUI_INGAME_MENU_VALUE, 1 );
-			UiCall( addr::SFUI_SET_GLOBAL_ARRAY, { sfui, 1, addr::STR_UI_VALUES, 4, sfui + addr::SFUI_INGAME_MENU_VALUE } );
+			// retail opens the menu only while the game is not paused, and
+			// takes the key either way
+			if ( !Cvar_VariableIntegerValue( "cl_paused" ) ) {
+				QAA_StoreU32( sfui + addr::SFUI_INGAME_MENU_VALUE, 1 );
+				UiCall( addr::SFUI_SET_GLOBAL_ARRAY, { sfui, 1, addr::STR_UI_VALUES, 4, sfui + addr::SFUI_INGAME_MENU_VALUE } );
+			}
 			return true;
 		}
 		if ( cls.state == CA_ACTIVE ) {
@@ -2334,6 +2509,53 @@ intptr_t QAA_UI_CgameTrap( int trap, const int32_t *a ) {
 		return 0;
 	case 140:	// QAA_CG_UI_140
 		UiCall( cgui::SET_SCORE_DETAIL, { u( 0 ), u( 1 ), u( 2 ) } );
+		return 0;
+	default:
+		return 0;
+	}
+}
+
+/*
+ * The qagame's menu traps, as retail's G_SystemCalls (0x82130438) handles
+ * them: 48 goes to a stack path from the main menu, 49 opens an in-game
+ * menu (0x8218EC70), 65 publishes a single-player course's results as
+ * _global.courseResults and 69 caches the host name and scores, as cgame
+ * 120 does. The qagame shares the front end's guest address space.
+ */
+namespace ggui {
+constexpr uint32_t QUEUE_INVOKE_MAIN = 0x8218E8A8, S_GOTO_STACK_PATH = 0x820D1824, S_S_S = 0x820BAD3C;
+constexpr uint32_t S_MAINMENU = 0x820D15C4;
+constexpr uint32_t OPEN_MENU = 0x8218EC70, CACHE_SCORES = 0x8218E610;
+constexpr uint32_t SFUI_COURSE_RESULTS = 0x3626F8, COURSE_RESULTS_SIZE = 0x4C, S_COURSE_RESULTS = 0x820D2398;
+}
+
+intptr_t QAA_UI_GameTrap( int trap, const int32_t *a ) {
+	if ( !QAA_UI_Active() ) {
+		return trap == 49 ? -1 : 0;
+	}
+	const uint64_t a0 = static_cast<uint32_t>( a[0] ), a1 = static_cast<uint32_t>( a[1] );
+	if ( qaa_uiTrace && qaa_uiTrace->integer > 1 ) {
+		Com_Printf( "QAA ui: game trap %d (%08X %08X)\n", trap, a[0], a[1] );
+	}
+	switch ( trap ) {
+	case 48:	// QAA_G_UI_GOTO_STACK_PATH (path)
+		if ( a0 ) {
+			UiCall( ggui::QUEUE_INVOKE_MAIN, { ggui::S_GOTO_STACK_PATH, ggui::S_S_S, a0, ggui::S_MAINMENU } );
+		}
+		return 0;
+	case 49:	// QAA_G_UI_INGAME_MENU (menu id)
+		UiCall( ggui::OPEN_MENU, { a0 } );
+		return -1;
+	case 65:	// QAA_G_UI_COURSE_RESULTS (0x4C bytes)
+		if ( a0 ) {
+			std::memmove( QAA_Ptr( sfui + ggui::SFUI_COURSE_RESULTS ), QAA_Ptr( static_cast<uint32_t>( a0 ) ),
+				ggui::COURSE_RESULTS_SIZE );
+			UiCall( addr::SFUI_SET_GLOBAL_ARRAY, { sfui, 1, ggui::S_COURSE_RESULTS, ggui::COURSE_RESULTS_SIZE,
+				sfui + ggui::SFUI_COURSE_RESULTS } );
+		}
+		return 0;
+	case 69:	// QAA_G_UI_CACHE_SCORES (host name, scores)
+		UiCall( ggui::CACHE_SCORES, { a0, a1 } );
 		return 0;
 	default:
 		return 0;

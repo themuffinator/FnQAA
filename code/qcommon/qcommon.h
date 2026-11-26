@@ -478,6 +478,9 @@ extern "C" {
 #endif
 int QAA_Host_InGuest( void );
 void QAA_Host_ComErrorHook( int code, const char *message );
+// QAA: the qagame's menu traps (48, 49, 65, 69), which go to the client's Scaleform front end
+// (cl_qaa_ui.cpp sets this; a dedicated server leaves it null). Arguments as the trap's.
+extern intptr_t ( *QAA_SV_GameUiTrap )( int trap, const int32_t *args );
 #ifdef __cplusplus
 }
 #endif

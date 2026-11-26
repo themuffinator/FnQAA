@@ -46,6 +46,10 @@ bool QAA_UI_KeyEvent( int key, bool down, unsigned time );
  * their guest-address arguments. Returns the trap's result. */
 intptr_t QAA_UI_CgameTrap( int trap, const int32_t *args );
 
+/* The qagame's menu traps (docs/ABI.md, game 48, 49, 65, 69); installed as
+ * QAA_SV_GameUiTrap while the front end runs. */
+intptr_t QAA_UI_GameTrap( int trap, const int32_t *args );
+
 /* The engine's own calls into the front end, where retail makes them: at
  * the end of CL_InitCGame, and when the first snapshot makes the client
  * active. */

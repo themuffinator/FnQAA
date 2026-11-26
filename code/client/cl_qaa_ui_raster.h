@@ -163,6 +163,11 @@ void SampleTexture( const TextureFill &t, float u, float v, float out[4] );
 /* Decode DXT1/3/5 (GFx image formats 10, 11, 12) to straight RGBA. */
 bool DecodeDXT( int format, const uint8_t *data, int width, int height, std::vector<uint8_t> &rgba );
 
+/* Image files to straight RGBA: TGA (uncompressed and run-length, 24 and
+ * 32 bits) and DDS (DXT1/2/3/5 and 32-bit ARGB, the top mip level). */
+bool DecodeTGA( const uint8_t *data, size_t size, Texture &t );
+bool DecodeDDS( const uint8_t *data, size_t size, Texture &t );
+
 }
 
 #endif

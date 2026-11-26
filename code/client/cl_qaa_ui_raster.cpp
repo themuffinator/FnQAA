@@ -187,8 +187,8 @@ void Canvas::Resize( int width, int height ) {
 }
 
 void Canvas::Clear() {
-	std::fill( pixels_.begin(), pixels_.end(), 0 );
-	std::fill( stencil_.begin(), stencil_.end(), 0 );
+	std::fill( pixels_.begin(), pixels_.end(), uint8_t( 0 ) );
+	std::fill( stencil_.begin(), stencil_.end(), uint8_t( 0 ) );
 	blend_.clear();
 	stencilLevel_ = 0;
 	maskState_ = MASK_OFF;
@@ -238,7 +238,7 @@ void Canvas::PopBlend() {
 
 void Canvas::BeginSubmitMask( int mode ) {
 	if ( mode == 0 ) {
-		std::fill( stencil_.begin(), stencil_.end(), 0 );
+		std::fill( stencil_.begin(), stencil_.end(), uint8_t( 0 ) );
 		stencilLevel_ = 0;
 	}
 	maskState_ = mode == 2 ? MASK_SUBMIT_DECR : MASK_SUBMIT_INCR;
@@ -532,6 +532,136 @@ void Canvas::DrawBitmaps( const BitmapQuad *quads, int count, const Matrix &bm, 
 		Raster( q[0], q[1], q[2], fill, true );
 		Raster( q[0], q[2], q[3], fill, true );
 	}
+}
+
+
+/* ---- image files -------------------------------------------------------------- */
+
+/* Uncompressed and run-length TGA, 24 and 32 bits (the bot pictures). */
+bool DecodeTGA( const uint8_t *d, size_t n, qaa_ui::Texture &t ) {
+	if ( n < 18 ) {
+		return false;
+	}
+	const int idLen = d[0], type = d[2];
+	const int w = d[12] | ( d[13] << 8 ), h = d[14] | ( d[15] << 8 );
+	const int bpp = d[16], desc = d[17];
+	if ( ( type != 2 && type != 10 ) || ( bpp != 24 && bpp != 32 ) || w <= 0 || h <= 0 ) {
+		return false;
+	}
+	const int bytes = bpp / 8;
+	size_t at = 18 + idLen;
+	std::vector<uint8_t> px( static_cast<size_t>( w ) * h * 4 );
+	size_t count = static_cast<size_t>( w ) * h;
+	size_t i = 0;
+	auto put = [&]( const uint8_t *s ) {
+		px[i * 4 + 0] = s[2];
+		px[i * 4 + 1] = s[1];
+		px[i * 4 + 2] = s[0];
+		px[i * 4 + 3] = bytes == 4 ? s[3] : 255;
+		i++;
+	};
+	while ( i < count ) {
+		if ( type == 2 ) {
+			if ( at + bytes > n ) {
+				return false;
+			}
+			put( d + at );
+			at += bytes;
+			continue;
+		}
+		if ( at >= n ) {
+			return false;
+		}
+		const int hdr = d[at++];
+		const int run = ( hdr & 0x7F ) + 1;
+		if ( hdr & 0x80 ) {
+			if ( at + bytes > n ) {
+				return false;
+			}
+			for ( int k = 0; k < run && i < count; k++ ) {
+				put( d + at );
+			}
+			at += bytes;
+		} else {
+			for ( int k = 0; k < run && i < count; k++ ) {
+				if ( at + bytes > n ) {
+					return false;
+				}
+				put( d + at );
+				at += bytes;
+			}
+		}
+	}
+	t.width = w;
+	t.height = h;
+	t.rgba.resize( px.size() );
+	const bool topDown = ( desc & 0x20 ) != 0;
+	for ( int y = 0; y < h; y++ ) {
+		const int sy = topDown ? y : h - 1 - y;
+		std::memcpy( &t.rgba[static_cast<size_t>( y ) * w * 4], &px[static_cast<size_t>( sy ) * w * 4], static_cast<size_t>( w ) * 4 );
+	}
+	return true;
+}
+
+/* The DDS files QAA's menus load (ui/*.dds: the title and menu art, level
+ * shots, character portraits): standard little-endian DirectDraw Surfaces,
+ * DXT1, DXT2, DXT3 and DXT5, or uncompressed 32-bit ARGB (docs/FORMATS.md).
+ * The top mip level, to straight RGBA; DXT2 is DXT3 with premultiplied
+ * colour, taken back to straight. */
+bool DecodeDDS( const uint8_t *d, size_t n, qaa_ui::Texture &t ) {
+	auto u32 = [d]( size_t at ) {
+		return static_cast<uint32_t>( d[at] | ( d[at + 1] << 8 ) | ( d[at + 2] << 16 ) | ( d[at + 3] << 24 ) );
+	};
+	if ( n < 128 || u32( 0 ) != 0x20534444u || u32( 4 ) != 124 ) {
+		return false;
+	}
+	const int h = static_cast<int>( u32( 12 ) ), w = static_cast<int>( u32( 16 ) );
+	if ( w <= 0 || h <= 0 || w > 8192 || h > 8192 ) {
+		return false;
+	}
+	const uint32_t pfFlags = u32( 80 ), fourcc = u32( 84 ), bits = u32( 88 );
+	const uint8_t *px = d + 128;
+	const size_t avail = n - 128;
+	t.width = w;
+	t.height = h;
+	t.alphaOnly = false;
+	if ( pfFlags & 0x4 ) {	// DDPF_FOURCC
+		int format;
+		switch ( fourcc ) {
+		case 0x31545844u: format = 10; break;				// DXT1
+		case 0x32545844u: case 0x33545844u: format = 11; break;	// DXT2, DXT3
+		case 0x35545844u: format = 12; break;				// DXT5
+		default: return false;
+		}
+		const size_t need = static_cast<size_t>( ( w + 3 ) / 4 ) * ( ( h + 3 ) / 4 ) * ( format == 10 ? 8 : 16 );
+		if ( avail < need || !DecodeDXT( format, px, w, h, t.rgba ) ) {
+			return false;
+		}
+		if ( fourcc == 0x32545844u ) {
+			for ( size_t i = 0; i < t.rgba.size(); i += 4 ) {
+				const int a = t.rgba[i + 3];
+				for ( int k = 0; k < 3; k++ ) {
+					t.rgba[i + k] = static_cast<uint8_t>( a ? std::min( 255, t.rgba[i + k] * 255 / a ) : 0 );
+				}
+			}
+		}
+		return true;
+	}
+	if ( bits != 32 || u32( 92 ) != 0x00FF0000u || u32( 96 ) != 0x0000FF00u || u32( 100 ) != 0x000000FFu ) {
+		return false;
+	}
+	if ( avail < static_cast<size_t>( w ) * h * 4 ) {
+		return false;
+	}
+	const bool alpha = ( pfFlags & 0x1 ) && u32( 104 ) == 0xFF000000u;
+	t.rgba.resize( static_cast<size_t>( w ) * h * 4 );
+	for ( size_t i = 0; i < t.rgba.size(); i += 4 ) {	// B, G, R, A in memory
+		t.rgba[i + 0] = px[i + 2];
+		t.rgba[i + 1] = px[i + 1];
+		t.rgba[i + 2] = px[i + 0];
+		t.rgba[i + 3] = alpha ? px[i + 3] : 255;
+	}
+	return true;
 }
 
 }

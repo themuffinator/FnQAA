@@ -126,16 +126,29 @@ sounds and music are XMA2 (FORMATS.md), decoded by `code/qaa/qaa_xma2.c`
 (ported from FFmpeg) through `snd_codec_xma.cpp`, with retail's `.xma`
 before `.wav` lookup; a headless run on q3dm6 (OpenAL Soft's wave-file
 backend, no audio device) plays the map's music and the cgame's weapon,
-item and player sounds, looping sounds included. Open: the HUD is
-Scaleform (`ui/hud.gfx`), so it arrives with M6; the
+item and player sounds, looping sounds included. The HUD is Scaleform
+(`ui/hud.gfx`) and runs with M6. Open: the
 DrawStretchPic y-flip QAA's engine applies is to be checked once 2D draws;
 `S_AddRealLoopingSound` stands in for QAA's own looping-sound call. PC
 deviation: the cgame's model-loading thread is off
 (`cg_asyncModelLoading 0`), because FnQL's renderer is single-threaded.
 
-**M6 Menus.** QAA's Scaleform front end. Preferred path: recompile the
-SFUI and GFx player code from `default.xex` with the same pipeline and give
-its renderer interface an FnQL back end, so the menus run their own code.
+**M6 Menus** (in progress). QAA's Scaleform front end
+([UI.md](UI.md)). SFUI and the GFx player are recompiled from
+`default.xex` as a subset module (`qaa_ui`, [RECOMP.md](RECOMP.md#subset-modules)):
+the movies run their own ActionScript and SFUI its own C++, the engine
+functions it calls are host hooks over FnQL, and its renderer's command
+lists are replayed by a software rasteriser that follows the retail
+shaders. Done, headless: the start-up and title screens, sign-in, the main
+menu, Multiplayer and Practice menus with their art, the HUD, the FFA
+scoreboard, and the in-game menu (pause, resume, exit to the menus). The
+cgame's UI traps 116-140 and the game's 48, 49, 65 and 69 feed it as
+retail's engine does. PC deviations: the full-game licence, one signed-in
+profile, one storage device, profile settings kept as cvars, and `exitGame`
+ending the game through FnQL's `disconnect` (UI.md lists them). Open:
+Xbox Live (sessions, leaderboards, gamer cards), profile saves (M7), the
+map name when a map is started from the console, and a GPU back end in
+place of the rasteriser.
 
 **M7 Platform.** Controller layout as on the Xbox plus mouse and keyboard,
 audio, profile and settings saves, local achievements, display options.

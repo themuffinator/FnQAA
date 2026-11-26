@@ -162,6 +162,7 @@ stack pointer, using the prologue length in `.pdata`.
 | `0001-xex-map-full-basic-compressed-image` | allocate the whole image for basic compression; do not map section headers past the image |
 | `0002-recompiler-instructions-switch-fallthrough-traps` | see below |
 | `0003-recompiler-seh-resume-sites` | `[[seh_site]]` config entries: after such a call, emit a `PPC_SEH_RESUME(site)` check that returns from the function (1) or jumps to the given `__except` label (2) |
+| `0004-recompiler-addc-stfdu-vpkswss` | `addc`, `stfdu`, `vpkswss` and `vpkswss128`, which `default.xex`'s GFx code uses ([subset modules](#subset-modules)) |
 
 0002:
 
@@ -194,6 +195,41 @@ one C function. Here the analysis splits code at references and
 fall-through calls continue in the next piece, so a register live across a
 split would be lost. Exception unwinding also restores registers into the
 context. Both need every register in `PPCContext`.
+
+## Subset modules
+
+The front end (`ui`, [UI.md](UI.md)) is not a module of its own on the
+console: it is part of `default.xex`, the engine. `build.py` recompiles the
+whole image into `ppc_full/` (XenonRecomp is given every function, so jump
+tables and references resolve) and then keeps a subset, configured by
+`data/recomp/ui.json`:
+
+- **roots**: address ranges whose functions are wanted (SFUI and its
+  renderer);
+- **libraries**: ranges that are followed when reached (GFx, zlib, the CRT,
+  the XAM and XGraphics helpers) but not wanted for their own sake;
+- **root_tables**: data ranges whose code pointers are roots (the CRT
+  initializer table);
+- **recompile**: single functions outside those ranges to keep anyway (the
+  CRT start-up, small helpers GFx shares with the engine);
+- **switches**: jump tables the analysis cannot bound by itself
+  (`decode_switch_override` in `analyse.py`; zlib's `inflate` checks its
+  state at the bottom of its loop).
+
+`tools/recomp/select_funcs.py` takes the closure of the roots through `bl`,
+`b` and `bc` targets, `lis`/`addi` code references and the code pointers in
+data tables (up to the next label, or 1024 words). Functions in a root or
+library range, or listed in `recompile`, are kept. Every other function
+the kept code reaches becomes a **hook**. `tools/recomp/subset.py` filters
+the generated `ppc_recomp.*.cpp` files and the function mapping down to
+the kept functions. `glue.py` emits each hook as
+`PPC_FUNC(sub_X) { qaa_module_indirect_miss(ctx, base, 0xX); }`, so a
+call reaches the host's hook for that address (below). It sets the entry
+point to 0, since the engine's own `main` must not run; the host starts
+the CRT itself. XAM imports are named from the kernel's `xam_table.inc`.
+
+**observed** The ui module keeps about 6,350 of the image's 17,558
+functions, and about 80 engine functions are hooks.
 
 ## The guest runtime
 
@@ -346,6 +382,39 @@ guest call by name.
   their code. `RtlRaiseException` dispatches the exception (next section).
 
 Set `QAA_TRACE_KERNEL=1` to log every kernel call.
+
+The front end imports far more than the game modules, so the kernel
+also has:
+
+- **Kernel variables**: `ExEventObjectType`; a `KeTimeStampBundle` that
+  is kept current on every kernel call, guest call and hook; and
+  `XboxKrnlVersion`. An unknown variable gets a zeroed block.
+- **Unimplemented imports**: these go to the host's import hooks. Without
+  one, a kernel function returns `STATUS_UNSUCCESSFUL` and a XAM function
+  returns 0, so that, for example, `XexLoadImage` does not appear to
+  succeed.
+- **Large pages**: an `MEM_LARGE_PAGES` allocation commits whole 64 KiB
+  pages, and decommitting leaves them committed (**observed**: otherwise
+  the CRT heap faults at 0x41501002 during the front end's start-up).
+
+### Host hooks and lockstep threads
+
+For subset modules ([above](#subset-modules)), `qaa_guest_set_hook` gives a
+non-recompiled guest address a host implementation. The handler gets a
+`qaa_hook_call` with the address, the call site, the stack pointer,
+r3..r10 and f1..f13, and writes its result to r3 (`r[0]`) or f1 (`f[0]`). A
+call to an address that has no hook goes to the default hook, if one is set.
+`qaa_guest_set_import_hook` does the same for imports
+(`library << 16 | ordinal`). Handlers may call into the guest again.
+`qaa_guest_call_regs` calls a guest function with up to eight integer and
+13 float arguments and returns r3 and f1.
+
+A guest thread can be run in lockstep with the engine.
+`qaa_guest_step_thread(thread, event)` signals an event the thread waits on,
+then blocks until the thread waits on it again (or exits).
+`qaa_guest_wait_thread_blocked` waits for that state without signalling.
+The front end's update thread advances one frame per step this way
+([UI.md](UI.md#frames-input-and-events)).
 
 ### Exceptions
 

@@ -1043,6 +1043,14 @@ netchan_codec_tests = executable('openqaa_netchan_codec_tests',
 )
 test('openqaa_netchan_codec', netchan_codec_tests)
 
+# QAA: the Scaleform front end's rasteriser and image decoders (M6)
+qaa_ui_raster_tests = executable('openqaa_qaa_ui_raster_tests',
+  ['tests/qaa_ui_raster_tests.cpp', 'code/client/cl_qaa_ui_raster.cpp'],
+  include_directories: include_directories('code/client'),
+  cpp_args: common_cpp_args,
+)
+test('openqaa_qaa_ui_raster', qaa_ui_raster_tests)
+
 ql_font_text_tests = executable('openqaa_ql_font_text_tests',
   'tests/ql_font_text_tests.cpp',
   cpp_args: common_cpp_args,

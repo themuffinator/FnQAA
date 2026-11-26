@@ -4,16 +4,19 @@ Run **Quake Arena Arcade** (Xbox Live Arcade, 2010) natively on the PC, from
 your own unmodified copy of the game.
 
 openQAA uses the [FnQL](https://github.com/themuffinator/FnQL) engine. QAA's
-own game code, its `qagameXe.dll` and `cgameXe.dll` modules, is statically
-recompiled from your package into native code on your machine. No game data
+own game code, its `qagameXe.dll` and `cgameXe.dll` modules, and its
+Scaleform front end in `default.xex` are statically recompiled from your
+package into native code on your machine. No game data
 or game code is included in this repository.
 
-> **Status: M4 and M5 under way.** The engine mounts your XBLA package in
+> **Status: M4 to M6 under way.** The engine mounts your XBLA package in
 > place and runs Quake Arena Arcade's own game code, recompiled from your
 > package: a local game on `q3dm6` plays and renders, headless, and bots
 > play in it, with QAA's own sounds and music (XMA2, decoded on the PC).
-> The Scaleform HUD and menus (M6) are still to come, so the game is not
-> yet playable as on the Xbox. See [the plan](docs/PLAN.md).
+> QAA's own Scaleform menus, HUD and scoreboards run too (M6), from the
+> title screen through the in-game menu, drawn by a software back end.
+> Xbox Live features and profile saves are not there yet. See
+> [the plan](docs/PLAN.md).
 
 ## Build
 
@@ -65,11 +68,13 @@ or home folder override the package. For automated runs use
 python tools/recomp/build.py --package <package>
 ```
 
-This decodes `qagameXe.dll` and `cgameXe.dll` from your package, recompiles
-them with a patched [XenonRecomp](https://github.com/hedge-dev/XenonRecomp)
-and builds native libraries under `build/recomp/` (never committed). The
-engine finds them there (or set `qaa_modulePath`) and runs them in place of
-a game module; `+set qaa_game 0` turns that off.
+This decodes `qagameXe.dll`, `cgameXe.dll` and `default.xex` from your
+package, recompiles the two game modules and the front end (SFUI and GFx in
+`default.xex`) with a patched
+[XenonRecomp](https://github.com/hedge-dev/XenonRecomp) and builds native
+libraries under `build/recomp/` (never committed). The engine finds them
+there (or set `qaa_modulePath`) and runs them in place of a game module and
+the ui module; `+set qaa_game 0` and `+set qaa_ui 0` turn that off.
 [docs/RECOMP.md](docs/RECOMP.md) has the requirements, the tests and the
 guest runtime's design.
 
@@ -97,6 +102,7 @@ python tools/bpk.py ref/extract/baseq3/pak0.bpk extract -n ref/pak0.names -o ref
 - [docs/FORMATS.md](docs/FORMATS.md): package and file format facts
 - [docs/ABI.md](docs/ABI.md): the engine/game-module interface
 - [docs/RECOMP.md](docs/RECOMP.md): the recompiler pipeline and guest runtime
+- [docs/UI.md](docs/UI.md): the Scaleform front end
 - [BUILD.md](BUILD.md): building and testing
 - [CREDITS.md](CREDITS.md): the engine's lineage and the imported FnQL commit
 - [AGENTS.md](AGENTS.md): rules for contributors and AI agents

@@ -92,6 +92,9 @@ are headless anyway.
   boots both binaries from it (QAA's own `default.cfg`) and reads the first
   pak0.bpk record by hash.
   Without it that check is skipped. No retail data is ever written.
+- `openqaa_qaa_ui_raster`: the Scaleform front end's rasteriser (coverage,
+  colour transforms, blending, masks, texture and glyph fills) and its DXT,
+  DDS and TGA decoders, on synthetic data ([docs/UI.md](docs/UI.md)).
 - The rest are FnQL's engine unit tests. `openqaa_audio_loopback` skips
   when the OpenAL driver lacks `ALC_SOFT_loopback`.
 

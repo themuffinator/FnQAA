@@ -308,14 +308,14 @@ QAA-only cgame traps:
 | 116 | QAA_CG_UI_POSTGAME_PLAYER | ptr (0x48 bytes) | One player's record for the post-game menus, plus score per minute; called at shutdown |
 | 117 | QAA_CG_UI_117 | 4 ptrs | Bulk copy (16 × 0x48 and 16 × 0x6B8 bytes) to the menus; unused |
 | 118 | QAA_CG_UI_WAIT_BEGIN | | "Loading..." overlay; unused |
-| 119 | QAA_CG_UI_HUD_DATA | ptr (0x108 bytes) | `_global.hudData`; unused |
+| 119 | QAA_CG_UI_HUD_DATA | ptr (0x108 bytes) | `_global.hudData`, every frame the HUD draws (**observed**) |
 | 120 | QAA_CG_UI_CACHE_SCORES | hostName, scores | As game 69 |
 | 121 | QAA_CG_UI_SCOREBOARD | int, ptr, int, ptr | Scoreboard blocks (0x6B80 and 0x480 bytes) to the menus |
 | 122 | QAA_CG_UI_EVENT | name | Fires a menu event (`on<name>`) |
 | 123, 124, 129, 131, 135 | QAA_CG_UI_* | various | Fixed menu events: `ItemPickup`, `Obituary`, `FollowingPlayer`, `PlayerVoiceInfo`, `Reward` |
 | 126, 127, 128 | QAA_CG_UI_EVENT_S/SS/SSDD | name, strings | Menu event with formatted arguments (e.g. `CenterPrint "$fight"`) |
 | 125, 130 | QAA_CG_UI_KILLER_STATS / TOURNAMENT | strings | `_global.statsKiller*`, `_global.tournament*` |
-| 132 | QAA_CG_UI_SET_VALUE | index, value | `_global.uiValues[index]`; unused |
+| 132 | QAA_CG_UI_SET_VALUE | index, value | `_global.uiValues[index]`; (0, 1) opens the in-game menu while `sys_titleFocused` < 1 (**observed**) |
 | 133, 134 | QAA_CG_LIVE_MEMBER_TEST / STATE | member → int | Session-member predicates (134: 3 = the active local user, else 2/1/0 from two more predicates) shown in scoreboard columns 6 and 8 |
 | 136, 137 | QAA_CG_R_8C / R_90 | | QAA renderer entries re+0x8C/+0x90; unused |
 | 138, 139 | QAA_CG_LIVE_SESSION_INFO_2 / 0 | → int | As game 50; unused |
@@ -323,9 +323,11 @@ QAA-only cgame traps:
 | 141 | QAA_CG_GET_SCOREBOARD | buffer → int | Takes the 0x240-byte scoreboard from game 72's mailbox (or a Live peer packet); 1 if new |
 | 142 | QAA_CG_R_RENDER_54 | ptr | Renderer entry re+0x54: queues render command 9 |
 
-"Unused" means the cgame has no syscall site for it (**observed**). The UI
-traps feed QAA's Scaleform menus (M6); the Live traps can be stubbed on the PC
-as documented PC deviations.
+"Unused" means the cgame has no syscall site for it (**observed**); 119 and
+132 do have sites (the cgame reaches them through a function pointer). The UI
+traps feed QAA's Scaleform menus: the client hands them to its front end, game
+48, 49, 65 and 69 as well ([UI.md](UI.md)). The Live traps can be stubbed on
+the PC as documented PC deviations.
 
 **Coverage.** Every number the dispatchers handle has an entry: 218 game, 135
 cgame. Shared traps are mapped to their Quake III/FnQL name with engine
