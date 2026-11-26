@@ -76,6 +76,11 @@ entry named, or listed as unnamed.
 **M2 Engine.** Import FnQL (engine only) and rebrand it. Mount the STFS
 package and pak0.bpk natively, so no extraction step is needed. Gate: a
 headless `devmap` loads a QAA map in FnQL's renderer and takes a screenshot.
+Status: in progress. FnQL 57f081f is imported engine-only as `openqaa` and
+`openqaa-ded`, without Steam or the WebUI; the package and pak0.bpk mount in
+place (`fs_qaaPackage`) and records read by raw hash; the client and server
+start and quit headless. The `devmap` gate waits on the name hash (M1), which
+`QAA_BpkNameHash` (`code/qaa/qaa_bpk_hash.c`) holds as a placeholder.
 
 **M3 Recompiler pipeline.** XEX decode in the build; recompile qagame and
 cgame; the guest runtime and kernel HLE; call `dllEntry` and `vmMain`.
