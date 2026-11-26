@@ -230,7 +230,11 @@ void R_ColorShiftLightingBytes( const byte in[4], byte out[4], qboolean hasAlpha
 }
 
 
-#define LIGHTMAP_SIZE 128
+// QAA: the lightmap page size is per map. Quake III's maps store 128x128
+// pages; Quake Arena Arcade's store 512x512 atlases addressed by vertex UVs
+// alone (R_DetectLightmapSize).
+static int lightmapSize = 128;
+#define LIGHTMAP_SIZE lightmapSize
 #define LIGHTMAP_BORDER 2
 #define LIGHTMAP_LEN (LIGHTMAP_SIZE + LIGHTMAP_BORDER*2)
 
@@ -503,9 +507,8 @@ static void R_LoadMergedLightmaps( const lump_t *l, byte *image )
 R_LoadLightmaps
 ===============
 */
-static void R_LoadLightmaps( const lump_t *l ) {
+static void R_LoadLightmapsInto( const lump_t *l, byte *image ) {
 	const byte	*buf;
-	byte		image[LIGHTMAP_LEN*LIGHTMAP_LEN*4];
 	int			i, numLightmaps;
 	float		maxIntensity = 0;
 
@@ -540,7 +543,7 @@ static void R_LoadLightmaps( const lump_t *l ) {
 		// check for low texture sizes
 		if ( glConfig.maxTextureSize >= LIGHTMAP_LEN * 2 ) {
 			tr.mergeLightmaps = qtrue;
-			R_LoadMergedLightmaps( l, image ); // reuse stack space
+			R_LoadMergedLightmaps( l, image ); // reuse the buffer
 			return;
 		}
 	}
@@ -564,6 +567,66 @@ static void R_LoadLightmaps( const lump_t *l ) {
 	if ( r_lightmap->integer == 2 ) {
 		ri.Printf( PRINT_ALL, "Brightest lightmap value: %d\n", (int)( maxIntensity * 255.0f ) );
 	}
+}
+
+/*
+===============
+R_DetectLightmapSize
+
+QAA: Quake Arena Arcade's maps (BSP 47) store their lightmaps as 512x512
+atlases: every lump is a whole number of them, the surfaces reference fewer
+pages than the lump holds as 128x128 pages, and their lightmap rectangles
+are zero (the vertex UVs address the atlas). Pick the largest square page
+size that fits all of that; Quake III and Quake Live maps stay at 128.
+===============
+*/
+static int R_DetectLightmapSize( const lump_t *lightmaps, const lump_t *surfaces ) {
+	const dsurface_t *in = (const dsurface_t *)( fileBase + surfaces->fileofs );
+	const int count = surfaces->filelen / (int)sizeof( *in );
+	int maxIndex = -1;
+	int size, i;
+
+	if ( surfaces->filelen % (int)sizeof( *in ) ) {
+		return 128;
+	}
+	for ( i = 0; i < count; i++ ) {
+		const int lightmapNum = LittleLong( in[i].lightmapNum );
+		if ( lightmapNum < 0 ) {
+			continue;
+		}
+		if ( LittleLong( in[i].lightmapWidth ) != 0 || LittleLong( in[i].lightmapHeight ) != 0 ) {
+			return 128;	// rectangles in 128x128 pages: Quake III's layout
+		}
+		if ( lightmapNum > maxIndex ) {
+			maxIndex = lightmapNum;
+		}
+	}
+	for ( size = 2048; size > 128; size >>= 1 ) {
+		const int page = size * size * 3;
+		if ( lightmaps->filelen >= page && lightmaps->filelen % page == 0 && maxIndex < lightmaps->filelen / page ) {
+			return size;
+		}
+	}
+	return 128;
+}
+
+
+/*
+===============
+R_LoadLightmaps
+===============
+*/
+static void R_LoadLightmaps( const lump_t *l, const lump_t *surfaces ) {
+	byte *image;
+
+	lightmapSize = R_DetectLightmapSize( l, surfaces );	// QAA
+	if ( lightmapSize != 128 ) {
+		ri.Printf( PRINT_DEVELOPER, "lightmaps: %ix%i pages\n", lightmapSize, lightmapSize );
+	}
+	// up to 2052x2052 RGBA: too big for the stack it used to live on
+	image = ri.Malloc( LIGHTMAP_LEN * LIGHTMAP_LEN * 4 );
+	R_LoadLightmapsInto( l, image );
+	ri.Free( image );
 }
 
 
@@ -3924,7 +3987,7 @@ void RE_LoadWorldMap( const char *name ) {
 	}
 
 	// load into heap
-	R_LoadLightmaps( &header->lumps[LUMP_LIGHTMAPS] );
+	R_LoadLightmaps( &header->lumps[LUMP_LIGHTMAPS], &header->lumps[LUMP_SURFACES] );	// QAA: the surfaces give the page size
 	R_PreLoadFogs( &header->lumps[LUMP_FOGS] );
 	R_LoadShaders( &header->lumps[LUMP_SHADERS] );
 	R_LoadPlanes( &header->lumps[LUMP_PLANES] );

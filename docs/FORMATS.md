@@ -100,6 +100,15 @@ ObReferenceObjectByHandle, RtlTryEnterCriticalSection.
   7 WAV, and the six localisation tables, six font movies, four font maps and
   four controller configs whose names come from format strings such as
   `%s%s/fontmap_%s.txt` with arguments not yet traced.
+- **verified** QAA's maps (BSP 47) store lightmaps as **512x512 RGB
+  atlases**, not Quake III's 128x128 pages: in all 45 maps the lightmap lump
+  is a whole number of 512x512x3 pages, the surfaces' `lightmapNum` indexes
+  those atlases (up to 33 of them; some maps store one more than they use),
+  every lightmapped surface's `lightmapX/Y/Width/Height` is 0, and the
+  vertex lightmap UVs span 1/1024 to 1023/1024 of the atlas. The atlas
+  pixels are linear (not Xbox-tiled). The renderers detect the page size
+  per map (`R_DetectLightmapSize`); Quake III maps, which fill in the
+  rectangles, stay at 128.
 - **observed** `version.txt` reads `6132 @ Fri, 05 Nov 2010 11:25:50`. The
   45 maps are mpq3ctf1/3/4, mpq3tourney6, mpteam1/2/3/6/7, mptourney1-4,
   q3dm1-7/9/11/14-17, q3tourney1-4, qaactf02/03/05/06, qaadm01/02/03/06/07/
