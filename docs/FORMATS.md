@@ -81,8 +81,45 @@ ObReferenceObjectByHandle, RtlTryEnterCriticalSection.
   The table ends at 0x1CCE8, where the first file starts.
 - **verified** Every record has flags 1, and every stored file is a native
   XMemCompress stream. All 4,916 decode, 1,319,183,938 bytes in total.
-- **observed** Names are stored only as 64-bit hashes; the hash function is
-  not yet known (M1).
+- **code** Names are stored only as 64-bit hashes (`code/qaa/qaa_bpk.c`,
+  from the lookup at 0x82120C98 and the table setup at 0x82124EF0). The
+  path is relative to `baseq3`. Every `/` becomes `\` and A-Z are lowercased
+  (ASCII `tolower` at 0x821DCAF0). The state starts at 0xFAC432B10CD5E44A,
+  and each byte, sign-extended, is folded in as
+  `h = (h << 8) ^ T[h >> 56] ^ c`. `T[i]` is the carry-less product of `i`
+  and 0x0060034000F0D50B, mod 2^64; it is not a textbook CRC table.
+- **verified** The hash names entries: `default.cfg` hashes to the second
+  record, 0xABF374818163C51F. `tools/bpk_names.py` names 4,682 of the 4,913
+  distinct hashes (95.3%) from path strings in the three images and the
+  archive's own text, models, maps and movies, the binaries' path format
+  strings, templates (sibling directories, player parts and skins, sky box
+  sides, map and bot file patterns), and optionally the file lists of a local
+  Quake III / Quake Live install as seeds. The 231 left are 142 DDS, 58 TGA,
+  7 WAV, and the six localisation tables, six font movies, four font maps and
+  four controller configs whose names come from format strings such as
+  `%s%s/fontmap_%s.txt` with arguments not yet traced.
+- **observed** `version.txt` reads `6132 @ Fri, 05 Nov 2010 11:25:50`. The
+  45 maps are mpq3ctf1/3/4, mpq3tourney6, mpteam1/2/3/6/7, mptourney1-4,
+  q3dm1-7/9/11/14-17, q3tourney1-4, qaactf02/03/05/06, qaadm01/02/03/06/07/
+  12-15/18 and qaatraining, each with an AAS file.
+- **code** `FS_OpenBpkFile` (0x82120EF8) keeps up to 16 archives in 0x118-byte
+  slots at 0x828FB6F0: in-use flag +0, handle +4, name +8 (0x100 bytes),
+  running entry base +0x108, version +0x10C, count +0x110, table +0x114.
+  The lookup scans the table linearly, newest archive first, and compares
+  the high and low 32-bit halves. A hit returns the record's uncompressed
+  size; the file handle number is the archive's running entry base, plus
+  the record index, plus 0x40.
+- **code** Retail cannot list a BPK's contents. Seven functions touch the
+  archive slots (open 0x82120EF8, close 0x82120E58, lookup 0x82120C98,
+  read 0x82121E00, shutdown 0x82123F90, startup 0x82124128 and an archive
+  name check at 0x8218C2E0), and none enumerates entries. Files in a BPK
+  are reached only by exact name, so openQAA keeps them out of directory
+  listings too. The names `tools/bpk_names.py` recovers are for tools and
+  diagnostics; they are generated from the user's copy into `ref/`, never
+  committed.
+- **verified** 4,916 records hold 4,913 distinct hashes; 0x5639940810D5CC18,
+  0x56399F5B10D5CC18 and 0x3D74EED49587C6E0 each appear twice, both copies
+  with identical stored bytes, so which one a lookup finds does not matter.
 - **observed** Contents by magic: 1,962 DDS (DXT5 1,548, DXT3 296, DXT1 112,
   DXT2 3, other 3), 670 uncompressed TGA, 662 WAV (22,050 Hz mono seen),
   442 MD3 (`IDP3` v15), 304 JPEG, 54 Scaleform `GFX` (version 9), 45 BSP

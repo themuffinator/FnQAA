@@ -37,12 +37,14 @@ reimplemented that can be recompiled.
 | The STFS package | `ref/package/584108C8/000D0000/0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458` |
 | Files from the package | `ref/extract/` (`python tools/stfs.py <pkg> extract -o ref/extract`) |
 | Decoded PE images | `ref/pe/<name>.pe` (`python tools/xex.py <xex> image -o ...`) |
-| pak0.bpk entries, by name hash | `ref/bpk/<hash>` (`python tools/bpk.py <bpk> extract -o ref/bpk`) |
+| pak0.bpk name list (generated, never committed) | `ref/pak0.names` (`python tools/bpk_names.py <bpk> --images ref/pe/*.pe -o ref/pak0.names`) |
+| pak0.bpk entries under their names | `ref/baseq3/` (`python tools/bpk.py <bpk> extract -n ref/pak0.names -o ref/baseq3`); unnamed ones in `ref/baseq3/_unnamed/<hash>` |
+| Disassembly, function bounds, xrefs | `python tools/ppc.py <image.pe> funcs|xrefs|dis|strings ...` (capstone) |
 | Format facts | `docs/FORMATS.md` |
 | Engine baseline | `E:\Repositories\FnQL` (engine only; see its `AGENTS.md`) |
 
-The tools need the LZX library built first:
-`clang -O2 -shared -DQAA_LZX_SHARED -o .tmp/qaa_lzx.dll code/qaa/qaa_lzx.c`
+The tools need the native helpers built first:
+`clang -O2 -shared -DQAA_LZX_SHARED -o .tmp/qaa_lzx.dll code/qaa/qaa_lzx.c code/qaa/qaa_bpk.c`
 (or set `QAA_LZX_DLL`). `tools/xex.py` needs the `cryptography` package.
 
 ## Formats

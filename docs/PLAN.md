@@ -68,10 +68,10 @@ FnQL engine (native renderer, audio, input, net) ◄── syscall bridge ──
 **M0 Foundation** (done): STFS, XEX2 and BPK/LZX readers; the package
 decodes fully; formats documented.
 
-**M1 pak0 names.** Recover the BPK name hash from `default.xex`'s
-filesystem, then build a name list from every path string in the binaries
-and the decoded text files, so that every entry has its path. Gate: every
-entry named, or listed as unnamed.
+**M1 pak0 names** (done): the BPK name hash is recovered from
+`default.xex` and implemented in `code/qaa/qaa_bpk.c`; `tools/bpk_names.py`
+names 95% of the entries for tools. Retail cannot list a BPK, so the engine
+needs no names: it opens files by exact name, as retail does.
 
 **M2 Engine.** Import FnQL (engine only) and rebrand it. Mount the STFS
 package and pak0.bpk natively, so no extraction step is needed. Gate: a

@@ -50,12 +50,18 @@ def main():
     ap.add_argument("bpk")
     ap.add_argument("command", choices=["list", "extract", "verify"])
     ap.add_argument("-o", "--out", default="bpk")
+    ap.add_argument("-n", "--names", help="name list from tools/bpk_names.py; extract to real paths")
     a = ap.parse_args()
     b = Bpk(a.bpk)
+    names = {}
+    if a.names:
+        for line in open(a.names, encoding="latin-1"):
+            if len(line) > 17:
+                names[int(line[:16], 16)] = line[17:].rstrip("\r\n")
     bad = 0
     for e in b.entries:
         if a.command == "list":
-            print("%016x %10d %10d %d" % (e[0], e[2], e[4], e[3]))
+            print("%016x %10d %10d %d %s" % (e[0], e[2], e[4], e[3], names.get(e[0], "")))
             continue
         try:
             d = b.read(e)
@@ -64,8 +70,13 @@ def main():
             print(ex, file=sys.stderr)
             continue
         if a.command == "extract":
-            os.makedirs(a.out, exist_ok=True)
-            with open(os.path.join(a.out, "%016x" % e[0]), "wb") as o:
+            rel = names.get(e[0])
+            if rel:
+                dst = os.path.join(a.out, *rel.replace(chr(92), "/").split("/"))
+            else:
+                dst = os.path.join(a.out, "_unnamed", "%016x" % e[0])
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            with open(dst, "wb") as o:
                 o.write(d)
     if a.command != "list":
         print("%d entries, %d failed" % (len(b.entries), bad))
