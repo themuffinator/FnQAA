@@ -17,6 +17,7 @@ FnQL's (Quake Live's). This file is the boundary (facts: docs/ABI.md):
   begin and disconnect, as retail does.
 - Traps: QAA's numbering (game_traps.tsv), each argument converted.
 - The engine function table QAA's engine hands qagame through vmMain 9.
+- The botlib traps (sv_qaa_botlib.inc): FnQL's botlib with QAA's structures.
 - Entities and player states: the engine works on host copies in FnQL's
   layout. A copy is refreshed from guest memory whenever the engine asks
   for it (SV_GentityNum, SV_GameClientNum) and after every call into the
@@ -36,7 +37,6 @@ static int qaaNumGEnts;
 static sharedEntity_t qaaHostEnts[MAX_GENTITIES];
 static playerState_t qaaHostClients[MAX_CLIENTS];
 static int qaaRefreshHold;	// >0 while an engine call is changing a host copy
-static bool qaaWarnedBots;
 
 static cvar_t *qaa_game;
 
@@ -164,6 +164,8 @@ enum qaaGameTrap_t {
 	QG_ANGLEVECTORS, QG_PERPENDICULARVECTOR, QG_FLOOR, QG_CEIL,
 	QG_BOTLIB_FIRST = 200, QG_BOTLIB_LAST = 581,
 };
+
+#include "sv_qaa_botlib.inc"
 
 /*
  * The game-to-cgame scoreboard mailbox (QAA trap 72 -> cgame trap 141). It
@@ -491,13 +493,11 @@ static int64_t QAA_GameSyscall( void *, qaa_module *, const qaa_syscall *call ) 
 
 	default:
 		if ( call->trap >= QG_BOTLIB_FIRST && call->trap <= QG_BOTLIB_LAST ) {
-			// Bots come with the botlib bridge. Until then BOTLIB_SETUP fails,
-			// so the game runs without bots, and the rest answer 0.
-			if ( !qaaWarnedBots ) {
-				qaaWarnedBots = true;
-				Com_Printf( S_COLOR_YELLOW "QAA: bots are not bridged yet; the game runs without them\n" );
+			bool handled;
+			const int64_t r = QAA_BotlibSyscall( call->trap, a, &handled );
+			if ( handled ) {
+				return r;
 			}
-			return call->trap == QG_BOTLIB_FIRST ? -1 : 0;
 		}
 		// QAA's own default returns -1 (docs/ABI.md)
 		Com_DPrintf( S_COLOR_YELLOW "qagame: unhandled trap %d (from %08X)\n", call->trap, call->return_address );
@@ -532,9 +532,10 @@ static int64_t QAA_GT_PointContents( void *, qaa_module *, const qaa_syscall *c 
 static int64_t QAA_GT_CvarUpdate( void *, qaa_module *, const qaa_syscall *c ) { return QAA_GameTableCall( *c, QG_CVAR_UPDATE ); }
 static int64_t QAA_GT_CvarSet( void *, qaa_module *, const qaa_syscall *c ) { return QAA_GameTableCall( *c, QG_CVAR_SET ); }
 static int64_t QAA_GT_CvarInt( void *, qaa_module *, const qaa_syscall *c ) { return QAA_GameTableCall( *c, QG_CVAR_VARIABLE_INTEGER_VALUE ); }
-static int64_t QAA_GT_AasPointContents( void *, qaa_module *, const qaa_syscall * ) { return 0; }
-static int64_t QAA_GT_AasInitialized( void *, qaa_module *, const qaa_syscall * ) { return 0; }
-static int64_t QAA_GT_BotUpdateEntity( void *, qaa_module *, const qaa_syscall * ) { return 0; }
+// retail copies these three from the botlib export table (engine_tables.tsv)
+static int64_t QAA_GT_AasPointContents( void *, qaa_module *, const qaa_syscall *c ) { return QAA_GameTableCall( *c, QB_AAS_POINT_CONTENTS ); }
+static int64_t QAA_GT_AasInitialized( void *, qaa_module *, const qaa_syscall *c ) { return QAA_GameTableCall( *c, QB_AAS_INITIALIZED ); }
+static int64_t QAA_GT_BotUpdateEntity( void *, qaa_module *, const qaa_syscall *c ) { return QAA_GameTableCall( *c, QB_UPDATENTITY ); }
 
 static bool QAA_SV_BuildEngineTable( void ) {
 	const qaaGuestApi_t &api = QAA_Host_Api();
@@ -618,7 +619,6 @@ static void QAA_SV_ResetModuleState( void ) {
 	qaaNumGEnts = 0;
 	qaaGameEngineTable = 0;
 	qaaRefreshHold = 0;
-	qaaWarnedBots = false;
 	qaa_scoreboardMailboxFull = false;
 }
 

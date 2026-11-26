@@ -219,7 +219,8 @@ pointer, `lfs` = float, plain load = int).
 - **200..581: botlib, identical to Quake III 1.32 and FnQL** (`BOTLIB_SETUP`
   .. `BOTLIB_PC_SOURCE_FILE_AND_LINE`); each case calls the next slot of the
   botlib export table (0x82E19DC8), and argument conversions agree with
-  Quake III's.
+  Quake III's. The entity structures and the stubbed chat calls are QAA's
+  own (section 6, botlib structures).
 - Not present: FnQL/Quake Live's `G_STEAMID_QUERY`, `G_STEAM_AUTH_VALIDATE`,
   `G_RANK_*`, `G_CVAR_SETDESCRIPTION`, `G_TRAP_GETVALUE` (700) and the FnQL
   stats extensions.
@@ -529,6 +530,46 @@ As Quake III and FnQL. `trace_t` size, `fraction` (0x08) and `entityNum`
 **code** (`LerpTag` re+0x74, 0x8215EDC0, whose failure path writes both; its
 success path is VMX128 code that Ghidra cannot decode). `cplane_t` and the rest
 of `trace_t` **observed**.
+
+### Botlib structures
+
+The botlib traps (200..581) pass Quake III 1.32's botlib structures, and
+FnQL's botlib uses the same layouts, except for the two entity structures:
+
+| Struct | QAA | FnQL | Evidence | Source |
+|---|---|---|---|---|
+| `bot_entitystate_t` | 0xCC | 0xD0 | **code** | qagame 0x880278E8 (clears 0xCC bytes and fills them); `AAS_UpdateEntity` 0x821BEB30 |
+| `aas_entityinfo_t` | 0xE8 | 0xEC | **code** | `AAS_EntityInfo` 0x821BEEE8 (copies 0xE8 bytes) |
+
+Both are Quake III's (0x70 and 0x8C) followed by Quake Live's extension
+(`nextthink`, `itemQuantity`, `itemType`, `itemTag`, `health`, `maxHealth`,
+`ammoFull[16]`) and then `carriesFlag`, at 0xC8 and 0xE4: Quake Live's
+`trainingClear` is not there. qagame sets `carriesFlag` when the client holds
+`PW_REDFLAG` or `PW_BLUEFLAG` (gclient 0x154, 0x158), and `AAS_UpdateEntity`
+copies state 0xC8 to info 0xE4. qagame passes the state through the engine
+table (entry 0x24), not trap 207.
+
+The other structures are taken to be Quake III's, which the trap cases'
+argument conversions agree with; their layouts are not checked against QAA
+code: `aas_areainfo_t` 0x34,
+`aas_clientmove_t` 0x54, `aas_predictroute_t` 0x24, `aas_altroutegoal_t`
+0x18 (three `unsigned short`s at 0x10), `bot_input_t` 0x28, `bot_goal_t`
+0x38, `bot_moveresult_t` 0x34, `bot_initmove_t` 0x44, `weaponinfo_t` 0x228,
+`bot_match_t` 0x148, `pc_token_t` 0x410, and the inventory as `int[256]`.
+
+**QAA's botlib has no chat AI** (**code**). The AI half of the export table,
+filled at 0x821A5020, points every chat-state call at a stub: `li r3, 0;
+blr` (0x8260F748) for `BotAllocChatState`, `BotNextConsoleMessage`,
+`BotNumConsoleMessages`, `BotNumInitialChats`, `BotReplyChat`,
+`BotChatLength` and `BotLoadChatFile`, and `blr` (0x826F9BC8) for
+`BotFreeChatState`, `BotQueueConsoleMessage`, `BotRemoveConsoleMessage`,
+`BotInitialChat`, `BotEnterChat`, `BotGetChatMessage`, `BotSetChatGender`
+and `BotSetChatName`. `StringContains`, `BotFindMatch`, `BotMatchVariable`,
+`UnifyWhiteSpaces` and `BotReplaceSynonyms` are real, but default.xex holds
+none of the files Quake III's `BotSetupChatAI` loads (`syn.c`, `rnd.c`,
+`match.c`, `rchat.c`), and pak0 has none of them (**observed**, among the
+named entries). qagame still calls `BotEnterChat` and `BotGetChatMessage`
+with chat state 0.
 
 ## 7. Limits
 

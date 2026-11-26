@@ -104,10 +104,15 @@ and the guest runtime loaded as a shared library
 (`code/qaa/qaa_guest_host.cpp`). Engine errors raised inside guest code
 unwind the guest first. `map` and `devmap` take Quake III's arguments when
 there are no factories, as QAA's engine does. Done: a headless dedicated
-server runs `q3dm6` with QAA's game code. Open: bots (the botlib traps
-200-581 need their structures bridged; until then `BOTLIB_SETUP` fails and
-the game runs without bots), and the engine's Quake Live cvar defaults
-(`fraglimit`, `timelimit`) that override QAA's.
+server runs `q3dm6` with QAA's game code. Bots: the botlib traps 200-581
+and the engine table's three botlib entries run FnQL's botlib with QAA's
+structures (`code/server/sv_qaa_botlib.inc`; QAA's own entity layouts and
+its stubbed chat calls are in [ABI.md](ABI.md)). Headless, bots added with
+`addbot` route, fight, die and respawn on `q3dm6`, on the dedicated and the
+listen server. Open: with only bots the match stays in warmup (`CS_WARMUP`
+-1), so frags do not score unless `g_doWarmup 0`; how QAA starts the match
+outside the Live lobby is to be read from the game. And the engine's Quake
+Live cvar defaults (`fraglimit`, `timelimit`) that override QAA's.
 
 **M5 Client game** (in progress). The engine hosts the recompiled cgame
 (`code/client/cl_qaa_cgame.inc`): QAA's trap numbering converted into

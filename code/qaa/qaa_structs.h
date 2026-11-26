@@ -277,6 +277,20 @@ static inline void QAA_UsercmdToGuest( uint32_t a, const usercmd_t *cmd ) {
 	QAA_StoreU8( a + oUC_UPMOVE, static_cast<uint8_t>( cmd->upmove ) );
 }
 
+static inline void QAA_UsercmdFromGuest( uint32_t a, usercmd_t *cmd ) {
+	using namespace qaa_layout;
+	Com_Memset( cmd, 0, sizeof( *cmd ) );	// Quake Live's weaponPrimary and fov stay zero
+	cmd->serverTime = QAA_LoadS32( a + oUC_SERVERTIME );
+	for ( int i = 0; i < 3; i++ ) {
+		cmd->angles[i] = QAA_LoadS32( a + oUC_ANGLES + 4 * i );
+	}
+	cmd->buttons = QAA_LoadS32( a + oUC_BUTTONS );
+	cmd->weapon = QAA_LoadU8( a + oUC_WEAPON );
+	cmd->forwardmove = static_cast<signed char>( QAA_LoadU8( a + oUC_FORWARDMOVE ) );
+	cmd->rightmove = static_cast<signed char>( QAA_LoadU8( a + oUC_RIGHTMOVE ) );
+	cmd->upmove = static_cast<signed char>( QAA_LoadU8( a + oUC_UPMOVE ) );
+}
+
 static inline void QAA_TraceToGuest( uint32_t a, const trace_t *tr ) {
 	using namespace qaa_layout;
 	QAA_StoreS32( a + oTRACE_ALLSOLID, tr->allsolid );

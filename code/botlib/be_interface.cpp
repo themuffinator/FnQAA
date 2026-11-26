@@ -147,8 +147,14 @@ static int Export_BotLibSetup( void )
 	if (errnum != BLERR_NOERROR)return errnum;
 	errnum = BotSetupGoalAI();		//be_ai_goal.c
 	if (errnum != BLERR_NOERROR) return errnum;
-	errnum = BotSetupChatAI();		//be_ai_chat.c
-	if (errnum != BLERR_NOERROR) return errnum;
+	// QAA: retail QAA's botlib has no chat AI. Its AI export table (filled at
+	// default.xex 0x821A5020) points every chat-state call at an empty stub,
+	// and default.xex holds none of the files BotSetupChatAI loads. The QAA
+	// game bridge (sv_qaa_botlib.inc) sets "qaa_nochatai" before each setup.
+	if ( !LibVarValue( "qaa_nochatai", "0" ) ) {
+		errnum = BotSetupChatAI();		//be_ai_chat.c
+		if (errnum != BLERR_NOERROR) return errnum;
+	}
 	errnum = BotSetupMoveAI();		//be_ai_move.c
 	if (errnum != BLERR_NOERROR) return errnum;
 
