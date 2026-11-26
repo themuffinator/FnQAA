@@ -1,4 +1,4 @@
-# openQAA guest runtime: hosts the statically recompiled game modules.
+# FnQAA guest runtime: hosts the statically recompiled game modules.
 #
 # Include from the top-level meson.build:
 #

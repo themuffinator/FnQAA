@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: Xbox LZX (XMemCompress) decoder.
+FnQAA: Xbox LZX (XMemCompress) decoder.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 An independent implementation of the LZX format as Microsoft documents it,
 with the framing the Xbox 360 XMemCompress library and XEX2 images use:

@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: QAA's Scaleform front end (milestone M6).
+FnQAA: QAA's Scaleform front end (milestone M6).
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 See cl_qaa_ui.h and docs/UI.md. Addresses are default.xex's: the retail
 code was read for its behaviour, and nothing of it is stored here.
@@ -753,7 +753,7 @@ void PollSessionEnd() {
 /* -- R_GetCommandBuffer --------------------------------------------------------------- */
 
 /* SFUI's renderer queues "render the UI" for the engine's back end at the
- * end of a frame (0x82166F70). openQAA replays the frame right after
+ * end of a frame (0x82166F70). FnQAA replays the frame right after
  * SFUI's render returns (QAA_UI_Draw), so the queued command only needs
  * somewhere to go. */
 uint32_t renderCommandScratch;
@@ -882,7 +882,7 @@ void UpdateFromGImage( qaa_ui::Texture &t, uint32_t img, int dx, int dy, int sx0
 /*
  * The bot pictures and the "who's that" silhouettes (0x82193B78, 0x82193CC0)
  * are D3D textures SFUI creates, locks and fills, or loads from TGA files
- * with D3DX, before handing them to GFx. openQAA gives those calls host
+ * with D3DX, before handing them to GFx. FnQAA gives those calls host
  * textures. The guest sees an opaque block: 'QTEX', the host texture id,
  * width, height, a reference count and the locked pixels.
  */
@@ -1920,7 +1920,7 @@ void InstallHooks() {
  * The movies reach the engine two ways: ExternalInterface.call (SFUI's
  * handler 0x82198DA0 looks the name up in its "Quake function" table at
  * 0x827EB9F0) and fscommand (0x82198D90, which calls 0x821915E8). Retail
- * stripped GFx's trace() log, so for development openQAA puts host
+ * stripped GFx's trace() log, so for development FnQAA puts host
  * wrappers in those two handlers' vtable slots (qaa_uiTrace 1): they print
  * the call and hand it on to the retail handler unchanged.
  */

@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: Quake Arena Arcade .bpk archive reader (names: qaa_bpk.h).
+FnQAA: Quake Arena Arcade .bpk archive reader (names: qaa_bpk.h).
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 ===========================================================================
 */
 #ifndef QAA_BPK_ARCHIVE_H

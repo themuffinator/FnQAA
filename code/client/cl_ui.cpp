@@ -2055,7 +2055,7 @@ void CL_InitUI( void ) {
 		}
 		// QAA: Quake Arena Arcade ships no ui module (docs/PLAN.md): its
 		// menus, HUD and scoreboards are Scaleform GFx movies run by
-		// default.xex's SFUI layer, which openQAA recompiles and hosts
+		// default.xex's SFUI layer, which FnQAA recompiles and hosts
 		// (cl_qaa_ui.cpp, docs/UI.md). Without it the client runs with the
 		// console only instead of failing (FnQL's CL_UI_CREATE_FAILURE);
 		// every UI call site already checks uivm.

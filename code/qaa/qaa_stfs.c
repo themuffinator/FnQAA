@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: Xbox 360 STFS (CON/LIVE/PIRS) package reader.
+FnQAA: Xbox 360 STFS (CON/LIVE/PIRS) package reader.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 Layout (Free60 STFS documentation; tools/stfs.py is the reference reader
 and docs/FORMATS.md records what the QAA package was verified to hold):

@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: Quake Arena Arcade .bpk archive names.
+FnQAA: Quake Arena Arcade .bpk archive names.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 The engine looks entries up by a hash of the path (default.xex: lookup at
 0x82120C98, table setup at 0x82124EF0). The path is first normalised as the

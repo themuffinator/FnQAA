@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Headless start/quit gates for the openQAA client and dedicated server.
+"""Headless start/quit gates for the FnQAA client and dedicated server.
 
-usage: headless_tests.py <openqaa client> <openqaa-ded server> [test names]
+usage: headless_tests.py <fnqaa client> <fnqaa-ded server> [test names]
 
 Every run is unattended: the client starts with com_headless 2 (no window),
 sound off; the dedicated server is headless by default. No retail data is
@@ -139,7 +139,7 @@ class Engine:
                "+set", "net_port", "0", "+set", "net_port6", "0", "+set", "developer", "1", *args]
         if exe == CLIENT:
             cmd[1:1] = ["+set", "com_headless", "2", "+set", "s_initsound", "0", "+set", "in_nograb", "1"]
-        env = dict(os.environ, OPENQAA_HEADLESS="2", SDL_AUDIODRIVER="dummy")
+        env = dict(os.environ, FNQAA_HEADLESS="2", SDL_AUDIODRIVER="dummy")
         log = self.work / "out.log"
         windows = set()
         with log.open("wb") as out:
@@ -199,7 +199,7 @@ def first_real_record(package: Path):
 class HeadlessTests(unittest.TestCase):
     def setUp(self):
         root = Path(os.environ.get("MESON_BUILD_ROOT", CLIENT.parent))
-        self.work = Path(tempfile.mkdtemp(prefix="openqaa-headless-", dir=str(root)))
+        self.work = Path(tempfile.mkdtemp(prefix="fnqaa-headless-", dir=str(root)))
         self.engine = Engine(self.work)
         self.cfg = ("echo " + MARKER + "\nexec cfg\\nested.cfg\n").encode()
         nested = ("echo " + NESTED_MARKER + "\n").encode()

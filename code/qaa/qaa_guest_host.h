@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: the engine side of the guest runtime.
+FnQAA: the engine side of the guest runtime.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 QAA's game modules are recompiled from the user's XBLA package into native
 libraries (tools/recomp/build.py) that run on the guest runtime

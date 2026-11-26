@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """List and extract Xbox 360 STFS (CON/LIVE/PIRS) packages.
 
-openQAA reads Quake Arena Arcade from the user's own XBLA package. This tool
+FnQAA reads Quake Arena Arcade from the user's own XBLA package. This tool
 is the reference reader used for investigation and tests; the engine has its
 own reader.
 

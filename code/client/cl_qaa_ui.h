@@ -1,12 +1,12 @@
 /*
 ===========================================================================
-openQAA: QAA's Scaleform front end (milestone M6).
+FnQAA: QAA's Scaleform front end (milestone M6).
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 Quake Arena Arcade has no ui module: its menus, HUD and scoreboards are
-Scaleform GFx movies run by default.xex's SFUI layer. openQAA recompiles
+Scaleform GFx movies run by default.xex's SFUI layer. FnQAA recompiles
 that layer and the GFx player from the user's default.xex into the qaa_ui
 guest module (tools/recomp/build.py, data/recomp/ui.json) and hosts it
 here: the engine functions it calls are implemented over FnQL, and the

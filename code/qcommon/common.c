@@ -649,8 +649,8 @@ qboolean Com_EarlyParseCmdLine( char *commandLine, char *con_title, int title_si
 		// Automation (test runners, gates, agents) can make every launch
 		// unattended without editing each command line; an explicit
 		// +set com_headless still wins.
-		// QAA: openQAA's name for FnQL's FNQL_HEADLESS.
-		const char *policy = getenv( "OPENQAA_HEADLESS" );
+		// QAA: FnQAA's name for FnQL's FNQL_HEADLESS.
+		const char *policy = getenv( "FNQAA_HEADLESS" );
 		if ( policy && policy[0] >= '0' && policy[0] <= '9' ) {
 			const int level = atoi( policy );
 			headless = level == 2 ? 2 : level != 0 ? 1 : 0;

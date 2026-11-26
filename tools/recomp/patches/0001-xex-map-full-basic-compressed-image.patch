@@ -6,7 +6,7 @@ index 4e79042..cb024a9 100644
                  imageSize += blocks[i].dataSize + blocks[i].zeroSize;
              }
  
-+            // openQAA: the blocks can stop short of the image size (BSS and
++            // FnQAA: the blocks can stop short of the image size (BSS and
 +            // the .edata/.idata headers lie beyond them); keep the whole
 +            // image addressable and zero-filled so every section maps.
 +            const size_t storedSize = imageSize;
@@ -22,7 +22,7 @@ index 4e79042..cb024a9 100644
          const auto& section = sections[i];
          uint8_t flags{};
  
-+        // openQAA: DLL modules list .edata/.idata headers past the image;
++        // FnQAA: DLL modules list .edata/.idata headers past the image;
 +        // they are not loaded, so do not map them onto memory we do not own.
 +        if (section.VirtualAddress >= image.size)
 +            continue;

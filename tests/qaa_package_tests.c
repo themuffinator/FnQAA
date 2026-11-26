@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: synthetic-data tests for the STFS and BPK readers (code/qaa).
+FnQAA: synthetic-data tests for the STFS and BPK readers (code/qaa).
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 Builds a small read-only STFS package in memory, independently of the
 reader's block arithmetic: data block n lives at backing block n + 1 below

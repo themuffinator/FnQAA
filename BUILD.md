@@ -1,18 +1,18 @@
-# Building openQAA
+# Building FnQAA
 
-openQAA builds with Meson and Ninja. The primary targets are **Windows
+FnQAA builds with Meson and Ninja. The primary targets are **Windows
 x86_64** and **Linux x86_64**. Meson accepts the other targets FnQL enables
 (32-bit x86, and the dedicated server on Linux aarch64, armv7l, ppc64le and
-ppc64), but openQAA does not test them.
+ppc64), but FnQAA does not test them.
 
 A build produces:
 
 | Output | What it is |
 |---|---|
-| `openqaa` (`openqaa.exe`) | the client |
-| `openqaa-ded` (`openqaa-ded.exe`) | the dedicated server |
-| `openqaa_glx_<arch>`, `openqaa_vk_<arch>`, `openqaa_rtx_<arch>` | renderer modules loaded by the client (`cl_renderer glx/vk/rtx`) |
-| `openqaa_*_tests` | unit tests, run by `meson test` |
+| `fnqaa` (`fnqaa.exe`) | the client |
+| `fnqaa-ded` (`fnqaa-ded.exe`) | the dedicated server |
+| `fnqaa_glx_<arch>`, `fnqaa_vk_<arch>`, `fnqaa_rtx_<arch>` | renderer modules loaded by the client (`cl_renderer glx/vk/rtx`) |
+| `fnqaa_*_tests` | unit tests, run by `meson test` |
 
 ## Dependencies
 
@@ -56,8 +56,8 @@ Vorbis.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `build-client` | `true` | build `openqaa` |
-| `build-server` | `true` | build `openqaa-ded` |
+| `build-client` | `true` | build `fnqaa` |
+| `build-server` | `true` | build `fnqaa-ded` |
 | `renderer-dlopen` | `true` | one client with external renderer modules; `false` links `renderer-default` in |
 | `renderers` | `glx,vk,rtx` | renderer modules to build |
 | `renderer-default` | `glx` | default `cl_renderer` |
@@ -67,35 +67,35 @@ Vorbis.
 | `ogg-vorbis` | `true` | Ogg Vorbis audio |
 | `default-basedir` | empty | compiled-in `DEFAULT_BASEDIR` |
 | `audio-tests`, `glx-tests` | `true` | build those unit tests |
-| `strict-warnings` | `false` | warnings are errors in openQAA's targets |
+| `strict-warnings` | `false` | warnings are errors in FnQAA's targets |
 
 FnQL's Steam integration (Steamworks, the Workshop, Steam install detection)
-is removed from openQAA, and its Awesomium WebUI is not part of it; there is
+is removed from FnQAA, and its Awesomium WebUI is not part of it; there is
 no option for either. `code/qaa/qaa_null_webui.cpp` implements the WebUI's
 engine interface with every service unavailable.
 
 ## Tests
 
 `meson test` runs every test headless: the default test setup sets
-`OPENQAA_HEADLESS=2`, so a client never opens a window, and dedicated servers
+`FNQAA_HEADLESS=2`, so a client never opens a window, and dedicated servers
 are headless anyway.
 
-- `openqaa_qaa_package`: the STFS and BPK readers on a synthetic package,
+- `fnqaa_qaa_package`: the STFS and BPK readers on a synthetic package,
   and the BPK name hash.
-- `openqaa_headless`: the client (`com_headless 2`, sound off) and the
+- `fnqaa_headless`: the client (`com_headless 2`, sound off) and the
   dedicated server start, mount a synthetic package (STFS file and folder),
   find the `default.cfg` in its pak0.bpk by name hash and execute it (it
   execs a second config by a mixed-case, backslash path), read a record by
   raw hash and quit with exit code 0. On Windows it also checks that the client
   never creates a visible window.
-- With `QAA_PACKAGE` set to your STFS package, `openqaa_headless` also
+- With `QAA_PACKAGE` set to your STFS package, `fnqaa_headless` also
   boots both binaries from it (QAA's own `default.cfg`) and reads the first
   pak0.bpk record by hash.
   Without it that check is skipped. No retail data is ever written.
-- `openqaa_qaa_ui_raster`: the Scaleform front end's rasteriser (coverage,
+- `fnqaa_qaa_ui_raster`: the Scaleform front end's rasteriser (coverage,
   colour transforms, blending, masks, texture and glyph fills) and its DXT,
   DDS and TGA decoders, on synthetic data ([docs/UI.md](docs/UI.md)).
-- The rest are FnQL's engine unit tests. `openqaa_audio_loopback` skips
+- The rest are FnQL's engine unit tests. `fnqaa_audio_loopback` skips
   when the OpenAL driver lacks `ALC_SOFT_loopback`.
 
 ```powershell

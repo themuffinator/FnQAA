@@ -1,5 +1,5 @@
 /*
- * openQAA: included into every recompiled module source through
+ * FnQAA: included into every recompiled module source through
  * XenonRecomp's ppc_config.h (compiled with -DPPC_INCLUDE_DETAIL).
  *
  * Replaces XenonRecomp's indirect-call lookup, which indexes a table

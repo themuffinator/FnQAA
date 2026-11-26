@@ -5,7 +5,7 @@ Instructions for AI agents working in this repository. Read
 
 ## Mission
 
-openQAA runs **Quake Arena Arcade** (Xbox Live Arcade, 2010) natively on the
+FnQAA runs **Quake Arena Arcade** (Xbox Live Arcade, 2010) natively on the
 PC from the user's own, unmodified XBLA package. The engine is
 [FnQL](https://github.com/themuffinator/FnQL) (engine only). The retail game
 modules, `qagameXe.dll` and `cgameXe.dll`, are statically recompiled from the

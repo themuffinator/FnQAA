@@ -1,4 +1,4 @@
-# openQAA plan
+# FnQAA plan
 
 Goal: run Quake Arena Arcade natively on the PC, from the user's unmodified
 XBLA package, as close to the retail game as the PC allows.
@@ -77,8 +77,8 @@ needs no names: it opens files by exact name, as retail does.
 
 **M2 Engine** (done; the `devmap` gate moves to M4). Import FnQL (engine
 only) and rebrand it. Mount the STFS package and pak0.bpk natively, so no
-extraction step is needed. FnQL 57f081f is imported engine-only as `openqaa` and
-`openqaa-ded`, without Steam or the WebUI; the package and pak0.bpk mount in
+extraction step is needed. FnQL 57f081f is imported engine-only as `fnqaa` and
+`fnqaa-ded`, without Steam or the WebUI; the package and pak0.bpk mount in
 place (`fs_qaaPackage`), files are found by name hash (`qaa_bpk_name_hash`)
 as retail finds them, and the client and server boot headless from QAA's own
 `default.cfg`. The `devmap` gate waits on the game modules: a map cannot

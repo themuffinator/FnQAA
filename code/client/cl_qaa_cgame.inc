@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: hosting QAA's recompiled cgame (milestone M5).
+FnQAA: hosting QAA's recompiled cgame (milestone M5).
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 Included at the end of code/client/cl_cgame.cpp, whose helpers it uses.
 
@@ -636,7 +636,7 @@ static int64_t QAA_CT_LerpTag( void *, qaa_module *, const qaa_syscall *c ) {
 /*
  * QAA's renderer lock (+0x2C/+0x30), its flag setters (+0x34..+0x3C) and the
  * engine event the model loader waits on (+0x40/+0x44) serve the cgame's
- * loading thread. openQAA loads models on the main thread
+ * loading thread. FnQAA loads models on the main thread
  * (cg_asyncModelLoading 0, see QAA_CgameCreate), so these have nothing to do.
  */
 static int64_t QAA_CT_Nothing( void *, qaa_module *, const qaa_syscall * ) {

@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: software rasteriser for QAA's Scaleform front end.
+FnQAA: software rasteriser for QAA's Scaleform front end.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 Replays what GFx 2.x's renderer interface asks for (triangles with colour,
 edge-AA factors and texture fills, bitmap quads, hairlines, colour

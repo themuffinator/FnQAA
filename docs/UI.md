@@ -2,7 +2,7 @@
 
 Quake Arena Arcade has no `ui` module. Its menus, HUD and scoreboards are
 Scaleform GFx 2.x movies (`ui/*.gfx` in pak0.bpk) played by the **SFUI** layer
-of `default.xex`. openQAA recompiles SFUI and the GFx player from the user's
+of `default.xex`. FnQAA recompiles SFUI and the GFx player from the user's
 own `default.xex` into a guest module, `qaa_ui`, and hosts it in the client.
 The movies run their own ActionScript, and SFUI runs its own C++. The engine
 functions SFUI calls are implemented over FnQL. What SFUI's renderer records

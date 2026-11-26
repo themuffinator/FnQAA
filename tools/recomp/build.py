@@ -146,7 +146,7 @@ def recompiler_id():
     h = hashlib.sha256()
     for p in patch_files():
         h.update(open(p, "rb").read())
-    return "XenonRecomp %s + openQAA patches %s" % (PIN["commit"][:7], h.hexdigest()[:12])
+    return "XenonRecomp %s + FnQAA patches %s" % (PIN["commit"][:7], h.hexdigest()[:12])
 
 
 def prepare_xenonrecomp(args, out):
@@ -178,7 +178,7 @@ def prepare_xenonrecomp(args, out):
             log("applying %s" % os.path.basename(p))
             run(["git", "-c", "core.filemode=false", "apply", "--ignore-whitespace", "--whitespace=nowarn", "-v", p], cwd=src, env=env)
         for f in ("XenonRecomp/recompiler.cpp", "XenonUtils/xex.cpp"):
-            if "openQAA" not in open(os.path.join(src, f), encoding="utf-8", errors="replace").read():
+            if "FnQAA" not in open(os.path.join(src, f), encoding="utf-8", errors="replace").read():
                 raise SystemExit("patches did not apply to %s" % f)
         with open(stamp, "w") as f:
             f.write(stamp_id)

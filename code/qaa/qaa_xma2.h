@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: XMA2 audio decoder.
+FnQAA: XMA2 audio decoder.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 The decoder in qaa_xma2.c is ported from FFmpeg's WMA Pro / XMA decoder
 (LGPL 2.1 or later); see that file for its notices.

@@ -1,14 +1,14 @@
 /*
 ===========================================================================
-openQAA: null web front end.
+FnQAA: null web front end.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 ===========================================================================
 */
 
 // QAA: PC deviation. Quake Arena Arcade's menus are Scaleform GFx movies, not
-// Quake Live's Awesomium web front end, so openQAA does not import FnQL's WebUI
+// Quake Live's Awesomium web front end, so FnQAA does not import FnQL's WebUI
 // (cl_webui.cpp, cl_webpak.cpp, awesomium_backend_win32.cpp). This file keeps
 // the client's interface to it (client.h) with no web view: nothing is shown,
 // no input is captured and every request fails. QAA has no Steam, so FnQL's

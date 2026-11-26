@@ -368,7 +368,7 @@ sysStartupChoice_t Sys_PromptStartupChoice( const char *title, const char *messa
 	}
 
 	fprintf( stdout, "\n%s\n%s\n[c]ontinue, [r]etry or [q]uit? ",
-		title && title[0] ? title : OPENQAA_PROJECT_NAME, message ); // QAA: rebrand
+		title && title[0] ? title : FNQAA_PROJECT_NAME, message ); // QAA: rebrand
 	fflush( stdout );
 
 	if ( fgets( answer, sizeof( answer ), stdin ) == NULL )
@@ -869,10 +869,10 @@ void Sys_PrintBinVersion( const char* name )
 	fprintf( stdout, "\n\n%s\n", sep );
 #ifdef DEDICATED
 	fprintf( stdout, "%s Dedicated Server (%s-%s) [%s %s]\n",
-		OPENQAA_PROJECT_NAME, OS_STRING, ARCH_STRING, date, time ); // QAA: rebrand
+		FNQAA_PROJECT_NAME, OS_STRING, ARCH_STRING, date, time ); // QAA: rebrand
 #else
 	fprintf( stdout, "%s Client (%s-%s) [%s %s]\n",
-		OPENQAA_PROJECT_NAME, OS_STRING, ARCH_STRING, date, time ); // QAA: rebrand
+		FNQAA_PROJECT_NAME, OS_STRING, ARCH_STRING, date, time ); // QAA: rebrand
 #endif
 	fprintf( stdout, " local install: %s\n", name );
 	fprintf( stdout, "%s\n\n", sep );

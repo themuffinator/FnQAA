@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: Xbox 360 STFS (CON/LIVE/PIRS) package reader.
+FnQAA: Xbox 360 STFS (CON/LIVE/PIRS) package reader.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 ===========================================================================
 */
 #ifndef QAA_STFS_H

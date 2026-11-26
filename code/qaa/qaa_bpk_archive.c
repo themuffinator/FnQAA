@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: Quake Arena Arcade .bpk archive reader.
+FnQAA: Quake Arena Arcade .bpk archive reader.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 Layout (verified over baseq3/pak0.bpk, docs/FORMATS.md), all big-endian:
   u32 version (1), u32 count

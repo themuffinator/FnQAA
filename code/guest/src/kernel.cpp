@@ -1,5 +1,5 @@
 /*
- * openQAA guest runtime: xboxkrnl high-level emulation.
+ * FnQAA guest runtime: xboxkrnl high-level emulation.
  *
  * The functions QAA's game modules import (docs/FORMATS.md lists them).
  * Arguments arrive in r3..r10 (and the caller's stack slots at r1+0x54

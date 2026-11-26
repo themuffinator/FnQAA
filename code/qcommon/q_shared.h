@@ -26,15 +26,15 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // q_shared.h -- included first by ALL program modules.
 // A user mod should never modify this file
 
-// QAA: openQAA's version header replaces FnQL's version/fnql_version.h.
-#include "../../version/openqaa_version.h"
+// QAA: FnQAA's version header replaces FnQL's version/fnql_version.h.
+#include "../../version/fnqaa_version.h"
 
-#define Q3_VERSION            OPENQAA_PROJECT_NAME_SHORT " " OPENQAA_VERSION_STRING
+#define Q3_VERSION            FNQAA_PROJECT_NAME_SHORT " " FNQAA_VERSION_STRING
 #ifndef SVN_VERSION
   #define SVN_VERSION Q3_VERSION
 #endif
-#define CLIENT_WINDOW_TITLE   OPENQAA_PROJECT_NAME
-#define CONSOLE_WINDOW_TITLE  OPENQAA_PROJECT_NAME " Console"
+#define CLIENT_WINDOW_TITLE   FNQAA_PROJECT_NAME
+#define CONSOLE_WINDOW_TITLE  FNQAA_PROJECT_NAME " Console"
 // 1.32 released 7-10-2002
 
 //#define DEFAULT_GAME			"edawn"

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Choose which functions of a large image to recompile.
 
-QAA's front end lives inside default.xex next to the engine, which openQAA
+QAA's front end lives inside default.xex next to the engine, which FnQAA
 replaces with FnQL. Only the front end's code is recompiled: the closure of
 a set of root ranges through direct calls, code addresses formed in code
 (function pointers) and code pointers stored in tables the code refers to

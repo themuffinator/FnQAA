@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: mounting Quake Arena Arcade's package in the engine filesystem.
+FnQAA: mounting Quake Arena Arcade's package in the engine filesystem.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 Included by code/qcommon/files.c, whose pack and handle structures it uses.
 
@@ -315,7 +315,7 @@ static void FS_QAA_MountPackage( void ) {
 FS_QAA_CheckPackage
 
 Replaces FnQL's retail Quake Live / Quake III install check (FS_CheckIdPaks,
-removed): openQAA requires only that a QAA package is mounted.
+removed): FnQAA requires only that a QAA package is mounted.
 =================
 */
 static void FS_QAA_CheckPackage( void ) {

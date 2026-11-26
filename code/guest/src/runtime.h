@@ -1,5 +1,5 @@
 /*
- * openQAA guest runtime: internal declarations shared by guest.cpp and
+ * FnQAA guest runtime: internal declarations shared by guest.cpp and
  * kernel.cpp.
  */
 #pragma once

@@ -137,8 +137,8 @@ const char *Sys_DefaultHomePath( void )
 		return NULL;
 	}
 	Q_strncpyz( path, szPath, sizeof(path) );
-	// QAA: openQAA's own user folder instead of Quake III's.
-	Q_strcat( path, sizeof(path), "\\" OPENQAA_HOMEPATH_NAME_WIN );
+	// QAA: FnQAA's own user folder instead of Quake III's.
+	Q_strcat( path, sizeof(path), "\\" FNQAA_HOMEPATH_NAME_WIN );
 	if( !CreateDirectoryA( path, NULL ) )
 	{
 		if( GetLastError() != ERROR_ALREADY_EXISTS )

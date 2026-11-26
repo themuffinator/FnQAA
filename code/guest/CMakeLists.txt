@@ -1,4 +1,4 @@
-# openQAA guest runtime: hosts the statically recompiled game modules.
+# FnQAA guest runtime: hosts the statically recompiled game modules.
 #
 # Needs QAA_XENONRECOMP_SRC: a (patched) XenonRecomp source tree, for
 # XenonUtils/ppc_context.h and the simde headers it includes. The engine

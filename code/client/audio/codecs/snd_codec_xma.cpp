@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: XMA2 sound codec.
+FnQAA: XMA2 sound codec.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 QAA: every sound and music track in Quake Arena Arcade's pak0.bpk is XMA2
 in a RIFF WAVE file named *.xma (docs/FORMATS.md). The Xbox decodes it in

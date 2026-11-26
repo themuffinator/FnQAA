@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: hosting QAA's recompiled qagame (milestone M4).
+FnQAA: hosting QAA's recompiled qagame (milestone M4).
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 Included at the end of code/server/sv_game.cpp, whose helpers it uses.
 

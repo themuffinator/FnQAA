@@ -6070,7 +6070,7 @@ static const char *FS_DefaultHomePath( const char *basePath )
 	const char *homePath;
 
 	// QAA: PC deviation. Quake Live's SteamID-named profile folder in the
-	// install root does not apply: openQAA has no Steam, so it keeps the
+	// install root does not apply: FnQAA has no Steam, so it keeps the
 	// platform user folder (or the install folder) as FnQ3 does.
 
 	homePath = Sys_DefaultHomePath();
@@ -6103,11 +6103,11 @@ static void FS_Startup( void ) {
 	Cvar_SetDescription( fs_copyfiles, "Whether or not to copy files when loading them into the game. Every file found in the cdpath will be copied over." );
 	// QAA: PC deviation. FnQL finds the retail Quake Live Steam install
 	// (registry, Steam library folders) and searches it as fs_steampath.
-	// openQAA's data comes from the QAA package (fs_qaaPackage), so it looks
+	// FnQAA's data comes from the QAA package (fs_qaaPackage), so it looks
 	// for no game installation: fs_basepath is the launch folder.
 	defaultBasePath = Sys_DefaultBasePath();
 	fs_basepath = Cvar_Get( "fs_basepath", defaultBasePath, CVAR_INIT | CVAR_PROTECTED | CVAR_PRIVATE );
-	Cvar_SetDescription( fs_basepath, "Write-protected CVAR specifying the folder holding openQAA's base game directory." );
+	Cvar_SetDescription( fs_basepath, "Write-protected CVAR specifying the folder holding FnQAA's base game directory." );
 	fs_basegame = Cvar_Get( "fs_basegame", BASEGAME, CVAR_INIT | CVAR_PROTECTED );
 	Cvar_SetDescription( fs_basegame, "Write-protected CVAR specifying the path to the base game(s) folder(s), separated by '/'." );
 
@@ -6245,7 +6245,7 @@ static void FS_Startup( void ) {
 	fs_gamedirvar->modified = qfalse; // We just loaded, it's not modified
 
 	// check original q3a files
-	// QAA: PC deviation. openQAA's base data is the QAA package, so FnQL's
+	// QAA: PC deviation. FnQAA's base data is the QAA package, so FnQL's
 	// Quake Live (pak00) and Quake III (pak0-pak8) checks do not apply.
 	FS_QAA_CheckPackage();
 

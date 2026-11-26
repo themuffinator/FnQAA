@@ -1,5 +1,5 @@
 /*
- * openQAA: WMA Pro / XMA2 decoder tables.
+ * FnQAA: WMA Pro / XMA2 decoder tables.
  *
  * Copied unchanged from FFmpeg 7.1, libavcodec/wmaprodata.h (the default
  * decorrelation matrices for more than two channels are left out):
@@ -11,7 +11,7 @@
  * This file is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation; either version 2.1 of the License, or (at
- * your option) any later version. openQAA uses it under the GNU GPL v2 or
+ * your option) any later version. FnQAA uses it under the GNU GPL v2 or
  * later, as section 3 of the LGPL 2.1 allows.
  *
  * This file is distributed in the hope that it will be useful, but WITHOUT

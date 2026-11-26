@@ -1,5 +1,5 @@
 /*
- * openQAA: XMA2 decoder tests.
+ * FnQAA: XMA2 decoder tests.
  *
  * With no arguments: synthetic checks only (no retail data). The half
  * inverse MDCT against its direct formula, perfect reconstruction through

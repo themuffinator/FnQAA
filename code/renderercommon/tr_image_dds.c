@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: DirectDraw Surface (.dds) images.
+FnQAA: DirectDraw Surface (.dds) images.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 Quake Arena Arcade ships its textures as DDS (docs/FORMATS.md): DXT1, DXT2,
 DXT3 and DXT5 compressed, and uncompressed 32-bit ARGB. This loader decodes

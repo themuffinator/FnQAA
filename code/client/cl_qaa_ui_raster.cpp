@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: software rasteriser for QAA's Scaleform front end.
+FnQAA: software rasteriser for QAA's Scaleform front end.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 See cl_qaa_ui_raster.h.
 ===========================================================================

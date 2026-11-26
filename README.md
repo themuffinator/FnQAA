@@ -1,9 +1,9 @@
-# openQAA
+# FnQAA
 
 Run **Quake Arena Arcade** (Xbox Live Arcade, 2010) natively on the PC, from
 your own unmodified copy of the game.
 
-openQAA uses the [FnQL](https://github.com/themuffinator/FnQL) engine. QAA's
+FnQAA uses the [FnQL](https://github.com/themuffinator/FnQL) engine. QAA's
 own game code, its `qagameXe.dll` and `cgameXe.dll` modules, and its
 Scaleform front end in `default.xex` are statically recompiled from your
 package into native code on your machine. No game data
@@ -47,7 +47,7 @@ the package's files (`default.xex`, `baseq3/pak0.bpk`, ...). Point the engine
 at it with `fs_qaaPackage`; it is read in place and never written:
 
 ```powershell
-build/msvc/openqaa.exe +set fs_qaaPackage "D:\Games\QAA\0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458"
+build/msvc/fnqaa.exe +set fs_qaaPackage "D:\Games\QAA\0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458"
 ```
 
 - `+set fs_qaaPackage <path>`: the package file, a folder holding its files,

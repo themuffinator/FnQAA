@@ -424,10 +424,10 @@ const char *Sys_DefaultHomePath( void )
 	{
 		Q_strncpyz( homePath, p, sizeof( homePath ) );
 #ifdef MACOS_X
-		// QAA: openQAA's own user folder instead of Quake III's.
-		Q_strcat( homePath, sizeof(homePath), "/Library/Application Support/" OPENQAA_HOMEPATH_NAME_MACOSX );
+		// QAA: FnQAA's own user folder instead of Quake III's.
+		Q_strcat( homePath, sizeof(homePath), "/Library/Application Support/" FNQAA_HOMEPATH_NAME_MACOSX );
 #else
-		Q_strcat( homePath, sizeof( homePath ), "/" OPENQAA_HOMEPATH_NAME_UNIX );
+		Q_strcat( homePath, sizeof( homePath ), "/" FNQAA_HOMEPATH_NAME_UNIX );
 #endif
 		if ( mkdir( homePath, 0750 ) ) 
 		{

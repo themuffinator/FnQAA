@@ -178,7 +178,7 @@ sysStartupChoice_t Sys_PromptStartupChoice( const char *title, const char *messa
 
 	// Callers keep both strings well inside these buffers; an over-long or
 	// malformed conversion is treated as "no dialog is available".
-	if ( MultiByteToWideChar( CP_UTF8, 0, title && title[0] ? title : OPENQAA_PROJECT_NAME, -1, // QAA: rebrand
+	if ( MultiByteToWideChar( CP_UTF8, 0, title && title[0] ? title : FNQAA_PROJECT_NAME, -1, // QAA: rebrand
 			wideTitle, ARRAYSIZE( wideTitle ) ) <= 0 ) {
 		return SYS_STARTUP_PROCEED;
 	}

@@ -124,7 +124,7 @@ ObReferenceObjectByHandle, RtlTryEnterCriticalSection.
   archive slots (open 0x82120EF8, close 0x82120E58, lookup 0x82120C98,
   read 0x82121E00, shutdown 0x82123F90, startup 0x82124128 and an archive
   name check at 0x8218C2E0), and none enumerates entries. Files in a BPK
-  are reached only by exact name, so openQAA keeps them out of directory
+  are reached only by exact name, so FnQAA keeps them out of directory
   listings too. The names `tools/bpk_names.py` recovers are for tools and
   diagnostics; they are generated from the user's copy into `ref/`, never
   committed.

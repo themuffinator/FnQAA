@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: QAA's shared structures, as the guest lays them out.
+FnQAA: QAA's shared structures, as the guest lays them out.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 
 QAA's game modules use Quake III 1.32's structures, big-endian with 32-bit
 pointers; the engine uses FnQL's (Quake Live's). These are the guest

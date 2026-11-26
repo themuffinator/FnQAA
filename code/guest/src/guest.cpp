@@ -1,5 +1,5 @@
 /*
- * openQAA guest runtime: guest memory, threads, calls into the guest,
+ * FnQAA guest runtime: guest memory, threads, calls into the guest,
  * fault handling and module loading.
  */
 #include "runtime.h"

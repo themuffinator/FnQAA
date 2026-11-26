@@ -1,5 +1,5 @@
 /*
- * openQAA guest runtime: the interface between the runtime and a
+ * FnQAA guest runtime: the interface between the runtime and a
  * recompiled module library.
  *
  * A module library (qaa_qagame.dll, qaa_cgame.dll) is generated at build

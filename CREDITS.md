@@ -2,7 +2,7 @@
 
 ## Engine lineage
 
-openQAA's engine is imported from FnQL, which descends from a long id Tech 3
+FnQAA's engine is imported from FnQL, which descends from a long id Tech 3
 lineage. Every license header and provenance comment from these projects is
 kept in the imported code.
 
@@ -15,7 +15,7 @@ kept in the imported code.
 - [FnQ3](https://github.com/themuffinator/FnQ3): the modernized renderers,
   audio, platform and tooling that FnQL imported.
 - [FnQL](https://github.com/themuffinator/FnQL): the Quake Live engine that
-  openQAA uses, engine only.
+  FnQAA uses, engine only.
 
 ## Imported FnQL commit
 
@@ -27,7 +27,7 @@ retail-bounded cvars as retail does so com_maxfps 250x works"), taken with
 Imported: the client, server, qcommon, botlib, the GLx, Vulkan and RTX
 renderers, audio, the SDL, Win32 and Unix platform layers, the game, cgame
 and ui ABI headers, the Meson build with `subprojects/*.wrap`, the version
-header (now `version/openqaa_version.h`) and FnQL's compiled unit tests.
+header (now `version/fnqaa_version.h`) and FnQL's compiled unit tests.
 
 Left out: FnQL's Steam provider loader and Workshop adapter, the Awesomium
 WebUI and its web.pak, the audio-zone authoring tool, the Visual Studio
@@ -50,7 +50,7 @@ FnQL's own credits, which carry into the imported code, include:
 - Mikko Mononen's [FontStash](https://github.com/memononen/fontstash) and
   Sean Barrett's `stb_truetype` for the host text rasterizer.
 
-The application icon (`code/win32/openqaa.ico`, `code/sdl/sdl_icon.h`) is
+The application icon (`code/win32/fnqaa.ico`, `code/sdl/sdl_icon.h`) is
 still FnQL's.
 
 ## Formats
@@ -67,7 +67,7 @@ still FnQL's.
 
 ## Trademark note
 
-openQAA is an independent project and is not affiliated with, endorsed by,
+FnQAA is an independent project and is not affiliated with, endorsed by,
 or sponsored by id Software, Bethesda, ZeniMax Media, Microsoft or Valve.
 Quake, Quake III Arena, Quake Live and Quake Arena Arcade are trademarks of
 their respective owners.

@@ -1,9 +1,9 @@
-project('openQAA', 'c', 'cpp',
+project('FnQAA', 'c', 'cpp',
   license: 'GPL-2.0-or-later',
   version: run_command(
     find_program('python3', 'python', required: true),
     '-c',
-    'import re, pathlib; text = pathlib.Path("version/openqaa_version.h").read_text(); print(re.search(r"#define OPENQAA_VERSION_STRING \\"([^\\"]+)\\"", text).group(1))',
+    'import re, pathlib; text = pathlib.Path("version/fnqaa_version.h").read_text(); print(re.search(r"#define FNQAA_VERSION_STRING \\"([^\\"]+)\\"", text).group(1))',
     check: true,
   ).stdout().strip(),
   meson_version: '>= 0.60.0',
@@ -66,7 +66,7 @@ cpu_family = host_machine.cpu_family()
 # ppc64 compiler whose byte order differs from the configured family).
 fnql_target_probe_template = '''
 #if !(@0@)
-#error openQAA requires a @1@ target
+#error FnQAA requires a @1@ target
 #endif
 typedef char fnql_pointer_width_must_match[(sizeof(void *) == @2@) ? 1 : -1];
 int main(void) { return 0; }
@@ -96,10 +96,10 @@ if fnql_enabled_targets.has_key(cpu_family)
   endif
 endif
 if not fnql_target_supported
-  error('openQAA supports only 32-bit x86 targets and x86_64 on Windows and Linux, plus aarch64, armv7l (hard-float), ppc64le and ppc64 on Linux; Meson configured host CPU family "' + cpu_family + '" on "' + host_machine.system() + '" or the compiler target probe failed. Select Win32 or x64 on Windows, or use a native compiler or a matching cross file (misc/meson/linux-<arch>.ini) on Linux.')
+  error('FnQAA supports only 32-bit x86 targets and x86_64 on Windows and Linux, plus aarch64, armv7l (hard-float), ppc64le and ppc64 on Linux; Meson configured host CPU family "' + cpu_family + '" on "' + host_machine.system() + '" or the compiler target probe failed. Select Win32 or x64 on Windows, or use a native compiler or a matching cross file (misc/meson/linux-<arch>.ini) on Linux.')
 endif
 
-renderer_prefix = 'openqaa'
+renderer_prefix = 'fnqaa'
 build_client = get_option('build-client')
 build_server = get_option('build-server')
 # The client is enabled on x86 and x86_64 only. On the Linux aarch64, armv7l,
@@ -107,7 +107,7 @@ build_server = get_option('build-server')
 # FnQL-game's modules (FnQL-game milestone M11); a client there has no gate
 # yet, so it is not built (AGENTS.md constraint 9).
 if build_client and not ['x86', 'x86_64'].contains(cpu_family)
-  error('The openQAA client is not enabled on ' + cpu_family + ': only the dedicated server and FnQL-game modules are gated on this target. Configure with -Dbuild-client=false.')
+  error('The FnQAA client is not enabled on ' + cpu_family + ': only the dedicated server and FnQL-game modules are gated on this target. Configure with -Dbuild-client=false.')
 endif
 renderer_default = get_option('renderer-default')
 renderer_dlopen = get_option('renderer-dlopen')
@@ -141,11 +141,11 @@ else
   binary_suffix = '.' + cpu_family
 endif
 
-# QAA: openQAA's primary targets are Windows and Linux x86_64, so the
+# QAA: FnQAA's primary targets are Windows and Linux x86_64, so the
 # executables carry no architecture suffix. Renderer modules keep the arch in
 # their name because the client loads RENDERER_PREFIX_<name>_<arch>.
-client_binary_name = 'openqaa'
-server_binary_name = 'openqaa-ded'
+client_binary_name = 'fnqaa'
+server_binary_name = 'fnqaa-ded'
 
 common_c_args = []
 common_cpp_args = []
@@ -703,8 +703,8 @@ if win32
   win_resource_deps = files(
     'code/win32/q3.manifest',
     'code/win32/resource.h',
-    'code/win32/openqaa.ico',
-    'version/openqaa_version.h',
+    'code/win32/fnqaa.ico',
+    'version/fnqaa_version.h',
   )
   if rc_prog.found()
     if rc_prog.full_path().to_lower().contains('windres')
@@ -969,125 +969,125 @@ if build_server
 endif
 
 if get_option('audio-tests')
-  audio_zone_tests = executable('openqaa_audio_zone_tests',
+  audio_zone_tests = executable('fnqaa_audio_zone_tests',
     'tests/audio/audiozone_runtime_tests.cpp',
     include_directories: include_directories('code/client/audio/shared'),
     cpp_args: common_cpp_args,
   )
-  test('openqaa_audio_zones', audio_zone_tests)
+  test('fnqaa_audio_zones', audio_zone_tests)
 
-  audio_recovery_tests = executable('openqaa_audio_recovery_tests',
+  audio_recovery_tests = executable('fnqaa_audio_recovery_tests',
     'tests/audio/recovery_policy_tests.cpp',
     include_directories: include_directories('code/client/audio/shared'),
     cpp_args: common_cpp_args,
   )
-  test('openqaa_audio_recovery', audio_recovery_tests)
+  test('fnqaa_audio_recovery', audio_recovery_tests)
 
-  audio_init_policy_tests = executable('openqaa_audio_init_policy_tests',
+  audio_init_policy_tests = executable('fnqaa_audio_init_policy_tests',
     'tests/audio/init_policy_tests.cpp',
     include_directories: include_directories('code/client/audio/shared'),
     cpp_args: common_cpp_args,
   )
-  test('openqaa_audio_init_policy', audio_init_policy_tests)
+  test('fnqaa_audio_init_policy', audio_init_policy_tests)
 
-  audio_occlusion_tests = executable('openqaa_audio_occlusion_tests',
+  audio_occlusion_tests = executable('fnqaa_audio_occlusion_tests',
     'tests/audio/occlusion_policy_tests.cpp',
     include_directories: include_directories('code/client/audio/shared'),
     cpp_args: common_cpp_args,
   )
-  test('openqaa_audio_occlusion', audio_occlusion_tests)
+  test('fnqaa_audio_occlusion', audio_occlusion_tests)
 
-  audio_tone_tests = executable('openqaa_audio_tone_tests',
+  audio_tone_tests = executable('fnqaa_audio_tone_tests',
     'tests/audio/tone_policy_tests.cpp',
     include_directories: include_directories('code/client/audio/shared'),
     cpp_args: common_cpp_args,
   )
-  test('openqaa_audio_tone', audio_tone_tests)
+  test('fnqaa_audio_tone', audio_tone_tests)
 
-  audio_loopback_tests = executable('openqaa_audio_loopback_tests',
+  audio_loopback_tests = executable('fnqaa_audio_loopback_tests',
     'tests/audio/openal_loopback_tests.cpp',
     dependencies: client_deps + [openal_header_dep],
     cpp_args: common_cpp_args,
   )
-  test('openqaa_audio_loopback', audio_loopback_tests, should_fail: false)
+  test('fnqaa_audio_loopback', audio_loopback_tests, should_fail: false)
 
 endif
 
 # QAA: the package readers on synthetic data (no retail data needed).
-qaa_package_tests = executable('openqaa_qaa_package_tests',
+qaa_package_tests = executable('fnqaa_qaa_package_tests',
   ['tests/qaa_package_tests.c'] + qaa_src,
   include_directories: include_directories('code/qaa'),
   c_args: common_c_args,
 )
-test('openqaa_qaa_package', qaa_package_tests)
+test('fnqaa_qaa_package', qaa_package_tests)
 
 # QAA: the XMA2 decoder on synthetic data (its transform, windowing and
 # Huffman tables); the test includes code/qaa/qaa_xma2.c itself.
-qaa_xma2_tests = executable('openqaa_qaa_xma2_tests',
+qaa_xma2_tests = executable('fnqaa_qaa_xma2_tests',
   'tests/qaa_xma2_tests.c',
   c_args: common_c_args,
 )
-test('openqaa_qaa_xma2', qaa_xma2_tests)
+test('fnqaa_qaa_xma2', qaa_xma2_tests)
 
-netchan_profile_tests = executable('openqaa_netchan_profile_tests',
+netchan_profile_tests = executable('fnqaa_netchan_profile_tests',
   'tests/netchan_profile_tests.cpp',
   include_directories: include_directories('code/qcommon'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_netchan_profiles', netchan_profile_tests)
+test('fnqaa_netchan_profiles', netchan_profile_tests)
 
-netchan_codec_tests = executable('openqaa_netchan_codec_tests',
+netchan_codec_tests = executable('fnqaa_netchan_codec_tests',
   'tests/netchan_codec_tests.cpp',
   include_directories: include_directories('code/qcommon'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_netchan_codec', netchan_codec_tests)
+test('fnqaa_netchan_codec', netchan_codec_tests)
 
 # QAA: the Scaleform front end's rasteriser and image decoders (M6)
-qaa_ui_raster_tests = executable('openqaa_qaa_ui_raster_tests',
+qaa_ui_raster_tests = executable('fnqaa_qaa_ui_raster_tests',
   ['tests/qaa_ui_raster_tests.cpp', 'code/client/cl_qaa_ui_raster.cpp'],
   include_directories: include_directories('code/client'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_qaa_ui_raster', qaa_ui_raster_tests)
+test('fnqaa_qaa_ui_raster', qaa_ui_raster_tests)
 
-ql_font_text_tests = executable('openqaa_ql_font_text_tests',
+ql_font_text_tests = executable('fnqaa_ql_font_text_tests',
   'tests/ql_font_text_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('openqaa_ql_font_text', ql_font_text_tests)
+test('fnqaa_ql_font_text', ql_font_text_tests)
 
-window_placement_tests = executable('openqaa_window_placement_tests',
+window_placement_tests = executable('fnqaa_window_placement_tests',
   'tests/window_placement_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('openqaa_window_placement', window_placement_tests)
+test('fnqaa_window_placement', window_placement_tests)
 
-global_fog_tests = executable('openqaa_global_fog_tests',
+global_fog_tests = executable('fnqaa_global_fog_tests',
   'tests/global_fog_tests.cpp',
   'code/qcommon/q_shared.c',
   c_args: common_c_args,
   cpp_args: common_cpp_args,
 )
-test('openqaa_global_fog', global_fog_tests)
+test('fnqaa_global_fog', global_fog_tests)
 
-menu_blur_tests = executable('openqaa_menu_blur_tests',
+menu_blur_tests = executable('fnqaa_menu_blur_tests',
   'tests/menu_blur_tests.cpp',
   'code/qcommon/q_shared.c',
   c_args: common_c_args,
   cpp_args: common_cpp_args,
 )
-test('openqaa_menu_blur', menu_blur_tests)
+test('fnqaa_menu_blur', menu_blur_tests)
 
-levelshot_validation_tests = executable('openqaa_levelshot_validation_tests',
+levelshot_validation_tests = executable('fnqaa_levelshot_validation_tests',
   'tests/levelshot_validation_tests.cpp',
   'code/qcommon/q_shared.c',
   c_args: common_c_args,
   cpp_args: common_cpp_args,
 )
-test('openqaa_levelshot_validation', levelshot_validation_tests)
+test('fnqaa_levelshot_validation', levelshot_validation_tests)
 
-bmp_loader_tests = executable('openqaa_bmp_loader_tests',
+bmp_loader_tests = executable('fnqaa_bmp_loader_tests',
   [
     'tests/bmp_loader_tests.c',
     'code/renderercommon/tr_image_bmp.c',
@@ -1095,9 +1095,9 @@ bmp_loader_tests = executable('openqaa_bmp_loader_tests',
   include_directories: include_directories('code/qcommon', 'code/renderercommon'),
   c_args: common_c_args,
 )
-test('openqaa_bmp_loader', bmp_loader_tests)
+test('fnqaa_bmp_loader', bmp_loader_tests)
 
-huffman_decoder_tests = executable('openqaa_huffman_decoder_tests',
+huffman_decoder_tests = executable('fnqaa_huffman_decoder_tests',
   [
     'tests/huffman_decoder_tests.c',
     'code/qcommon/huffman.c',
@@ -1105,51 +1105,51 @@ huffman_decoder_tests = executable('openqaa_huffman_decoder_tests',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('openqaa_huffman_decoder', huffman_decoder_tests)
+test('fnqaa_huffman_decoder', huffman_decoder_tests)
 
-qvm_header_tests = executable('openqaa_qvm_header_tests',
+qvm_header_tests = executable('fnqaa_qvm_header_tests',
   'tests/qvm_header_tests.c',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('openqaa_qvm_header_bounds', qvm_header_tests)
+test('fnqaa_qvm_header_bounds', qvm_header_tests)
 
-filesystem_write_bounds_tests = executable('openqaa_filesystem_write_bounds_tests',
+filesystem_write_bounds_tests = executable('fnqaa_filesystem_write_bounds_tests',
   'tests/filesystem_write_bounds_tests.c',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('openqaa_filesystem_write_bounds', filesystem_write_bounds_tests)
+test('fnqaa_filesystem_write_bounds', filesystem_write_bounds_tests)
 
-cvar_integer_tests = executable('openqaa_cvar_integer_tests',
+cvar_integer_tests = executable('fnqaa_cvar_integer_tests',
   'tests/cvar_integer_tests.c',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('openqaa_cvar_integer', cvar_integer_tests)
+test('fnqaa_cvar_integer', cvar_integer_tests)
 
-cvar_retail_bounds_tests = executable('openqaa_cvar_retail_bounds_tests',
+cvar_retail_bounds_tests = executable('fnqaa_cvar_retail_bounds_tests',
   'tests/cvar_retail_bounds_tests.c',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('openqaa_cvar_retail_bounds', cvar_retail_bounds_tests)
+test('fnqaa_cvar_retail_bounds', cvar_retail_bounds_tests)
 
-cvar_ui_policy_tests = executable('openqaa_cvar_ui_policy_tests',
+cvar_ui_policy_tests = executable('fnqaa_cvar_ui_policy_tests',
   'tests/cvar_ui_policy_tests.c',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('openqaa_cvar_ui_policy', cvar_ui_policy_tests)
+test('fnqaa_cvar_ui_policy', cvar_ui_policy_tests)
 
-module_provider_policy_tests = executable('openqaa_module_provider_policy_tests',
+module_provider_policy_tests = executable('fnqaa_module_provider_policy_tests',
   'tests/module_provider_policy_tests.c',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('openqaa_module_provider_policy', module_provider_policy_tests)
+test('fnqaa_module_provider_policy', module_provider_policy_tests)
 
-png_loader_tests = executable('openqaa_png_loader_tests',
+png_loader_tests = executable('fnqaa_png_loader_tests',
   [
     'tests/png_loader_tests.c',
     'code/renderercommon/tr_image_png.c',
@@ -1158,49 +1158,49 @@ png_loader_tests = executable('openqaa_png_loader_tests',
   include_directories: include_directories('code/qcommon', 'code/renderercommon'),
   c_args: common_c_args,
 )
-test('openqaa_png_loader', png_loader_tests)
+test('fnqaa_png_loader', png_loader_tests)
 
-netchan_safety_tests = executable('openqaa_netchan_safety_tests',
+netchan_safety_tests = executable('fnqaa_netchan_safety_tests',
   'tests/netchan_safety_tests.cpp',
   include_directories: include_directories('code/qcommon'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_netchan_safety', netchan_safety_tests)
+test('fnqaa_netchan_safety', netchan_safety_tests)
 
-snapshot_history_tests = executable('openqaa_snapshot_history_tests',
+snapshot_history_tests = executable('fnqaa_snapshot_history_tests',
   'tests/snapshot_history_tests.cpp',
   'code/qcommon/msg.cpp',
   'code/qcommon/huffman_static.c',
   c_args: common_c_args + ['-DDEDICATED'],
   cpp_args: common_cpp_args + ['-DDEDICATED'],
 )
-test('openqaa_snapshot_history', snapshot_history_tests)
+test('fnqaa_snapshot_history', snapshot_history_tests)
 
-input_compat_tests = executable('openqaa_input_compat_tests',
+input_compat_tests = executable('fnqaa_input_compat_tests',
   'tests/input_compat_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('openqaa_input_compat', input_compat_tests)
+test('fnqaa_input_compat', input_compat_tests)
 
-client_cvar_compat_tests = executable('openqaa_client_cvar_compat_tests',
+client_cvar_compat_tests = executable('fnqaa_client_cvar_compat_tests',
   'tests/client_cvar_compat_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('openqaa_client_cvar_compat', client_cvar_compat_tests)
+test('fnqaa_client_cvar_compat', client_cvar_compat_tests)
 
-server_cvar_compat_tests = executable('openqaa_server_cvar_compat_tests',
+server_cvar_compat_tests = executable('fnqaa_server_cvar_compat_tests',
   'tests/server_cvar_compat_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('openqaa_server_cvar_compat', server_cvar_compat_tests)
+test('fnqaa_server_cvar_compat', server_cvar_compat_tests)
 
-arena_script_tests = executable('openqaa_arena_script_tests',
+arena_script_tests = executable('fnqaa_arena_script_tests',
   'tests/arena_script_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('openqaa_arena_script', arena_script_tests)
+test('fnqaa_arena_script', arena_script_tests)
 
-message_codec_tests = executable('openqaa_message_codec_tests',
+message_codec_tests = executable('fnqaa_message_codec_tests',
   'tests/message_codec_tests.cpp',
   'code/qcommon/msg.cpp',
   'code/qcommon/huffman_static.c',
@@ -1208,52 +1208,52 @@ message_codec_tests = executable('openqaa_message_codec_tests',
   c_args: common_c_args + ['-DDEDICATED'],
   cpp_args: common_cpp_args + ['-DDEDICATED'],
 )
-test('openqaa_message_codec', message_codec_tests)
+test('fnqaa_message_codec', message_codec_tests)
 
-protocol_layout_tests = executable('openqaa_protocol_layout_tests',
+protocol_layout_tests = executable('fnqaa_protocol_layout_tests',
   'tests/protocol_layout_tests.cpp',
   include_directories: include_directories('code/qcommon'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_protocol_layout', protocol_layout_tests)
+test('fnqaa_protocol_layout', protocol_layout_tests)
 
-protocol_contract_tests = executable('openqaa_protocol_contract_tests',
+protocol_contract_tests = executable('fnqaa_protocol_contract_tests',
   'tests/protocol_contract_tests.cpp',
   include_directories: include_directories('code/qcommon'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_protocol_contract', protocol_contract_tests)
+test('fnqaa_protocol_contract', protocol_contract_tests)
 
-retail_auth_challenge_tests = executable('openqaa_retail_auth_challenge_tests',
+retail_auth_challenge_tests = executable('fnqaa_retail_auth_challenge_tests',
   'tests/retail_auth_challenge_tests.cpp',
   include_directories: include_directories('code/client'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_retail_auth_challenge', retail_auth_challenge_tests)
+test('fnqaa_retail_auth_challenge', retail_auth_challenge_tests)
 
-game_identity_tests = executable('openqaa_game_identity_tests',
+game_identity_tests = executable('fnqaa_game_identity_tests',
   'tests/game_identity_tests.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_game_identity', game_identity_tests)
+test('fnqaa_game_identity', game_identity_tests)
 
-factory_rotation_tests = executable('openqaa_factory_rotation_tests',
+factory_rotation_tests = executable('fnqaa_factory_rotation_tests',
   'tests/factory_rotation_tests.cpp',
   'code/server/factory_rotation.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_factory_rotation', factory_rotation_tests)
+test('fnqaa_factory_rotation', factory_rotation_tests)
 
-json_document_tests = executable('openqaa_json_document_tests',
+json_document_tests = executable('fnqaa_json_document_tests',
   'tests/json_document_tests.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_json_document', json_document_tests)
+test('fnqaa_json_document', json_document_tests)
 
-factory_catalog_tests = executable('openqaa_factory_catalog_tests',
+factory_catalog_tests = executable('fnqaa_factory_catalog_tests',
   [
     'tests/factory_catalog_tests.cpp',
     'code/server/factory_catalog.cpp',
@@ -1261,41 +1261,41 @@ factory_catalog_tests = executable('openqaa_factory_catalog_tests',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_factory_catalog', factory_catalog_tests)
+test('fnqaa_factory_catalog', factory_catalog_tests)
 
-stats_event_tests = executable('openqaa_stats_event_tests',
+stats_event_tests = executable('fnqaa_stats_event_tests',
   'tests/stats_event_tests.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_stats_event', stats_event_tests)
+test('fnqaa_stats_event', stats_event_tests)
 
-stats_report_tests = executable('openqaa_stats_report_tests',
+stats_report_tests = executable('fnqaa_stats_report_tests',
   'tests/stats_report_tests.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_stats_report', stats_report_tests)
+test('fnqaa_stats_report', stats_report_tests)
 
-demo_stream_tests = executable('openqaa_demo_stream_tests',
+demo_stream_tests = executable('fnqaa_demo_stream_tests',
   'tests/demo_stream_tests.cpp',
   include_directories: include_directories('code/client'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_demo_stream', demo_stream_tests)
+test('fnqaa_demo_stream', demo_stream_tests)
 
-ql_bsp_contract_tests = executable('openqaa_ql_bsp_contract_tests',
+ql_bsp_contract_tests = executable('fnqaa_ql_bsp_contract_tests',
   'tests/ql_bsp_contract_tests.cpp',
   include_directories: include_directories('code/qcommon'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_ql_bsp_contract', ql_bsp_contract_tests)
+test('fnqaa_ql_bsp_contract', ql_bsp_contract_tests)
 
-collision_model_parity_tests = executable('openqaa_collision_model_parity_tests',
+collision_model_parity_tests = executable('fnqaa_collision_model_parity_tests',
   'tests/collision_model_parity_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('openqaa_collision_model_parity', collision_model_parity_tests)
+test('fnqaa_collision_model_parity', collision_model_parity_tests)
 
 # Links the real trace path against a stub collision model so the capsule
 # geometry and the debug trace-plane invariant are exercised, not just
@@ -1307,7 +1307,7 @@ if libm.found()
   collision_capsule_trace_deps += libm
 endif
 
-collision_capsule_trace_tests = executable('openqaa_collision_capsule_trace_tests',
+collision_capsule_trace_tests = executable('fnqaa_collision_capsule_trace_tests',
   [
     'tests/collision_capsule_trace_tests.c',
     'code/qcommon/cm_trace.c',
@@ -1317,30 +1317,30 @@ collision_capsule_trace_tests = executable('openqaa_collision_capsule_trace_test
   c_args: common_c_args,
   dependencies: collision_capsule_trace_deps,
 )
-test('openqaa_collision_capsule_trace', collision_capsule_trace_tests)
+test('fnqaa_collision_capsule_trace', collision_capsule_trace_tests)
 
-zmq_endpoint_tests = executable('openqaa_zmq_endpoint_tests',
+zmq_endpoint_tests = executable('fnqaa_zmq_endpoint_tests',
   'tests/zmq_endpoint_tests.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('openqaa_zmq_endpoint', zmq_endpoint_tests)
+test('fnqaa_zmq_endpoint', zmq_endpoint_tests)
 
 if get_option('glx-tests')
-  glx_logic_tests = executable('openqaa_glx_logic_tests',
+  glx_logic_tests = executable('fnqaa_glx_logic_tests',
     'tests/glx/glx_logic_tests.cpp',
     'code/rendererglx/glx_executor.cpp',
     include_directories: include_directories('code/rendererglx', 'code/qcommon', 'code/renderercommon'),
     cpp_args: common_cpp_args,
   )
-  test('openqaa_glx_logic', glx_logic_tests)
+  test('fnqaa_glx_logic', glx_logic_tests)
 endif
 
 # QAA: the client and the dedicated server start headless, mount a synthetic
 # package in place and quit cleanly. With QAA_PACKAGE set to the user's STFS
 # package, both also read a record of the real pak0.bpk by hash.
 if build_client and build_server
-  test('openqaa_headless', python,
+  test('fnqaa_headless', python,
     args: [files('tests/headless_tests.py'), client_exe, server_exe],
     depends: renderer_targets,
     env: {'MESON_BUILD_ROOT': meson.current_build_dir()},
@@ -1367,10 +1367,10 @@ summary({
   'cURL': curl_summary,
   'JPEG': jpeg_source,
   'Ogg Vorbis': ogg_vorbis_source,
-}, section: 'openQAA build')
+}, section: 'FnQAA build')
 
 # Every test runs unattended (AGENTS.md headless rule): clients start
 # windowless (com_headless 2, which still renders and captures) and dedicated
 # servers headless, unless a test passes +set com_headless itself.
-# QAA: the variable is OPENQAA_HEADLESS (FnQL's FNQL_HEADLESS).
-add_test_setup('headless', env: {'OPENQAA_HEADLESS': '2'}, is_default: true)
+# QAA: the variable is FNQAA_HEADLESS (FnQL's FNQL_HEADLESS).
+add_test_setup('headless', env: {'FNQAA_HEADLESS': '2'}, is_default: true)

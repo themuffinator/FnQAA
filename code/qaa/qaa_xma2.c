@@ -1,5 +1,5 @@
 /*
- * openQAA: XMA2 audio decoder.
+ * FnQAA: XMA2 audio decoder.
  *
  * Ported from FFmpeg 7.1, libavcodec/wmaprodec.c and wma.c (the WMA Pro
  * bitstream that XMA2 carries, and FFmpeg's XMA2 packet handling), cut down
@@ -17,7 +17,7 @@
  * This file is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation; either version 2.1 of the License, or (at
- * your option) any later version. openQAA uses it under the GNU GPL v2 or
+ * your option) any later version. FnQAA uses it under the GNU GPL v2 or
  * later, as section 3 of the LGPL 2.1 allows.
  *
  * This file is distributed in the hope that it will be useful, but WITHOUT
@@ -25,7 +25,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
  * License for more details.
  *
- * openQAA changes, all PC-side: FFmpeg's XMA stream interleaving, its
+ * FnQAA changes, all PC-side: FFmpeg's XMA stream interleaving, its
  * WMA Pro (non-XMA) paths and channel counts above two are left out; the
  * output is 16-bit PCM; the length is cut to the file's play region.
  */

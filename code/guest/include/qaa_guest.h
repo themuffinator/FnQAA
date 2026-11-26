@@ -1,5 +1,5 @@
 /*
- * openQAA guest runtime: public C API.
+ * FnQAA guest runtime: public C API.
  *
  * The runtime hosts Quake Arena Arcade's statically recompiled Xbox 360
  * game modules. It owns a 4 GiB guest address space laid out like the
@@ -172,7 +172,7 @@ int qaa_guest_call(qaa_guest *guest, uint32_t function, const int64_t *args, int
 /*
  * A module recompiled from part of an image (the front end inside
  * default.xex, docs/UI.md) calls functions that were not recompiled: the
- * engine code openQAA replaces. Each such call, direct or indirect, comes
+ * engine code FnQAA replaces. Each such call, direct or indirect, comes
  * to the host's hook for that guest address with the guest's registers.
  * The handler reads the arguments, does the work and writes the results.
  * It may call into the guest again (qaa_guest_call*).

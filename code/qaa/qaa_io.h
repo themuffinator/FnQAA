@@ -1,9 +1,9 @@
 /*
 ===========================================================================
-openQAA: random-access readers for the QAA package formats.
+FnQAA: random-access readers for the QAA package formats.
 
-Copyright (C) 2026 openQAA contributors.
-This file is part of openQAA, licensed under the GNU GPL v2 or later.
+Copyright (C) 2026 FnQAA contributors.
+This file is part of FnQAA, licensed under the GNU GPL v2 or later.
 ===========================================================================
 */
 #ifndef QAA_IO_H
