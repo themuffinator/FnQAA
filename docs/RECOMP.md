@@ -13,11 +13,28 @@ retail code) or **observed** (seen in a run).
 ## Building
 
 ```sh
-python tools/recomp/build.py --package <package>
+python tools/recomp/build.py [--package <package>]
 ```
 
 `<package>` is the STFS package, the zip that holds it, or a folder with
-the extracted files. Everything goes to `build/recomp/` (ignored by git):
+the extracted files. Without `--package`, `tools/recomp/setup_env.py`
+looks for it as the engine does (`FS_QAA_FindPackage` in
+`code/qaa/qaa_fs.inc`), in `ref/package/`, then `ref/`. It first checks that every tool
+below is installed and names the missing ones with how to install them, and
+builds the LZX helper `tools/xex.py` needs (`<out>/tools/qaa_lzx`, from
+`code/qaa/qaa_lzx.c`) unless `QAA_LZX_DLL` names one.
+
+A release carries this script and what it needs under `setup/`
+(`scripts/package_release.py` lists the files) with `setup.cmd` and
+`setup.sh` beside the engine. Run from a release, `build.py` looks for the
+package in the release folder, unpacks it from the XBLA zip into
+`584108C8/000D0000/` there (once; the engine reads the package, not the
+zip), and copies the runtime, the modules and the XEX header into the
+release folder (`--install <dir>` elsewhere, `--no-install` not at all),
+where the engine loads them.
+
+Everything else goes to `build/recomp/` (ignored by git; in a release,
+`setup/build/recomp/`):
 
 | Path | What |
 |---|---|

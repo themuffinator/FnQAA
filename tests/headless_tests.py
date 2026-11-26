@@ -79,9 +79,10 @@ def make_bpk(records):
     return head + rows + body
 
 
-def make_stfs(files):
+def make_stfs(files, content_type=0x000D0000):
     """A read-only LIVE package; files: list of (path, bytes), at most one
-    directory level, every file contiguous, all below 0xAA data blocks."""
+    directory level, every file contiguous, all below 0xAA data blocks.
+    content_type 0x000D0000 is an Arcade title, 0x00000001 a saved game."""
     block = 0x1000
     entries, data_blocks, dirs = [], [], {}
     next_block = 1                      # data block 0 holds the file table
@@ -112,7 +113,7 @@ def make_stfs(files):
     header = bytearray(0x1000)
     header[0:4] = b"LIVE"
     header[0x340:0x344] = struct.pack(">I", 0x1000)
-    header[0x344:0x348] = struct.pack(">I", 0x000D0000)
+    header[0x344:0x348] = struct.pack(">I", content_type)
     header[0x360:0x364] = struct.pack(">I", 0x584108C8)
     header[0x37B] = 1
     header[0x37C:0x37E] = (1).to_bytes(2, "little")
@@ -205,6 +206,7 @@ class HeadlessTests(unittest.TestCase):
         nested = ("echo " + NESTED_MARKER + "\n").encode()
         bpk = make_bpk([(bpk_name_hash("default.cfg"), self.cfg), (bpk_name_hash(NESTED_NAME), nested),
                         (EXTRA_HASH, EXTRA)])
+        self.bpk = bpk
         self.package = self.work / "package"
         self.package.write_bytes(make_stfs([("default.xex", b"synthetic"), ("baseq3/pak0.bpk", bpk)]))
         self.folder = self.work / "folder"
@@ -243,6 +245,54 @@ class HeadlessTests(unittest.TestCase):
     def test_client_starts_headless_and_quits(self):
         out = self.synthetic_run(CLIENT, self.package)
         self.assertIn("Client Shutdown (Client quit)", out)
+
+    # With fs_qaaPackage empty the engine finds the package where users put it.
+    PACKAGE_NAME = "0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458"
+
+    def place(self, root, *parts):
+        dest = self.work / root / Path(*parts)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if self.package.is_dir():
+            shutil.copytree(self.package, dest)
+        else:
+            shutil.copyfile(self.package, dest)
+        return dest
+
+    def discovery_run(self, exe, where):
+        out = self.engine.run(exe, ["+qaa_info", "+qaa_bpkread", "%016x" % EXTRA_HASH, "+wait", "3", "+quit"])
+        self.assertIn("Found the Quake Arena Arcade package: " + str(where), out)
+        self.assertIn(MARKER, out, "default.cfg was not executed from the found package")
+        self.assertIn("qaa_bpkread %016x: %d bytes" % (EXTRA_HASH, len(EXTRA)), out)
+        return out
+
+    def test_server_finds_the_extracted_xbla_zip(self):
+        where = self.place("base", "584108C8", "000D0000", self.PACKAGE_NAME)
+        self.discovery_run(SERVER, where)
+
+    def test_client_finds_an_xbox_content_folder(self):
+        where = self.place("base", "Content", "0000000000000000", "584108C8", "000D0000", self.PACKAGE_NAME)
+        out = self.discovery_run(CLIENT, where)
+        self.assertIn("Client Shutdown (Client quit)", out)
+
+    def test_server_finds_an_extracted_folder_in_home(self):
+        self.package = self.folder
+        where = self.place("home", "Quake Arena Arcade")
+        out = self.discovery_run(SERVER, where)
+        self.assertIn("Quake Arena Arcade folder", out)
+
+    def test_server_finds_a_bare_package_file(self):
+        where = self.place("base", self.PACKAGE_NAME)
+        self.discovery_run(SERVER, where)
+
+    def test_saves_and_other_titles_are_not_mounted(self):
+        # a saved game of the same title, holding a valid pak0.bpk all the same
+        save = make_stfs([("default.xex", b"synthetic"), ("baseq3/pak0.bpk", self.bpk)], content_type=0x00000001)
+        (self.work / "base" / "584108C8" / "00000001").mkdir(parents=True)
+        (self.work / "base" / "584108C8" / "00000001" / "save").write_bytes(save)
+        (self.work / "base" / "savegame").write_bytes(save)
+        out = self.engine.run(SERVER, ["+quit"], expect_code=1)
+        self.assertNotIn("Found the Quake Arena Arcade package", out)
+        self.assertIn("no Quake Arena Arcade package found", out)
 
     def test_missing_default_cfg_is_fatal(self):
         out = self.engine.run(SERVER, ["+quit"], expect_code=1)

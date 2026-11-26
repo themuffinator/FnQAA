@@ -1026,6 +1026,8 @@ test('fnqaa_qaa_package', qaa_package_tests)
 qaa_xma2_tests = executable('fnqaa_qaa_xma2_tests',
   'tests/qaa_xma2_tests.c',
   c_args: common_c_args,
+  # the decoder's transform calls sin/cos/pow/lrintf, which GCC links from libm
+  dependencies: libm.found() ? [libm] : [],
 )
 test('fnqaa_qaa_xma2', qaa_xma2_tests)
 

@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """Statically recompile Quake Arena Arcade's game modules from the user's package.
 
-    python tools/recomp/build.py --package <STFS package, its zip, or an extracted folder>
+    python tools/recomp/build.py [--package <STFS package, its zip, or an extracted folder>]
+
+Without --package it finds the package as the engine does (setup_env.py):
+in a FnQAA release, in the release folder (the XBLA zip, the zip extracted,
+an Xbox 360 Content folder, the package file or a folder of its files); in
+a source checkout, in ref/. In a release it also unpacks the package from
+the zip where the engine finds it, and installs the built libraries next to
+the engine. setup.cmd / setup.sh in a release run exactly this.
 
 Steps, all into the output directory (default build/recomp, ignored by git):
 
@@ -42,6 +49,8 @@ SUBSETS = {"ui": os.path.join(ROOT, "data", "recomp", "ui.json")}
 INPUTS = dict(MODULES, executable="default.xex")
 EXE_HEADER = "qaa_default_xex_header.bin"
 PIN = json.load(open(os.path.join(HERE, "xenonrecomp.json")))
+
+import setup_env  # noqa: E402  (after sys.path has tools/recomp)
 
 
 def log(msg):
@@ -348,7 +357,11 @@ def recompile_module(mod, xex, out, xr_src, recomp_exe, analyse_exe, args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--package", required=True, help="STFS package, a zip of it, or a folder with the extracted files")
+    ap.add_argument("--package", help="STFS package, a zip of it, or a folder with the extracted files "
+                    "(default: found in the release folder, or in ref/ in a source checkout)")
+    ap.add_argument("--install", help="copy the built libraries into this folder "
+                    "(default: the release folder in a FnQAA release; nowhere in a source checkout)")
+    ap.add_argument("--no-install", action="store_true", help="leave the libraries in <out>/native/bin")
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "recomp"), help="output directory")
     ap.add_argument("--xenonrecomp", help="XenonRecomp checkout (default: $QAA_XENONRECOMP or a sibling checkout)")
     ap.add_argument("--modules", default="qagame,cgame,ui")
@@ -364,7 +377,18 @@ def main():
     for m in mods:
         if m not in MODULES:
             raise SystemExit("unknown module %s (have %s)" % (m, ", ".join(MODULES)))
-    found = find_modules(os.path.abspath(a.package), out)
+    setup_env.check_tools()
+    eng = setup_env.engine_dir()
+    package, kind = (a.package, "zip" if zipfile.is_zipfile(a.package) else "package") if a.package         else setup_env.find_package()
+    if not package:
+        where = eng or os.path.join(ROOT, "ref")
+        raise SystemExit("no Quake Arena Arcade package found in %s. Put the XBLA zip there (or the package "
+                         "file, or your Xbox 360 Content folder), or pass --package." % where)
+    if kind == "zip" and eng:
+        package = setup_env.unpack_zip(package, eng)   # the engine reads the package, not the zip
+    log("package: %s" % package)
+    setup_env.ensure_lzx(out)
+    found = find_modules(os.path.abspath(package), out)
     missing = [m for m in mods if m not in found]
     if missing:
         raise SystemExit("not in the package: %s" % ", ".join(MODULES[m] for m in missing))
@@ -402,6 +426,11 @@ def main():
     if exe_header:
         shutil.copyfile(exe_header, os.path.join(bld, "bin", EXE_HEADER))
     log("libraries in %s" % os.path.join(bld, "bin"))
+    dest = None if a.no_install else (a.install or eng)
+    if dest:
+        setup_env.install(os.path.join(bld, "bin"), os.path.abspath(dest))
+        if eng and os.path.abspath(dest) == os.path.abspath(eng):
+            log("done: start %s" % os.path.join(eng, setup_env.ENGINE_NAMES[0]))
     return 0
 
 

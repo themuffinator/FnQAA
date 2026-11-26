@@ -61,5 +61,8 @@ inferences in docs, comments and commits.
   comment saying whether it is retail behaviour (with the retail function's
   address) or a PC deviation (with the reason).
 - Generated (recompiled) code is build output, never source.
+- A change players or server operators would notice gets an entry in the
+  `Unreleased` queue of `docs/CHANGELOG.md` when it lands; the release
+  workflow publishes the queue as the release notes (BUILD.md, Releases).
 - Run fully headless for every automated test: no window, audio device or
   input capture. Shut the game down when the test ends.

@@ -13,6 +13,9 @@ fs_qaaPackage names one of
   - the STFS package file itself,
   - a folder holding the package's files (default.xex, baseq3/pak0.bpk), or
   - a .bpk file.
+With fs_qaaPackage empty, FS_QAA_FindPackage looks for the package in the
+install and home folders, where the XBLA zip or an Xbox 360 Content folder
+puts it.
 BPK records are keyed by a 64-bit hash of the path (qaa_bpk_name_hash,
 code/qaa/qaa_bpk.c). As in retail (default.xex: lookup at 0x82120C98), a
 file is found only by its exact name: the lookup functions in files.c call
@@ -26,6 +29,7 @@ reachable by raw hash through qaa_bpkread.
 
 static cvar_t	*fs_qaaPackage;
 static char		fs_qaaSource[MAX_OSPATH * 2];	// what was mounted, for qaa_info
+static char		fs_qaaFound[MAX_OSPATH * 2];	// the package FS_QAA_FindPackage found, if any
 static const char *fs_qaaKind = "none";
 static uint32_t	fs_qaaTitleId;
 
@@ -267,6 +271,135 @@ static qaaBpk_t *FS_QAA_OpenPackage( const char *source ) {
 
 /*
 =================
+FS_QAA_IsPackage
+
+QAA: PC deviation (no Xbox storage to read from). True if path is Quake
+Arena Arcade's package as the user copied it: the STFS file (title
+584108C8, content type 000D0000, an Arcade title, so saves and title
+updates of the same title are skipped) or a folder holding its files
+(baseq3/pak0.bpk), as Xbox 360 tools and emulators extract it.
+=================
+*/
+static qboolean FS_QAA_IsPackage( const char *path ) {
+	char bpkPath[MAX_OSPATH * 2];
+	byte magic[4];
+	qaaIo_t io;
+	qboolean found = qfalse;
+
+	if ( QAA_IoOpenFile( path, &io ) != 0 ) {
+		Com_sprintf( bpkPath, sizeof( bpkPath ), "%s%c" BASEGAME "%cpak0.bpk", path, PATH_SEP, PATH_SEP );
+		if ( QAA_IoOpenFile( bpkPath, &io ) != 0 ) {
+			return qfalse;
+		}
+		QAA_IoClose( &io );
+		return qtrue;
+	}
+	if ( QAA_IoRead( &io, 0, magic, sizeof( magic ) ) == 0
+		&& ( !memcmp( magic, "LIVE", 4 ) || !memcmp( magic, "CON ", 4 ) || !memcmp( magic, "PIRS", 4 ) ) ) {
+		qaaStfs_t *stfs = QAA_StfsOpen( &io, NULL, 0 );
+		if ( stfs ) {
+			found = QAA_StfsTitleId( stfs ) == 0x584108C8u && QAA_StfsContentType( stfs ) == 0x000D0000u
+				? qtrue : qfalse;
+			QAA_StfsClose( stfs );	// owns io
+			return found;
+		}
+	}
+	QAA_IoClose( &io );
+	return qfalse;
+}
+
+
+/*
+=================
+FS_QAA_FindIn
+
+Checks every entry of dir (files and folders) with FS_QAA_IsPackage.
+=================
+*/
+static qboolean FS_QAA_FindIn( const char *dir, char *out, int outSize ) {
+	static const char *const kinds[2] = { "", "/" };	// files, then folders
+	char path[MAX_OSPATH * 2];
+	qboolean found = qfalse;
+	int kind;
+
+	for ( kind = 0; kind < 2 && !found; kind++ ) {
+		int i, count;
+		char **list = Sys_ListFiles( dir, kinds[kind], NULL, &count, 0 );
+		for ( i = 0; i < count && !found; i++ ) {
+			if ( Q_streq( list[i], "." ) || Q_streq( list[i], ".." ) ) {
+				continue;
+			}
+			Com_sprintf( path, sizeof( path ), "%s%c%s", dir, PATH_SEP, list[i] );
+			if ( FS_QAA_IsPackage( path ) ) {
+				Q_strncpyz( out, path, outSize );
+				found = qtrue;
+			}
+		}
+		Sys_FreeFileList( list );
+	}
+	return found;
+}
+
+
+/*
+=================
+FS_QAA_FindPackage
+
+QAA: PC deviation. With fs_qaaPackage empty, looks for the package where a
+user would put it, in the install folder (fs_basepath), then the home
+folder:
+  - <root>/584108C8/000D0000/<package>: the XBLA zip extracted as it is
+    (the zip holds the package under the console's own folder names),
+  - <root>/Content/<profile>/584108C8/000D0000/<package>: an Xbox 360
+    Content folder copied from the console or a storage device,
+  - <root>/<package>: the package file, or a folder of its files, on its own.
+=================
+*/
+static qboolean FS_QAA_FindPackage( char *out, int outSize ) {
+	static const char *const contentNames[2] = { "Content", "content" };
+	const char *roots[2];
+	char dir[MAX_OSPATH * 2];
+	int r, c, i, count;
+
+	roots[0] = fs_basepath ? fs_basepath->string : "";
+	roots[1] = fs_homepath ? fs_homepath->string : "";
+	for ( r = 0; r < 2; r++ ) {
+		if ( !roots[r][0] || ( r == 1 && !Q_stricmp( roots[0], roots[1] ) ) ) {
+			continue;
+		}
+		Com_sprintf( dir, sizeof( dir ), "%s%c584108C8%c000D0000", roots[r], PATH_SEP, PATH_SEP );
+		if ( FS_QAA_FindIn( dir, out, outSize ) ) {
+			return qtrue;
+		}
+		for ( c = 0; c < 2; c++ ) {
+			char base[MAX_OSPATH * 2];
+			char **profiles;
+
+			Com_sprintf( base, sizeof( base ), "%s%c%s", roots[r], PATH_SEP, contentNames[c] );
+			profiles = Sys_ListFiles( base, "/", NULL, &count, 0 );
+			for ( i = 0; i < count; i++ ) {
+				if ( Q_streq( profiles[i], "." ) || Q_streq( profiles[i], ".." ) ) {
+					continue;
+				}
+				Com_sprintf( dir, sizeof( dir ), "%s%c%s%c584108C8%c000D0000", base, PATH_SEP, profiles[i],
+					PATH_SEP, PATH_SEP );
+				if ( FS_QAA_FindIn( dir, out, outSize ) ) {
+					Sys_FreeFileList( profiles );
+					return qtrue;
+				}
+			}
+			Sys_FreeFileList( profiles );
+		}
+		if ( FS_QAA_FindIn( roots[r], out, outSize ) ) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+
+/*
+=================
 FS_QAA_MountPackage
 
 Adds the package's pak0.bpk to the search path as a baseq3 pack.
@@ -276,19 +409,27 @@ static void FS_QAA_MountPackage( void ) {
 	searchpath_t *search;
 	qaaBpk_t *bpk;
 	pack_t *pak;
+	const char *source;
 
 	fs_qaaPackage = Cvar_Get( "fs_qaaPackage", "", CVAR_INIT | CVAR_PROTECTED );
 	Cvar_SetDescription( fs_qaaPackage, "Quake Arena Arcade's XBLA package (the STFS file), a folder holding "
-		"its files (default.xex, baseq3/pak0.bpk), or a .bpk file. Read in place, never written." );
+		"its files (default.xex, baseq3/pak0.bpk), or a .bpk file. Read in place, never written. "
+		"Empty: found in the install or home folder." );
 
 	fs_qaaKind = "none";
 	fs_qaaSource[0] = '\0';
 	fs_qaaTitleId = 0;
 	fs_qaaMounted = 0;
-	if ( !fs_qaaPackage->string[0] ) {
-		return;
+	fs_qaaFound[0] = '\0';
+	source = fs_qaaPackage->string;
+	if ( !source[0] ) {
+		if ( !FS_QAA_FindPackage( fs_qaaFound, sizeof( fs_qaaFound ) ) ) {
+			return;
+		}
+		Com_Printf( "Found the Quake Arena Arcade package: %s\n", fs_qaaFound );
+		source = fs_qaaFound;
 	}
-	bpk = FS_QAA_OpenPackage( fs_qaaPackage->string );
+	bpk = FS_QAA_OpenPackage( source );
 	if ( !bpk ) {
 		return;
 	}
@@ -326,8 +467,14 @@ static void FS_QAA_CheckPackage( void ) {
 			return;
 		}
 	}
-	Com_Printf( S_COLOR_YELLOW "WARNING: no Quake Arena Arcade package is mounted; set fs_qaaPackage "
-		"to your XBLA package or to a folder holding its files.\n" );
+	if ( fs_qaaPackage && fs_qaaPackage->string[0] ) {
+		Com_Printf( S_COLOR_YELLOW "WARNING: no Quake Arena Arcade package is mounted: fs_qaaPackage '%s' "
+			"is not one.\n", fs_qaaPackage->string );
+		return;
+	}
+	Com_Printf( S_COLOR_YELLOW "WARNING: no Quake Arena Arcade package found. Extract the XBLA zip into %s "
+		"(it makes 584108C8%c000D0000%c...), or copy the package file or your Xbox 360 Content folder there, "
+		"or set fs_qaaPackage to it.\n", fs_basepath->string, PATH_SEP, PATH_SEP );
 }
 
 
@@ -432,6 +579,9 @@ static void FS_QAA_Info_f( void ) {
 	const searchpath_t *search;
 
 	Com_Printf( "fs_qaaPackage: '%s' (%s)\n", fs_qaaPackage ? fs_qaaPackage->string : "", fs_qaaKind );
+	if ( fs_qaaFound[0] ) {
+		Com_Printf( "found automatically: %s\n", fs_qaaFound );
+	}
 	if ( fs_qaaTitleId ) {
 		Com_Printf( "title ID: %08X\n", fs_qaaTitleId );
 	}

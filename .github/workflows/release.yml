@@ -1,0 +1,344 @@
+# Manual release: builds FnQAA for Windows x86_64 (MSVC) and Linux x86_64
+# (GCC), runs every test headless, packages one archive per platform and
+# creates a GitHub release with them (a draft unless told otherwise).
+#
+# Versioning and release notes follow FnQL's manual channel
+# (scripts/manual_release.py, scripts/changelog.py): the build number is the
+# commits since the latest stable tag v<major>.<minor>.<patch>, every build
+# stamps it into version/fnqaa_version.h, the tag is
+# <version>-<YYYYMMDD>-<commit>, and the notes publish docs/CHANGELOG.md's
+# Unreleased queue (or docs/releases/<tag>.md), which a published release
+# then resets.
+#
+# A release holds FnQAA's engine build, its documents and the setup kit only:
+# never retail data or code derived from it (AGENTS.md). Nothing here reads a
+# game package; each user's setup recompiles the game modules from their own
+# package. scripts/package_release.py stages a fixed file list and fails on
+# anything else.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: Create the release as a draft (a draft leaves the changelog queue as it is)
+        type: boolean
+        default: true
+      prerelease:
+        description: Mark the release as a pre-release
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  MESON_VERSION: '1.10.2'
+  PYTHON_VERSION: '3.13'
+  # Release options shared by both platforms. --wrap-mode=forcefallback builds
+  # every bundled dependency from subprojects/*.wrap and links it statically,
+  # so no runner-installed library leaks into a release. The zlib wrap
+  # (pulled in by libcurl) builds a shared library unless told otherwise,
+  # which would leave the client importing z-1.dll.
+  FNQAA_MESON_OPTIONS: >-
+    --buildtype=release
+    --wrap-mode=forcefallback
+    -Dbuild-client=true
+    -Dbuild-server=true
+    -Drenderer-dlopen=true
+    -Drenderers=glx,vk,rtx
+    -Drenderer-default=glx
+    -Dcurl=enabled
+    -Dlibjpeg-turbo:simd=disabled
+    -Dzlib:default_library=static
+
+jobs:
+  prepare:
+    name: Resolve release metadata
+    runs-on: ubuntu-24.04
+    outputs:
+      build_number: ${{ steps.meta.outputs.build_number }}
+      build_date: ${{ steps.meta.outputs.build_date }}
+      version_string: ${{ steps.meta.outputs.version_string }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_title: ${{ steps.meta.outputs.release_title }}
+      archive_prefix: ${{ steps.meta.outputs.archive_prefix }}
+      head_commit: ${{ steps.meta.outputs.head_commit }}
+      previous_release_commit: ${{ steps.meta.outputs.previous_release_commit }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --force --tags origin
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Test the release scripts
+        run: python tests/release_scripts_tests.py -v
+
+      - name: Resolve release metadata
+        id: meta
+        run: python scripts/manual_release.py github-output --build-date "$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Check the tag is new
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.release_tag }}
+        run: |
+          git check-ref-format "refs/tags/$TAG" || { echo "::error::'$TAG' is not a valid tag name"; exit 1; }
+          if gh release view "$TAG" >/dev/null 2>&1 || git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::$TAG already exists"
+            exit 1
+          fi
+
+      - name: Summarize
+        env:
+          TITLE: ${{ steps.meta.outputs.release_title }}
+          VERSION: ${{ steps.meta.outputs.version_string }}
+          BUILD: ${{ steps.meta.outputs.build_number }}
+          TAG: ${{ steps.meta.outputs.release_tag }}
+          COMMIT: ${{ steps.meta.outputs.head_commit }}
+          PREVIOUS: ${{ steps.meta.outputs.previous_release_commit }}
+        run: |
+          {
+            echo "### $TITLE"
+            echo "- Version: $VERSION (build $BUILD)"
+            echo "- Tag: $TAG"
+            echo "- Commit: $COMMIT"
+            echo "- Previous release commit: ${PREVIOUS:-none}"
+            echo "- Draft: ${{ inputs.draft }}, pre-release: ${{ inputs.prerelease }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    name: Build Windows x86_64 (MSVC)
+    needs: prepare
+    runs-on: windows-2022
+    # pwsh runs each step as one script and only checks the last native exit
+    # code, so every pwsh step below runs one command.
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # bash stops at the first failing command.
+      - name: Stamp the release version
+        shell: bash
+        run: python scripts/manual_release.py stamp-version --build-number "${{ needs.prepare.outputs.build_number }}"
+
+      - name: Install Meson and Ninja
+        run: python -m pip install "meson==$env:MESON_VERSION" ninja
+
+      # scripts/msvc-env.ps1 imports the Visual Studio x64 developer
+      # environment (vcvars64) before running the command. The CRT is linked
+      # statically so a release needs no Visual C++ redistributable.
+      - name: Configure
+        run: |
+          $options = $env:FNQAA_MESON_OPTIONS -split ' '
+          ./scripts/msvc-env.ps1 meson setup build/release @options `
+            "--prefix=$env:GITHUB_WORKSPACE\build\stage" `
+            -Db_vscrt=static_from_buildtype `
+            -Dsdl=enabled `
+            -Dcurl-dlopen=false
+
+      - name: Build
+        run: ./scripts/msvc-env.ps1 meson compile -C build/release
+
+      # The default test setup sets FNQAA_HEADLESS=2: clients never open a
+      # window, sound is off and dedicated servers are headless.
+      - name: Run the tests (headless)
+        run: ./scripts/msvc-env.ps1 meson test -C build/release --print-errorlogs
+
+      - name: Stage the install
+        run: ./scripts/msvc-env.ps1 meson install -C build/release --no-rebuild --skip-subprojects
+
+      - name: Package and verify
+        run: python scripts/package_release.py package --platform windows --stage build/stage --output dist --archive-prefix "${{ needs.prepare.outputs.archive_prefix }}"
+
+      - name: Upload the test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: meson-logs-windows-x86_64
+          path: build/release/meson-logs
+          if-no-files-found: ignore
+          retention-days: 5
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 5
+
+  linux:
+    name: Build Linux x86_64 (GCC)
+    needs: prepare
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Stamp the release version
+        run: python scripts/manual_release.py stamp-version --build-number "${{ needs.prepare.outputs.build_number }}"
+
+      # Xvfb and Mesa (llvmpipe) give the windowless client an X display and
+      # a software OpenGL context; it never maps a window. libopenal1 lets the
+      # audio loopback test run (a loopback device, no audio hardware).
+      - name: Install build dependencies
+        run: |
+          sudo apt-get -qq -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends \
+            binutils \
+            libgl-dev \
+            libgl1-mesa-dri \
+            libopenal1 \
+            libx11-dev \
+            mesa-common-dev \
+            pkg-config \
+            xauth \
+            xvfb
+          python -m pip install "meson==$MESON_VERSION" ninja
+
+      # The X11 backend (no SDL3); libcurl is opened at run time.
+      - name: Configure
+        run: |
+          # word splitting of the shared option list is intended
+          # shellcheck disable=SC2086
+          meson setup build/release $FNQAA_MESON_OPTIONS \
+            "--prefix=$GITHUB_WORKSPACE/build/stage" \
+            -Dsdl=disabled \
+            -Dcurl-dlopen=true
+
+      - name: Build
+        run: meson compile -C build/release
+
+      - name: Run the tests (headless)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: xvfb-run -a -s "-screen 0 1280x1024x24 -nolisten tcp" meson test -C build/release --print-errorlogs
+
+      - name: Stage the install
+        run: meson install -C build/release --no-rebuild --skip-subprojects --strip
+
+      - name: Package and verify
+        run: python scripts/package_release.py package --platform linux --stage build/stage --output dist --archive-prefix "${{ needs.prepare.outputs.archive_prefix }}"
+
+      - name: Upload the test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: meson-logs-linux-x86_64
+          path: build/release/meson-logs
+          if-no-files-found: ignore
+          retention-days: 5
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-x86_64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 5
+
+  publish:
+    name: Create the GitHub release
+    needs: [prepare, windows, linux]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --force --tags origin
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify the archives, write checksums and the manifest
+        env:
+          PREFIX: ${{ needs.prepare.outputs.archive_prefix }}
+        run: |
+          python3 scripts/package_release.py verify dist/*.zip dist/*.tar.gz --archive-prefix "$PREFIX"
+          python3 scripts/package_release.py checksums dist/*.zip dist/*.tar.gz \
+            --output dist/SHA256SUMS.txt \
+            --manifest dist/release-manifest.json \
+            --meta "project=FnQAA" \
+            --meta "version=${{ needs.prepare.outputs.version_string }}" \
+            --meta "build_number=${{ needs.prepare.outputs.build_number }}" \
+            --meta "build_date=${{ needs.prepare.outputs.build_date }}" \
+            --meta "release_tag=${{ needs.prepare.outputs.release_tag }}" \
+            --meta "commit=${{ needs.prepare.outputs.head_commit }}"
+
+      # docs/releases/<tag>.md, else the Unreleased queue, else commit subjects.
+      - name: Write the release notes
+        env:
+          PREVIOUS: ${{ needs.prepare.outputs.previous_release_commit }}
+        run: |
+          from_args=()
+          if [ -n "$PREVIOUS" ]; then from_args+=(--from-commit "$PREVIOUS"); fi
+          python3 scripts/manual_release.py release-notes \
+            --build-number "${{ needs.prepare.outputs.build_number }}" \
+            --build-date "${{ needs.prepare.outputs.build_date }}" \
+            --to-commit "${{ needs.prepare.outputs.head_commit }}" \
+            "${from_args[@]}" \
+            --output release-notes.md
+          cat release-notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.release_tag }}
+          TITLE: ${{ needs.prepare.outputs.release_title }}
+          DRAFT: ${{ inputs.draft }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          flags=()
+          if [ "$DRAFT" = "true" ]; then flags+=(--draft); fi
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" dist/*.zip dist/*.tar.gz dist/SHA256SUMS.txt dist/release-manifest.json \
+            --target "${{ needs.prepare.outputs.head_commit }}" \
+            --title "$TITLE" \
+            --notes-file release-notes.md \
+            "${flags[@]}"
+          url=$(gh release view "$TAG" --json url --jq .url)
+          echo "Release: $url" >> "$GITHUB_STEP_SUMMARY"
+
+      # As FnQL does: a published release starts the next queue. A draft
+      # leaves the queue alone; after publishing a draft by hand, run
+      # python scripts/changelog.py clear-unreleased and commit.
+      - name: Reset the changelog queue
+        if: ${{ !inputs.draft && github.ref_type == 'branch' }}
+        run: |
+          python3 scripts/changelog.py clear-unreleased
+          if git diff --quiet -- docs/CHANGELOG.md; then
+            echo "The changelog queue is already empty."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/CHANGELOG.md
+          git commit -m "Reset pending changelog after release"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"

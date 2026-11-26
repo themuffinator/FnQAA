@@ -18,6 +18,34 @@ or game code is included in this repository.
 > Xbox Live features and profile saves are not there yet. See
 > [the plan](docs/PLAN.md).
 
+## Install
+
+1. Download a [release](https://github.com/themuffinator/openQAA/releases)
+   for Windows or Linux and extract it.
+2. Put your copy of the game in that folder, as you have it. Any of these
+   works:
+   - the XBLA zip, `Quake Arena Arcade (World) (XBLA).zip`, or the zip
+     extracted (it makes `584108C8/000D0000/0ED9DD87…`),
+   - the `Content` folder copied from your Xbox 360 or its storage device
+     (`Content/0000000000000000/584108C8/000D0000/0ED9DD87…`); the console
+     keeps the game as the same file the zip holds,
+   - the package file `0ED9DD87…` itself, or a folder of its files (from
+     an Xbox 360 tool or an emulator).
+
+   Nothing else needs extracting: the engine reads the game's data inside
+   the package, in place, and never changes it.
+3. Run `setup.cmd` (Windows) or `./setup.sh` (Linux) once. It finds the
+   game, recompiles its game code on your machine (a few minutes) and
+   installs it in the folder. It checks for the tools it needs first and
+   says how to install any that are missing: Python 3 with `cryptography`,
+   git, CMake, Ninja and clang (LLVM), plus Visual Studio 2022 or its Build
+   Tools with the C++ workload on Windows.
+4. Start `fnqaa`.
+
+Run `setup` again after updating FnQAA. To keep the game elsewhere, run
+`setup --package <path>` and start the engine with
+`+set fs_qaaPackage <path>`.
+
 ## Build
 
 Meson and Ninja, with Visual Studio 2022 on Windows or GCC on Linux. On
@@ -41,10 +69,16 @@ meson test -C build/linux
 
 ## Run
 
-You need your own copy of the game: the STFS package from the XBLA download
-(the file `584108C8/000D0000/0ED9DD87…` inside the zip), or a folder holding
-the package's files (`default.xex`, `baseq3/pak0.bpk`, ...). Point the engine
-at it with `fs_qaaPackage`; it is read in place and never written:
+The engine needs your own copy of the game: the STFS package from the XBLA
+download (the file `584108C8/000D0000/0ED9DD87…` inside the zip, which is
+the file the console keeps under `Content/0000000000000000/`), or a folder
+holding the package's files (`default.xex`, `baseq3/pak0.bpk`, ...). It is
+read in place and never written. With `fs_qaaPackage` unset the engine looks
+for it in the install folder, then the home folder: under
+`584108C8/000D0000/` (the zip extracted there), under
+`Content/<profile>/584108C8/000D0000/` (a console's Content folder), or on
+its own. Saves and title updates of the same title are skipped. From a
+source build, name it:
 
 ```powershell
 build/msvc/fnqaa.exe +set fs_qaaPackage "D:\Games\QAA\0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458"
@@ -65,15 +99,20 @@ or home folder override the package. For automated runs use
 ## Recompiling the game modules
 
 ```sh
-python tools/recomp/build.py --package <package>
+python tools/recomp/build.py [--package <package>]
 ```
 
 This decodes `qagameXe.dll`, `cgameXe.dll` and `default.xex` from your
 package, recompiles the two game modules and the front end (SFUI and GFx in
 `default.xex`) with a patched
 [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) and builds native
-libraries under `build/recomp/` (never committed). The engine finds them
-there (or set `qaa_modulePath`) and runs them in place of a game module and
+libraries under `build/recomp/` (never committed). `<package>` is the STFS
+package, the XBLA zip or a folder of the package's files; without it the
+package is looked for in `ref/` (in a release, in the release folder). It
+builds the LZX helper it decodes with itself. A release's `setup.cmd` and
+`setup.sh` run this same script and copy the libraries next to the engine.
+A source build's engine finds them in `build/recomp/` (or set
+`qaa_modulePath`) and runs them in place of a game module and
 the ui module; `+set qaa_game 0` and `+set qaa_ui 0` turn that off.
 Quake Arena Arcade has no QVMs, so the engine loads none: FnQL would
 otherwise fall back to `vm/*.qvm` whenever a native module is missing, and a
@@ -108,7 +147,8 @@ python tools/bpk.py ref/extract/baseq3/pak0.bpk extract -n ref/pak0.names -o ref
 - [docs/ABI.md](docs/ABI.md): the engine/game-module interface
 - [docs/RECOMP.md](docs/RECOMP.md): the recompiler pipeline and guest runtime
 - [docs/UI.md](docs/UI.md): the Scaleform front end
-- [BUILD.md](BUILD.md): building and testing
+- [BUILD.md](BUILD.md): building, testing and releases
+- [docs/CHANGELOG.md](docs/CHANGELOG.md): changes queued for the next release
 - [CREDITS.md](CREDITS.md): the engine's lineage and the imported FnQL commit
 - [AGENTS.md](AGENTS.md): rules for contributors and AI agents
 
