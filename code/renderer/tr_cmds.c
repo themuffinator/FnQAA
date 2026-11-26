@@ -655,31 +655,6 @@ void R_AddDrawSurfCmd( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	cmd->shadowManager = tr.shadowManager;
 }
 
-/*
-=============
-R_AddAdvertisementQueryCmd
-=============
-*/
-void R_AddAdvertisementQueryCmd( const advertisementQueryEntry_t *entries, int numEntries ) {
-	advertisementQueryCommand_t	*cmd;
-
-	if ( !entries || numEntries <= 0 ) {
-		return;
-	}
-	if ( numEntries > MAX_MAP_ADVERTISEMENTS ) {
-		numEntries = MAX_MAP_ADVERTISEMENTS;
-	}
-
-	cmd = R_GetCommandBuffer( sizeof( *cmd ) );
-	if ( !cmd ) {
-		return;
-	}
-
-	cmd->commandId = RC_ADVERTISEMENT_QUERIES;
-	cmd->numEntries = numEntries;
-	Com_Memcpy( cmd->entries, entries, numEntries * sizeof( cmd->entries[0] ) );
-}
-
 qboolean R_AddScreenshotCmd( int x, int y, int width, int height, int format, const char *fileName,
 	qboolean silent, qboolean allowWatermark, int cubemapFace ) {
 	screenshotCommand_t *cmd;

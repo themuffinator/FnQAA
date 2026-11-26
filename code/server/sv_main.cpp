@@ -54,22 +54,17 @@ cvar_t	*sv_killserver;			// menu system can set to 1 to shut server down
 cvar_t	*sv_mapname;
 cvar_t	*sv_mapChecksum;
 cvar_t	*sv_referencedPakNames;
-cvar_t	*sv_fnqlClientModules;
 cvar_t	*sv_serverid;
 cvar_t	*sv_minRate;
 cvar_t	*sv_maxRate;
 cvar_t	*sv_dlRate;
 cvar_t	*sv_gametype;
-cvar_t	*sv_ammoPack;
 cvar_t	*sv_pure;
 cvar_t	*sv_floodProtect;
-cvar_t	*sv_enableRankings;
-cvar_t	*sv_rankingsActive;
 cvar_t	*sv_lanForceRate; // dedicated 1 (LAN) server forces local client rates to 99999 (bug #491)
 cvar_t	*sv_serverType;	// retail visibility: 0 offline, 1 LAN, 2 Internet
 cvar_t	*sv_autoRecordDemos;
 cvar_t	*sv_cheats;
-cvar_t	*sv_gtid;
 cvar_t	*sv_idleRestart;
 cvar_t	*sv_idleExit;
 cvar_t	*sv_errorExit;
@@ -1206,20 +1201,11 @@ void SV_PacketEvent( const netadr_t *from, msg_t *msg ) {
 SV_SinglePlayerIgnoresRemote
 
 Quake III's listen server ignored getchallenge, getinfo and getstatus while a
-single-player game ran: gametype 2, or ui_singlePlayerActive. Quake Live has
-no single-player gametype. Its gametype 2 is Race, and its `map` command sets
-ui_singlePlayerActive on every listen server, yet retail answers getchallenge
-regardless (quakelive_steam.exe 0x4df430 tests neither); sv_serverType is what
-keeps a private match private. Applying the Quake III rule to a Quake Live
-module made every listen server unjoinable, so only a classic vmMain module or
-a QVM keeps it.
+single-player game ran: gametype 2, or ui_singlePlayerActive.
 ===================
 */
 qboolean SV_SinglePlayerIgnoresRemote( void ) {
 #ifndef DEDICATED
-	if ( SV_GameQueryExportsAvailable() ) {
-		return qfalse;
-	}
 	if ( Cvar_VariableIntegerValue( "g_gametype" ) == GT_SINGLE_PLAYER
 		|| Cvar_VariableIntegerValue( "ui_singlePlayerActive" ) ) {
 		return qtrue;
@@ -1527,10 +1513,6 @@ void SV_Frame( int msec, int realMsec ) {
 	}
 	idleExitTimer.Reset();
 
-	Zmq_UpdatePasswords();
-	Zmq_PumpRcon();
-	SV_ExecutePendingAdminCommands();
-
 	// Both rcon paths execute commands inside this frame.  One of them can
 	// shut the server down (killserver, or a map change that fails), after
 	// which there are no configstrings, clients or game module left for the
@@ -1631,7 +1613,6 @@ void SV_Frame( int msec, int realMsec ) {
 		SV_SetConfigstring( CS_SYSTEMINFO, Cvar_InfoString_Big( CVAR_SYSTEMINFO, nullptr ) );
 		cvar_modifiedFlags &= ~CVAR_SYSTEMINFO;
 	}
-	SV_UpdateQLCvarConfigstrings( qfalse );
 
 	if ( com_speeds->integer ) {
 		startTime = Sys_Milliseconds();

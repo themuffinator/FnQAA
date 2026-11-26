@@ -112,13 +112,10 @@ package is looked for in `ref/` (in a release, in the release folder). It
 builds the LZX helper it decodes with itself. A release's `setup.cmd` and
 `setup.sh` run this same script and copy the libraries next to the engine.
 A source build's engine finds them in `build/recomp/` (or set
-`qaa_modulePath`) and runs them in place of a game module and
-the ui module; `+set qaa_game 0` and `+set qaa_ui 0` turn that off.
-Quake Arena Arcade has no QVMs, so the engine loads none: FnQL would
-otherwise fall back to `vm/*.qvm` whenever a native module is missing, and a
-stray QVM from another game could replace QAA's own modules or menus.
-`+set vm_allowQvm 1` on the command line (configs cannot set it) allows
-them again.
+`qaa_modulePath`). They are the only game modules it runs: there is no QVM
+interpreter and no loader for other native modules, so without them a map
+cannot start. `+set qaa_ui 0` turns off the Scaleform front end, leaving the
+console.
 [docs/RECOMP.md](docs/RECOMP.md) has the requirements, the tests and the
 guest runtime's design.
 

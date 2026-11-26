@@ -145,8 +145,6 @@ static void Com_WriteConfig_f( void );
 static void Com_WriteClientConfig_f( void );
 #endif
 void CIN_CloseAllVideos( void );
-void Zmq_BroadcastRconOutput( const char *message );
-void Zmq_ShutdownRuntime( void );
 
 //============================================================================
 
@@ -214,8 +212,6 @@ void FORMAT_PRINTF(1, 2) QDECL Com_Printf( const char *fmt, ... ) {
 		//*rd_buffer = '\0';
 		return;
 	}
-
-	Zmq_BroadcastRconOutput( msg );
 
 #ifndef DEDICATED
 	// echo to client console if we're not a dedicated server
@@ -427,7 +423,6 @@ void NORETURN FORMAT_PRINTF(2, 3) QDECL Com_Error( errorParm_t code, const char 
 			VM_Forced_Unload_Start();
 			CL_FlushMemory();
 			VM_Forced_Unload_Done();
-			CL_CDDialog();
 		} else {
 			Com_Printf( "Server didn't have CD\n" );
 		}
@@ -4031,18 +4026,6 @@ void Com_Init( char *commandLine ) {
 	com_developer = Cvar_Get( "developer", "0", CVAR_TEMP );
 	Cvar_CheckRange( com_developer, NULL, NULL, CV_INTEGER );
 
-	// QAA: registered before the configs run, as vm_rtChecks is, so only the
-	// command line can allow QVM modules (vm.c, VM_LoadQVM)
-	Com_StartupVariable( "vm_allowQvm" );
-	Cvar_Get( "vm_allowQvm", "0", CVAR_INIT | CVAR_PROTECTED );
-
-	Com_StartupVariable( "vm_rtChecks" );
-	vm_rtChecks = Cvar_Get( "vm_rtChecks", "15", CVAR_INIT | CVAR_PROTECTED );
-	Cvar_CheckRange( vm_rtChecks, "0", "15", CV_INTEGER );
-	Cvar_SetDescription( vm_rtChecks,
-		"Runtime checks in compiled vm code, bitmask:\n 1 - program stack overflow\n" \
-		" 2 - opcode stack overflow\n 4 - jump target range\n 8 - data read/write range" );
-
 	Com_StartupVariable( "journal" );
 	com_journal = Cvar_Get( "journal", "0", CVAR_INIT | CVAR_PROTECTED );
 	Cvar_CheckRange( com_journal, "0", "2", CV_INTEGER );
@@ -4082,9 +4065,6 @@ void Com_Init( char *commandLine ) {
 	Com_InitJournaling();
 
 	Com_ExecuteCfg();
-
-	// before the command line applies, so an explicit +set still wins
-	VM_MigrateArchivedProviders();
 
 	// override anything from the config files with command line args
 	Com_StartupVariable( NULL );
@@ -4252,18 +4232,10 @@ void Com_Init( char *commandLine ) {
 
 	VM_Init();
 	SV_Init();
-	SV_RegisterGameCvars();
-	// QAA: PC deviation. QAA has no Steam: FnQL's Steam provider, Steam
-	// GameServer and Workshop start here, and are removed.
-	SV_FactoryRefreshMountedContent();
 
 	com_dedicated->modified = qfalse;
 
 #ifndef DEDICATED
-	if ( !com_dedicated->integer ) {
-		CL_RegisterCGameCvars();
-	}
-
 	if ( !com_dedicated->integer ) {
 		CL_Init();
 		// Sys_ShowConsole( com_viewlog->integer, qfalse ); // moved down
@@ -4449,10 +4421,6 @@ Writes key bindings and archived cvars to config file if modified
 ===============
 */
 void Com_WriteConfiguration( void ) {
-#ifndef DEDICATED
-	const char *basegame;
-	const char *gamedir;
-#endif
 	// if we are quitting without fully initializing, make sure
 	// we don't write out anything
 	if ( !com_fullyInitialized ) {
@@ -4477,13 +4445,7 @@ void Com_WriteConfiguration( void ) {
 	cvar_modifiedFlags &= ~( CVAR_ARCHIVE | CVAR_CLOUD );
 
 #ifndef DEDICATED
-	gamedir = FS_GetCurrentGameDir();
-	basegame = FS_GetBaseGameDir();
-	if ( UI_usesUniqueCDKey() && gamedir[0] && Q_stricmp( basegame, gamedir ) ) {
-		Com_WriteCDKey( gamedir, &cl_cdkey[16] );
-	} else {
-		Com_WriteCDKey( basegame, cl_cdkey );
-	}
+	Com_WriteCDKey( FS_GetBaseGameDir(), cl_cdkey );
 #endif
 }
 
@@ -4813,8 +4775,6 @@ void Com_Frame( qboolean noDelay ) {
 
 		Cbuf_Execute();
 
-		CL_WebHost_Frame();
-
 		//
 		// client side
 		//
@@ -4877,8 +4837,6 @@ Com_Shutdown
 =================
 */
 static void Com_Shutdown( void ) {
-	Zmq_ShutdownRuntime();
-
 	if ( logfile != FS_INVALID_HANDLE ) {
 		FS_FCloseFile( logfile );
 		logfile = FS_INVALID_HANDLE;

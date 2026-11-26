@@ -661,9 +661,6 @@ static void Message_Key( int key ) {
 
 	if (key == K_ESCAPE) {
 		Key_SetCatcher( Key_GetCatcher( ) & ~KEYCATCH_MESSAGE );
-		if ( cgvm && cgvm->dllExports ) {
-			VM_Call( cgvm, 0, CG_CHAT_UP );
-		}
 		Field_Clear( &chatField );
 		return;
 	}
@@ -684,9 +681,6 @@ static void Message_Key( int key ) {
 			CL_AddReliableCommand( buffer.data(), qfalse );
 		}
 		Key_SetCatcher( Key_GetCatcher( ) & ~KEYCATCH_MESSAGE );
-		if ( cgvm && cgvm->dllExports ) {
-			VM_Call( cgvm, 0, CG_CHAT_UP );
-		}
 		Field_Clear( &chatField );
 		return;
 	}
@@ -698,72 +692,13 @@ static void Message_Key( int key ) {
 
 /*
 =============
-CL_DispatchBrowserKeyEvent
-
-Routes captured key events through the retained browser bridge only when the
-browser keycatcher owns input.
-=============
-*/
-static void CL_DispatchBrowserKeyEvent( int key, qboolean down ) {
-	const bool mouseKey = ( key >= K_MOUSE1 && key <= K_MOUSE9 )
-		|| key == K_MWHEELUP || key == K_MWHEELDOWN;
-
-	// A pending bind prompt takes mouse buttons and wheel notches as its
-	// answer instead of letting them click or scroll the page.
-	if ( mouseKey && CL_WebView_CaptureMouseKeyEvent( key, down ) ) {
-		return;
-	}
-
-	if ( key >= K_MOUSE1 && key <= K_MOUSE9 ) {
-		CL_WebView_OnMouseButtonEvent( key, down );
-	} else if ( key == K_MWHEELUP || key == K_MWHEELDOWN ) {
-		// Retail's browser bridge scrolls on both halves of the press/release
-		// pair every platform queues per notch, so each notch moves twice.
-		CL_WebView_OnMouseWheelEvent( key == K_MWHEELUP ? 1 : -1 );
-	} else {
-		CL_WebView_OnKeyEvent( key, down );
-	}
-}
-
-
-/*
-=============
-CL_ActivateNativeMenu
-
-Activates a menu owned by the retail UI module and transfers input to it.
-
-Ownership is claimed unconditionally, as retail does.  Do not gate this on
-UI_MENUS_ANY_VISIBLE: that recovered slot is only established for the
-fullscreen main menu, and withholding KEYCATCH_UI here takes the in-game menu's
-draw pass (SCR_DrawScreenField) and its absolute-pointer cursor and mouse grab
-(IN_AbsolutePointerOwnerKind) down with it.
-=============
-*/
-static void CL_ActivateNativeMenu( uiMenuCommand_t menu ) {
-	if ( !uivm ) {
-		return;
-	}
-
-	// Browser capture has priority over native UI input. Retail releases it
-	// before opening an in-game menu so the UI receives absolute mouse motion
-	// and can draw its own cursor.
-	CL_WebHost_HideForGameTransition();
-
-	VM_Call( uivm, 1, UI_SET_ACTIVE_MENU, menu );
-	Key_SetCatcher( ( Key_GetCatcher() & ~( KEYCATCH_CGAME | KEYCATCH_BROWSER ) )
-		| KEYCATCH_UI );
-}
-
-
-/*
-=============
 CL_ToggleMenuInternal
 
 Routes Quake Live-style menu toggles through the same path as the hard-coded
-Escape key, optionally synthesizing a release event for command-triggered use.
+Escape key: closes the console, the message field or a cgame overlay.
 =============
 */
-static void CL_ToggleMenuInternal( int key, qboolean sendKeyUp, unsigned time ) {
+static void CL_ToggleMenuInternal( void ) {
 #ifdef USE_CURL
 	if ( Com_DL_InProgress( &download ) && download.mapAutoDownload ) {
 		Com_DL_Cleanup( &download );
@@ -775,27 +710,6 @@ static void CL_ToggleMenuInternal( int key, qboolean sendKeyUp, unsigned time ) 
 		Con_ToggleConsole_f();
 		Key_ClearStates();
 		return;
-	}
-
-	if ( Key_GetCatcher() & KEYCATCH_BROWSER ) {
-		// A pending bind prompt answers Escape with "cancel" when the key is
-		// released (retail's updateBind checks for ESCAPE). Toggling the menu
-		// here instead would hide the browser mid-prompt, even in game.
-		if ( CL_WebHost_KeyCapturePending() ) {
-			return;
-		}
-		// The disconnected WebUI owns Escape itself. Once a game is active,
-		// retail transfers Escape to the native in-game/join menu. This also
-		// recovers if a late WebUI callback re-arms browser input after the
-		// connection transition has already hidden its surface.
-		if ( CL_WebHost_HasDrawableSurface()
-			&& ( cls.state != CA_ACTIVE || clc.demoplaying ) ) {
-			return;
-		}
-		// Either play is active, or the input claim outlived the surface that
-		// could have drawn a menu. A browser with nothing to present cannot
-		// consume Escape, so release it rather than dropping the key.
-		CL_WebHost_HideForGameTransition();
 	}
 
 	if ( Key_GetCatcher( ) & KEYCATCH_MESSAGE ) {
@@ -818,41 +732,10 @@ static void CL_ToggleMenuInternal( int key, qboolean sendKeyUp, unsigned time ) 
 		Key_SetCatcher( Key_GetCatcher( ) & ~KEYCATCH_CGAME );
 	}
 
+	// QAA: the Scaleform front end opens and closes its own menus
+	// (QAA_UI_KeyEvent); there is no ui module to hand the key to
 	Com_DPrintf( "CL_ToggleMenuInternal: catcher 0x%04x state %i\n",
 		Key_GetCatcher(), (int)cls.state );
-
-	if ( !( Key_GetCatcher( ) & KEYCATCH_UI ) ) {
-		if ( !uivm ) {
-			return;
-		}
-
-		if ( cls.state == CA_ACTIVE && !clc.demoplaying ) {
-			CL_ActivateNativeMenu( UIMENU_INGAME );
-		}
-		else if ( cls.state != CA_DISCONNECTED ) {
-#if 0
-			CL_Disconnect_f();
-			S_StopAllSounds();
-#else
-			Cmd_Clear();
-			Cvar_Set( "com_errorMessage", "" );
-			if ( cls.state == CA_CINEMATIC ) {
-				SCR_StopCinematic();
-				CL_ActivateNativeMenu( UIMENU_MAIN );
-			} else if ( !CL_Disconnect( qtrue ) ) { // restart client if not done already
-				CL_FlushMemory();
-			}
-#endif
-		}
-		return;
-	}
-
-	if ( uivm ) {
-		VM_Call( uivm, 3, UI_KEY_EVENT, key, qtrue, time );
-		if ( sendKeyUp ) {
-			VM_Call( uivm, 3, UI_KEY_EVENT, key, qfalse, time );
-		}
-	}
 }
 
 
@@ -862,7 +745,7 @@ CL_ToggleMenu_f
 ================
 */
 void CL_ToggleMenu_f( void ) {
-	CL_ToggleMenuInternal( K_ESCAPE, qtrue, cls.realtime );
+	CL_ToggleMenuInternal();
 }
 
 
@@ -974,7 +857,7 @@ static void CL_KeyDownEvent( int key, unsigned time )
 
 	// escape is always handled special
 	if ( key == K_ESCAPE ) {
-		CL_ToggleMenuInternal( key, qfalse, time );
+		CL_ToggleMenuInternal();
 		return;
 	}
 
@@ -988,12 +871,8 @@ static void CL_KeyDownEvent( int key, unsigned time )
 			return;
 		}
 		Console_Key( key );
-	} else if ( Key_GetCatcher( ) & KEYCATCH_BROWSER ) {
-		CL_DispatchBrowserKeyEvent( key, qtrue );
 	} else if ( Key_GetCatcher( ) & KEYCATCH_UI ) {
-		if ( uivm ) {
-			VM_Call( uivm, 3, UI_KEY_EVENT, key, qtrue, time );
-		}
+		// QAA: the Scaleform front end took the key in CL_KeyEvent
 	} else if ( Key_GetCatcher( ) & KEYCATCH_MESSAGE ) {
 		Message_Key( key );
 	} else if ( Key_GetCatcher( ) & KEYCATCH_CGAME ) {
@@ -1068,12 +947,8 @@ static void CL_KeyUpEvent( int key, unsigned time )
 		Con_KeyEvent( key, qfalse );
 	}
 
-	if ( ( Key_GetCatcher() & KEYCATCH_BROWSER ) && !( Key_GetCatcher() & KEYCATCH_CONSOLE ) ) {
-		CL_DispatchBrowserKeyEvent( key, qfalse );
-	} else if ( Key_GetCatcher() & KEYCATCH_UI ) {
-		if ( uivm ) {
-			VM_Call( uivm, 3, UI_KEY_EVENT, key, qfalse, time );
-		}
+	if ( Key_GetCatcher() & KEYCATCH_UI ) {
+		// QAA: the Scaleform front end took the key in CL_KeyEvent
 	} else if ( Key_GetCatcher() & KEYCATCH_CGAME ) {
 		if ( cgvm ) {
 			VM_Call( cgvm, 2, CG_KEY_EVENT, key, qfalse );
@@ -1135,14 +1010,6 @@ void CL_CharEvent( int key )
 		return;
 	}
 
-	// The browser takes composed characters, not the UTF-8 byte stream the
-	// legacy consumers below want, so it is served before the encoding split.
-	if ( !( Key_GetCatcher( ) & KEYCATCH_CONSOLE )
-		&& ( Key_GetCatcher( ) & KEYCATCH_BROWSER ) ) {
-		CL_WebView_OnCharEvent( static_cast<int>( *codepoint ) );
-		return;
-	}
-
 	const fnql::input::Utf8Codepoint encoded = fnql::input::EncodeUtf8( *codepoint );
 	const int catcher = Key_GetCatcher();
 
@@ -1156,13 +1023,7 @@ void CL_CharEvent( int key )
 				static_cast<int>( encoded.size ) );
 		}
 	} else if ( catcher & KEYCATCH_UI ) {
-		if ( uivm ) {
-			for ( std::size_t i = 0; i < encoded.size; ++i ) {
-				const int utf8Byte = encoded.bytes[i];
-				VM_Call( uivm, 3, UI_KEY_EVENT, utf8Byte | K_CHAR_FLAG,
-					qtrue, cls.realtime );
-			}
-		}
+		// QAA: the Scaleform front end has no text entry from the keyboard
 	} else if ( catcher & KEYCATCH_MESSAGE ) {
 		if ( encoded.size == 1 ) {
 			Field_CharEvent( &chatField, encoded.bytes[0] );

@@ -976,10 +976,6 @@ default values.
 #define CVAR_PROTECTED		0x00000800	// Quake Live engine-managed cvar
 #define CVAR_VM_CREATED		0x00001000	// created or guarded by a VM/native module
 #define CVAR_BOUNDED_DISCRETE 0x00002000	// retail endpoint-snapping bounded cvar
-#define CVAR_QL_PMOVE_SETTINGS 0x00004000	// published in CS_QL_PMOVE_SETTINGS
-#define CVAR_QL_WEAPON_RELOAD 0x00008000	// published in CS_QL_WEAPON_RELOAD
-#define CVAR_QL_PLAYER_APPEARANCE 0x00010000	// published in CS_QL_PLAYER_APPEARANCE
-#define CVAR_QL_ARMOR_TIERED 0x00020000	// published in CS_QL_ARMOR_TIERED
 #define CVAR_CLOUD			0x00080000	// Quake Live profile/cloud-persisted cvar
 #define CVAR_GAMERULE		0x00100000	// Quake Live game-rule initialization guard
 
@@ -1133,7 +1129,6 @@ typedef struct {
 #define KEYCATCH_MESSAGE    0x0004
 #define KEYCATCH_CGAME      0x0008
 #define KEYCATCH_RETAIL_MOUSEPASS 0x0010
-#define KEYCATCH_BROWSER    0x0020
 
 
 // sound channels
@@ -1189,14 +1184,8 @@ typedef enum {
 
 #define	MAX_CONFIGSTRINGS	1024
 
-// Engine-owned configstrings. Retail Quake Live publishes native-module cvar
-// groups through the high slots below; qagame does not build those payloads.
 #define	CS_SERVERINFO		0		// an info string with all the serverinfo cvars
 #define	CS_SYSTEMINFO		1		// an info string for server system to client system configuration (timescale, etc)
-#define CS_QL_PMOVE_SETTINGS	0x2A9	// CVAR_QL_PMOVE_SETTINGS info string
-#define CS_QL_ARMOR_TIERED	0x2AA	// CVAR_QL_ARMOR_TIERED info string
-#define CS_QL_WEAPON_RELOAD	0x2AB	// CVAR_QL_WEAPON_RELOAD info string
-#define CS_QL_PLAYER_APPEARANCE	0x2AC	// CVAR_QL_PLAYER_APPEARANCE info string
 
 #define	RESERVED_CONFIGSTRINGS	2	// game can't modify below this, only the system can
 

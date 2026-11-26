@@ -21,7 +21,7 @@ retail behaviour or data), **code** (read from the disassembly) or
 | Host side | `code/client/cl_qaa_ui.cpp` (`QAA_UI_*`, C linkage, `cl_qaa_ui.h`) |
 | Rasteriser and image decoders | `code/client/cl_qaa_ui_raster.cpp` (no engine dependencies; `tests/qaa_ui_raster_tests.cpp`) |
 | Guest runtime additions | `code/guest`: host hooks for non-recompiled functions and unimplemented imports, register-level guest calls, stepping a guest thread |
-| Client wiring | `cl_ui.cpp` (start-up when there is no ui VM), `cl_main.cpp` (frame), `cl_scrn.cpp` (draw), `cl_keys.cpp` (keys), `cl_cgame.cpp` (load and first-snapshot events), `cl_qaa_cgame.inc` (cgame traps 116-140), `sv_qaa_game.inc` (game traps 48, 49, 65, 69) |
+| Client wiring | `cl_main.cpp` (start-up in `CL_InitUI`, frame), `cl_scrn.cpp` (draw), `cl_keys.cpp` (keys), `cl_cgame.cpp` (load and first-snapshot events), `cl_qaa_cgame.inc` (cgame traps 116-140), `sv_qaa_game.inc` (game traps 48, 49, 65, 69) |
 
 ## The module
 
@@ -147,7 +147,7 @@ Masks are stencil levels. Blend modes follow the shaders
 (multiply/darken/lighten/screen mix the source toward white by its
 coverage). `cl_qaa_ui_raster.cpp` draws all of this into a canvas the size
 of the video mode. The client presents the canvas over the frame with
-`re.DrawWebUISurface`. A frame with no update shows the last canvas again.
+`re.DrawWebUISurface` (a renderer surface blit; there is no WebUI). A frame with no update shows the last canvas again.
 
 Images: the movies' own bitmaps arrive as GImages (RGBA, RGB, A8, DXT1/3/5).
 External images (`ui/*.dds`: the title and menu art, level shots, portraits,
@@ -166,7 +166,6 @@ the bare name).
 | `exitGame` flags the Live session (bit 3 at +0x1FC); the session manager (0x82176370) ends it: disconnect, `gotoStackPath(..., "mainmenu")`, client state reset (0x82177AB0, 0x821779E0, 0x821771F0) | the flag is polled; FnQL's `disconnect`, then the same stack path and resets. The course-results path variant is not taken | |
 | `sys_titleFocused` from Guide focus notifications | follows the game window's focus; a windowless client is always focused | |
 | A game can only start from the menus, after the title | a game can also start from the command line (`+map`, `+devmap`) while the start-up movies play. The first snapshot's HUD request then finds no scene manager, and the title would load over the game. When the front end reaches the title (`setGameState(2)`, 0x82C01C48) with a game running, the HUD is requested again, and the title's music is not started over the game's | `PollGameStartedBeforeTitle`, `H_S_StartBackgroundTrack` |
-| (retail has no ui module to replace the front end) | FnQL's ui loader runs first (an FnQL-game or retail-named native ui); a `vm/ui.qvm` is never loaded unless `vm_allowQvm 1` is on the command line, so the front end starts when no native ui exists | `CL_InitUI`, `VM_LoadQVM` |
 | Update and render overlap on two threads | one thread | |
 | GPU replay | software rasteriser | |
 

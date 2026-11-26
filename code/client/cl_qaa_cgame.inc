@@ -746,12 +746,3 @@ static vm_t *QAA_CgameCreate( void ) {
 	}
 	return VM_CreateHosted( VM_CGAME, QAA_CgameEntry, QAA_CgameDestroy, QAA_CgameRestart );
 }
-
-static bool QAA_CL_UseRecompiledCgame( void ) {
-	cvar_t *var = Cvar_Get( "qaa_game", "1", CVAR_LATCH );
-	return var->integer != 0;
-}
-
-static vm_t *QAA_CL_LoadCGameVM( void ) {
-	return QAA_CL_UseRecompiledCgame() ? QAA_CgameCreate() : nullptr;
-}

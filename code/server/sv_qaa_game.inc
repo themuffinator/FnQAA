@@ -38,7 +38,6 @@ static sharedEntity_t qaaHostEnts[MAX_GENTITIES];
 static playerState_t qaaHostClients[MAX_CLIENTS];
 static int qaaRefreshHold;	// >0 while an engine call is changing a host copy
 
-static cvar_t *qaa_game;
 
 static inline bool QAA_SV_Active( void ) {
 	return qaaGame != nullptr && qaaGEnts != 0;
@@ -671,15 +670,7 @@ static vm_t *QAA_GameCreate( void ) {
 	return vm;
 }
 
-/* SV_LoadGameModule: QAA's recompiled qagame when qaa_game is set and available. */
+/* SV_InitGameProgs: QAA's recompiled qagame, the only game module. */
 static vm_t *QAA_SV_LoadGameModule( void ) {
-	if ( !qaa_game ) {
-		qaa_game = Cvar_Get( "qaa_game", "1", CVAR_LATCH );
-		Cvar_SetDescription( qaa_game, "Run Quake Arena Arcade's own game code, recompiled from your package "
-			"(1, the default), or look for a game module as FnQL does (0)." );
-	}
-	if ( !qaa_game->integer ) {
-		return nullptr;
-	}
 	return QAA_GameCreate();
 }

@@ -1658,12 +1658,7 @@ int CIN_PlayCinematic( const char *arg, int x, int y, int w, int h, int systemBi
 	cinTable[currentHandle].silent = (systemBits & CIN_silent) != 0;
 	cinTable[currentHandle].shader = (systemBits & CIN_shader) != 0;
 
-	if (cinTable[currentHandle].alterGameState) {
-		// close the menu
-		if ( uivm ) {
-			VM_Call( uivm, 1, UI_SET_ACTIVE_MENU, UIMENU_NONE );
-		}
-	} else {
+	if ( !cinTable[currentHandle].alterGameState ) {
 		cinTable[currentHandle].playonwalls = cl_inGameVideo->integer;
 	}
 

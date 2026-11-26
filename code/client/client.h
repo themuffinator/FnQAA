@@ -25,7 +25,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../qcommon/qcommon.h"
 #include "../renderercommon/tr_public.h"
 #include "../qcommon/vm_local.h"
-#include "../ui/ui_public.h"
 #include "../cgame/cg_public.h"
 #include "../game/bg_public.h"
 #include "audio/snd_public.h"
@@ -323,7 +322,6 @@ struct clientStatic_t {
 	connstate_t	state;				// connection status
 	qboolean	gameSwitch;
 
-	qboolean	cddialog;			// bring up the cd needed dialog next frame
 
 	char		servername[MAX_OSPATH];		// name of server from original connect (used by reconnect)
 
@@ -415,7 +413,6 @@ qboolean	CL_Download( const char *cmd, const char *pakname, qboolean autoDownloa
 //=============================================================================
 
 extern	vm_t			*cgvm;	// interface to cgame dll or vm
-extern	vm_t			*uivm;	// interface to ui dll or vm
 extern	refexport_t		re;		// interface to refresh .dll
 
 
@@ -455,7 +452,6 @@ extern	cvar_t	*cl_allowConsoleChat;
 extern	cvar_t	*cl_demoRecordMessage;
 extern	cvar_t	*cl_drawRecording;
 extern	cvar_t	*cl_menuAspect;
-extern	cvar_t	*cl_menuBlur;
 extern	cvar_t	*cl_cinematicAspect;
 extern	cvar_t	*cl_captureActive;
 extern	cvar_t	*cl_playerHighlight;
@@ -539,7 +535,6 @@ typedef enum {
 int CL_ValidateInputCommandSource( void );
 void CL_ClearKeyCommandInputState( void );
 void CL_SetRetailClientMessageViewangleDeltaFlag( void );
-void CL_SetRetailClientMessageCGameImportGuardFlag( void );
 void CL_SetRetailClientMessageRendererNodeCount( int nodeCount );
 
 //
@@ -603,7 +598,6 @@ void CL_SaveConsoleHistory( void );
 void	SCR_Init( void );
 void	SCR_Done( void );
 void	SCR_UpdateScreen( void );
-qboolean CL_UIMenusAreVisible( void );
 
 void	SCR_DebugGraph( float value );
 
@@ -627,14 +621,6 @@ void	SCR_DrawStringExt( int x, int y, float size, const char *string, const floa
 void	SCR_DrawSmallStringExt( int x, int y, const char *string, const float *setColor, qboolean forceColor, qboolean noColorEscape );
 void	SCR_DrawSmallChar( int x, int y, int ch );
 void	SCR_DrawSmallString( int x, int y, const char *s, int len );
-void	CL_CopyRetailGlconfig( void *glconfig );
-
-typedef struct {
-	float x;
-	float y;
-} retailFramebufferScale_t;
-
-retailFramebufferScale_t CL_GetRetailFramebufferScale( void );
 void	RE_DrawScaledText( int x, int y, const char *text, int fontHandle, float scale, int limit, float *maxX, qboolean forceColor, const float *baseColor );
 void	RE_MeasureScaledText( const char *text, const char *end, int fontHandle, float scale, int limit, float *bounds );
 
@@ -663,128 +649,9 @@ void CL_ShutdownCGame( void );
 qboolean CL_GameCommand( void );
 void CL_CGameRendering( stereoFrame_t stereo );
 void CL_SetCGameTime( void );
-void CL_CheckCGameNativeImportIntegrity( void );
-void CL_ShowFirstTrackedPlayer( void );
-void CL_ShowSecondTrackedPlayer( void );
-int CL_GetCGamePhysicsTime( void );
 
 //
-// cl_webpak.cpp
-//
-void CL_WebPak_Init( void );
-void CL_WebPak_Shutdown( void );
-qboolean CL_WebPak_Available( void );
-qboolean CL_WebPak_Fetch( const char *virtualPath, void **outBuffer, int *outLength );
-int CL_WebPak_GetFileList( const char *path, const char *extension, char *listbuf, int bufsize );
-qboolean CL_WebRequestResolve( const char *virtualPath, void **outBuffer, int *outLength );
-qboolean CL_LauncherRequestData( const char *virtualPath, void **outBuffer, int *outLength );
-
-//
-// cl_webui.cpp
-//
-void QLWebHost_RegisterCommands( void );
-void QLWebHost_UnregisterCommands( void );
-void CL_WebHost_Init( void );
-void CL_WebHost_Shutdown( void );
-void CL_WebHost_Frame( void );
-void CL_WebHost_RefreshSurfaceSize( void );
-void CL_WebHost_InvalidateFactoryCatalog( void );
-void CL_WebHost_InvalidateMapCatalog( void );
-void CL_WebHost_BootstrapAwesomiumMenu( void );
-qboolean CL_WebHost_HasLiveView( void );
-qboolean CL_WebHost_HasBoundWindowObject( void );
-qboolean CL_WebHost_HasDrawableSurface( void );
-void CL_WebHost_DrawBrowserSurface( void );
-void *CL_WebHost_GetCursorHandle( void );
-void *CL_WebHost_OnChangeCursor( int cursorType );
-void CL_WebHost_OnChangeTooltip( const char *tooltip );
-void CL_WebHost_SetCursorPosition( int x, int y );
-qboolean CL_WebHost_GetCursorPosition( int *x, int *y );
-qboolean CL_WebHost_RequestCursorPosition( int *x, int *y );
-qboolean CL_WebHost_ShowAfterDisconnect( void );
-void CL_WebHost_HideBrowser( void );
-void CL_WebHost_HideForGameTransition( void );
-qboolean CL_WebHost_KeyCapturePending( void );
-void CL_WebHost_NotifySoundsStopped( void );
-void CL_WebHost_NotifyAppActivation( qboolean active );
-void CL_WebHost_InvalidateConfigSnapshot( void );
-void CL_WebHost_InvalidateFriendSnapshot( void );
-void CL_WebHost_OnServerInfoResponse( const netadr_t *address, const char *infoString, int ping );
-qboolean CL_WebHost_OnServerStatusResponseInfo( const netadr_t *address, const char *infoString );
-void CL_WebHost_OnServerStatusResponsePlayer( const netadr_t *address, const char *playerLine );
-void CL_WebHost_OnServerStatusResponseComplete( const netadr_t *address );
-void CL_WebView_PublishEvent( const char *name, const char *payload );
-void CL_WebView_InvokeCommNotice( const char *message );
-void CL_WebView_PublishTaggedInfoString( const char *messageType, const char *infoString );
-void CL_WebView_PublishGameError( const char *message );
-void CL_WebView_PublishGameEnd( void );
-void CL_WebView_PublishCvarChange( const char *name, const char *value, qboolean replicate );
-void CL_WebView_PublishBindChanged( const char *name, const char *value );
-void CL_WebView_PublishGameStartForAddress( const netadr_t *serverAddress );
-void CL_WebView_PublishGameStart( void );
-void CL_WebView_PublishGameDemo( const char *id, const char *name );
-void CL_WebView_PublishGameScreenshot( const char *id, const char *name );
-void CL_WebView_OnMouseMove( int x, int y );
-void CL_WebView_OnMouseButtonEvent( int key, qboolean down );
-void CL_WebView_OnMouseWheelEvent( int direction );
-qboolean CL_WebView_CaptureMouseKeyEvent( int key, qboolean down );
-void CL_WebView_OnKeyEvent( int key, qboolean down );
-void CL_WebView_OnCharEvent( int codepoint );
-qhandle_t CL_AdvertisementBridge_SetupAdvertCellShader( const char *defaultContent, const void *rect, int cellId );
-qhandle_t CL_AdvertisementBridge_RefreshAdvertCellShader( const char *defaultContent, const void *rect, int cellId );
-qhandle_t CL_AdvertisementBridge_SetupUIAdvertCellShader( const char *defaultContent, const void *rect, int cellId );
-qhandle_t CL_AdvertisementBridge_RefreshUIAdvertCellShader( const char *defaultContent, const void *rect, int cellId );
-void CL_AdvertisementBridge_InitCGame( void );
-void CL_AdvertisementBridge_ShutdownCGame( void );
-void CL_AdvertisementBridge_InitUI( void );
-void CL_AdvertisementBridge_Reserved21C0( void );
-void CL_AdvertisementBridge_SetActiveAdvert( int cellId );
-void CL_AdvertisementBridge_ActivateAdvert( int cellId );
-void CL_AdvertisementBridge_UpdateAdvert( int handleOrToken, int area );
-void CL_AdvertisementBridge_SetMapPath( const char *mapPath );
-void CL_AdvertisementBridge_UpdateViewParameters( void );
-void CL_AdvertisementBridge_RefreshLoadingViewParameters( void );
-void CL_AdvertisementBridge_UpdateLoadingViewParameters( void );
-void CL_AdvertisementBridge_SetFrameTime( int frameTime );
-void CL_AdvertisementBridge_ClearDelay( void );
-qboolean CL_AdvertisementBridge_IsDelayElapsed( void );
-int CL_AdvertisementBridge_GetCellDisplayState( int cellId );
-void CL_AdvertisementBridge_GetCellLabel( int cellId, char *buffer, int bufferSize );
-int CL_AdvertisementBridge_GetLabelList1Count( void );
-void CL_AdvertisementBridge_GetLabelList1Entry( int index, char *buffer, int bufferSize );
-int CL_AdvertisementBridge_GetLabelList2Count( void );
-void CL_AdvertisementBridge_GetLabelList2Entry( int index, char *buffer, int bufferSize );
-qboolean CL_Awesomium_RequestResource( const char *virtualPath, void **outBuffer, int *outLength );
-qboolean CL_Awesomium_Startup( const char *runtimePath, const char *basePath, const char *retailPath, const char *playerName, int width, int height, const char *initialConfigJson, const char *initialMapJson, const char *initialFactoryJson, const char *initialFriendJson );
-qboolean CL_Awesomium_OpenURL( const char *url );
-void CL_Awesomium_Update( void );
-qboolean CL_Awesomium_Resize( int width, int height );
-int CL_Awesomium_SurfaceWidth( void );
-int CL_Awesomium_SurfaceHeight( void );
-qboolean CL_Awesomium_SurfaceDirty( void );
-qboolean CL_Awesomium_IsLoading( void );
-qboolean CL_Awesomium_IsCrashed( void );
-int CL_Awesomium_LastErrorCode( void );
-qboolean CL_Awesomium_ExecuteJavascript( const char *script, const char *frame );
-qboolean CL_Awesomium_ExecuteJavascriptInteger( const char *script, const char *frame, int *outValue );
-qboolean CL_Awesomium_PopJavascriptRequest( char *buffer, int bufferSize );
-qboolean CL_Awesomium_SetZoom( int zoomPercent );
-void CL_Awesomium_PauseRendering( void );
-void CL_Awesomium_Unfocus( void );
-qboolean CL_Awesomium_CopySurface( byte *destination, int width, int height, int rowSpan );
-void CL_Awesomium_InjectMouseMove( int x, int y );
-void CL_Awesomium_InjectMouseDown( int button );
-void CL_Awesomium_InjectMouseUp( int button );
-void CL_Awesomium_InjectMouseWheel( int direction );
-void CL_Awesomium_InjectKeyboardEvent( unsigned int eventType, unsigned int virtualKeyCode, long nativeKeyCode );
-void CL_Awesomium_Stop( void );
-void CL_Awesomium_ClearCache( void );
-void CL_Awesomium_Reload( qboolean ignoreCache );
-void CL_Awesomium_Shutdown( void );
-const char *CL_Awesomium_LastError( void );
-
-//
-// cl_ui.cpp
+// cl_main.cpp: QAA's front end (cl_qaa_ui.cpp); there is no ui module
 //
 void CL_InitUI( void );
 void CL_ShutdownUI( void );

@@ -21,7 +21,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
 #include "server.h"
-#include "arena_script.hpp"
 #include "../qcommon/netchan_safety.hpp"
 
 #include <array>
@@ -167,23 +166,9 @@ static void SV_Map_f( void ) {
 
 	cmd = Cmd_Argv(0);
 	singlePlayerCommand = Q_stricmpn( cmd, "sp", 2 ) == 0;
-	// QAA: without factories (Quake Arena Arcade has none) map and devmap take
-	// just the map name, as in Quake III and in QAA's own engine
-	const bool quake3MapCommand = !singlePlayerCommand && SV_FactoryCatalogEmpty();
 	map = Cmd_Argv(1);
 	if ( !map || !*map ) {
-		if ( singlePlayerCommand ) {
-			Com_Printf( "%s <mapname>\n", cmd );
-		} else {
-			SV_FactoryPrintMapUsage( cmd );
-		}
-		return;
-	}
-	// Retail enforces the factory argument threshold before touching the BSP.
-	// An explicitly present empty argv[2] still passes this preflight and is
-	// subsequently treated as an invalid exact factory when no selection exists.
-	if ( !singlePlayerCommand && !quake3MapCommand && Cmd_Argc() < 3 && !SV_FactoryHasActive() ) {
-		SV_FactoryPrintMapUsage( cmd );
+		Com_Printf( "%s <mapname>\n", cmd );
 		return;
 	}
 
@@ -204,13 +189,8 @@ static void SV_Map_f( void ) {
 
 	// force latched values to get set
 	Cvar_Get ("g_gametype", "0", CVAR_SERVERINFO | CVAR_USERINFO | CVAR_LATCH );
-	(void)Cvar_Get( "g_ammoPack", "0", CVAR_LATCH );
 
 	if ( singlePlayerCommand ) {
-		// The inherited single-player aliases do not select a retail factory.
-		// Drop any previous factory snapshots before applying their SP cvars so
-		// overrides cannot leak into this path or be reused by a later map call.
-		SV_FactoryDeactivate();
 		Cvar_SetIntegerValue( "g_gametype", GT_SINGLE_PLAYER );
 		Cvar_Set( "g_doWarmup", "0" );
 		// may not set sv_maxclients directly, always set latched
@@ -237,15 +217,6 @@ static void SV_Map_f( void ) {
 		}
 	}
 
-	// Retail QL's map command owns factory selection.  Keep the inherited
-	// single-player aliases intact, but require/reuse a factory for map and
-	// devmap before any level state is torn down.
-	if ( !singlePlayerCommand && !quake3MapCommand &&
-		!SV_FactoryPrepareMap( map, Cmd_Argv( 2 ), SV_QBool( Cmd_Argc() >= 3 ),
-			SV_QBool( cheat ) ) ) {
-		return;
-	}
-
 	// save the map name here cause on a map restart we reload the q3config.cfg
 	// and thus nuke the arguments of the map command
 	Q_strncpyz( mapname.data(), map, SV_ArraySize(mapname) );
@@ -269,99 +240,6 @@ static void SV_Map_f( void ) {
 		Cvar_Set( "ui_priv", "3" );
 	}
 #endif
-}
-
-
-/*
-==================
-SV_Arena_f
-
-Retail `arena <name>` starts the training match described by
-scripts/<name>.sp_arena (quakelive_steam.exe 0x4de050): free-for-all on the
-script's map with its frag limit, time limit, bot skill and bot list, cheats
-off. arena_script.hpp holds the file contract. Retail leaves factory state
-alone; FnQL drops the active factory first, as its single-player map aliases
-do, so a previous factory's overrides cannot leak into the training match.
-==================
-*/
-static void SV_Arena_f( void ) {
-	namespace arena = fnql::server::arena;
-
-	const char *name = Cmd_Argv( 1 );
-	if ( !name || !name[0] ) {
-		Com_Printf( "No arena name passed\n" );
-		return;
-	}
-	if ( !arena::IsSafeName( name ) ) {
-		Com_Printf( "Invalid arena name: %s\n", name );
-		return;
-	}
-
-	std::array<char, MAX_QPATH> path{};
-	Com_sprintf( path.data(), SV_ArraySize(path), "scripts/%s.sp_arena", name );
-
-	void *contents = nullptr;
-	const int length = FS_ReadFile( path.data(), &contents );
-	if ( length <= 0 || !contents ) {
-		if ( contents ) {
-			FS_FreeFile( contents );
-		}
-		Com_Printf( S_COLOR_RED "file not found: %s\n", path.data() );
-		return;
-	}
-	if ( static_cast<std::size_t>( length ) >= arena::kScriptByteLimit ) {
-		FS_FreeFile( contents );
-		Com_Printf( S_COLOR_RED "file too large: %s is %i, max allowed is %i\n",
-			path.data(), length, static_cast<int>( arena::kScriptByteLimit ) );
-		return;
-	}
-
-	const arena::ParseResult parsed = arena::ParseScript( std::string_view(
-		static_cast<const char *>( contents ), static_cast<std::size_t>( length ) ) );
-	FS_FreeFile( contents );
-
-	for ( const std::string &notice : parsed.notices ) {
-		Com_Printf( "%s\n", notice.c_str() );
-	}
-	if ( !parsed.script ) {
-		Com_Printf( "%s: %s\n", path.data(), parsed.error.c_str() );
-		return;
-	}
-
-	const arena::Script &script = *parsed.script;
-	if ( !arena::IsSafeName( script.map ) ) {
-		Com_Printf( "%s: invalid map name\n", path.data() );
-		return;
-	}
-
-	std::array<char, MAX_QPATH> mapPath{};
-	Com_sprintf( mapPath.data(), SV_ArraySize(mapPath), "maps/%s.bsp", script.map.c_str() );
-	{
-		// bypass pure check so we can open a downloaded map, as SV_Map_f does
-		FS_BypassPure();
-		const auto restorePure = SV_MakeScopeExit( []() { FS_RestorePure(); } );
-		if ( FS_FOpenFileRead( mapPath.data(), nullptr, qfalse ) == -1 ) {
-			Com_Printf( "Can't find map %s!\n", mapPath.data() );
-			return;
-		}
-	}
-
-	const int botSkill = script.botSkill
-		? *script.botSkill : Cvar_VariableIntegerValue( "g_spSkill" );
-
-	// force latched values to get set
-	Cvar_Get( "g_gametype", "0", CVAR_SERVERINFO | CVAR_USERINFO | CVAR_LATCH );
-	SV_FactoryDeactivate();
-	Cvar_SetIntegerValue( "g_gametype", GT_FFA );
-	Cvar_SetIntegerValue( "g_spSkill", botSkill );
-	Cvar_SetIntegerValue( "fraglimit", script.fragLimit );
-	Cvar_SetIntegerValue( "timelimit", script.timeLimit );
-	if ( !script.bots.empty() ) {
-		Cvar_Set( "g_botSpawnList", script.bots.c_str() );
-	}
-
-	SV_SpawnServer( script.map.c_str(), qtrue );
-	Cvar_Set( "sv_cheats", "0" );
 }
 
 
@@ -411,10 +289,10 @@ static void SV_MapRestart_f( void ) {
 	}
 
 	// Retail skips these transition checks once qagame marks g_restarted. On a
-	// normal restart, ammo-pack or gametype changes require a full spawn, while
-	// a max-client change resizes the retained client array before the fast path.
+	// normal restart, a gametype change requires a full spawn, while a
+	// max-client change resizes the retained client array before the fast path.
 	if ( Cvar_VariableValue( "g_restarted" ) == 0.0f ) {
-		if ( ( sv_ammoPack && sv_ammoPack->modified ) || sv_gametype->modified ) {
+		if ( sv_gametype->modified ) {
 			std::array<char, MAX_QPATH> mapname{};
 
 			Com_Printf( "variable change -- restarting.\n" );
@@ -525,8 +403,6 @@ static void SV_MapRestart_f( void ) {
 				fnql::net::CounterSubtract( sv.time, 1u );
 		}
 	}
-
-	SV_MapPoolRefreshCvars();
 }
 
 
@@ -1327,67 +1203,6 @@ static void SV_PrintRepeatedChar( char value, int count ) {
 
 /*
 ================
-SV_StatusRetail
-
-Retail's fixed-column `status` table (quakelive_steam.exe 0x4dec60), which
-tools read over rcon. Each occupied slot prints its number, score, ping (CNCT
-while connecting, ZMBI as a zombie, capped at 9999), the name padded to 16
-characters, milliseconds since its last packet, the address padded to 22, then
-qport, rate and SteamID.
-================
-*/
-static void SV_StatusRetail( void ) {
-	// QAA: PC deviation, retail's trailing steamid column is dropped: there
-	// is no Steam identity to show
-	Com_Printf( "map: %s\n", sv_mapname->string );
-	Com_Printf( "num score ping name            lastmsg address               qport rate\n" );
-	Com_Printf( "--- ----- ---- --------------- ------- --------------------- ----- -----\n" );
-
-	for ( SV_ClientSlot slot : SV_ClientSlots() ) {
-		const client_t *cl = &slot.client;
-		if ( cl->state == CS_FREE ) {
-			continue;
-		}
-
-		Com_Printf( "%3i ", slot.index );
-		const playerState_t *ps = SV_GameClientNum( slot.index );
-		Com_Printf( "%5i ", SV_GameGetClientScore( slot.index, ps->persistant[PERS_SCORE] ) );
-
-		if ( cl->state == CS_CONNECTED ) {
-			Com_Printf( "CNCT " );
-		} else if ( cl->state == CS_ZOMBIE ) {
-			Com_Printf( "ZMBI " );
-		} else {
-			Com_Printf( "%4i ", cl->ping < 9999 ? cl->ping : 9999 );
-		}
-
-		const int nameLength = static_cast<int>( strlen( cl->name ) );
-		Com_Printf( "%s", cl->name );
-		Com_Printf( S_COLOR_WHITE );
-		if ( nameLength < 16 ) {
-			SV_PrintRepeatedChar( ' ', 16 - nameLength );
-		}
-
-		Com_Printf( "%7i ", svs.time - cl->lastPacketTime );
-
-		const char *address = NET_AdrToString( &cl->netchan.remoteAddress );
-		const int addressLength = static_cast<int>( strlen( address ) );
-		Com_Printf( "%s", address );
-		if ( addressLength < 22 ) {
-			SV_PrintRepeatedChar( ' ', 22 - addressLength );
-		}
-
-		Com_Printf( "%5i", cl->netchan.qport );
-		Com_Printf( " %5i", cl->rate );
-		Com_Printf( "\n" );
-	}
-
-	Com_Printf( "\n" );
-}
-
-
-/*
-================
 SV_Status_f
 ================
 */
@@ -1410,13 +1225,6 @@ static void SV_Status_f( void ) {
 	// make sure server is running
 	if ( !com_sv_running->integer ) {
 		Com_Printf( "Server is not running.\n" );
-		return;
-	}
-
-	// A Quake Live module gets retail's table; a classic vmMain module or a
-	// QVM keeps the variable-width Quake III table below.
-	if ( SV_GameQueryExportsAvailable() ) {
-		SV_StatusRetail();
 		return;
 	}
 
@@ -1477,7 +1285,7 @@ static void SV_Status_f( void ) {
 
 		Com_Printf( "%2i ", slot.index ); // id
 		ps = SV_GameClientNum( slot.index );
-		Com_Printf( "%5i ", SV_GameGetClientScore( slot.index, ps->persistant[PERS_SCORE] ) );
+		Com_Printf( "%5i ", ps->persistant[PERS_SCORE] );
 
 		// ping/status
 		if ( cl->state == CS_PRIMED )
@@ -1539,16 +1347,6 @@ static void SV_ConSay_f( void ) {
 	if ( *p == '"' ) {
 		p[len-1] = '\0';
 		p++;
-	}
-
-	// Retail's chat command leads with the sender's client number, which
-	// cgame parses first; the console speaks as slot 63 under the name
-	// "Server" (quakelive_steam.exe 0x4def24: chat "%i Server: %s\n").
-	// A classic vmMain module or a QVM keeps the Quake III form.
-	if ( SV_GameQueryExportsAvailable() ) {
-		Com_sprintf( text.data(), SV_ArraySize(text), "%i Server: %s", MAX_CLIENTS - 1, p );
-		SV_SendServerCommand( nullptr, "chat \"%s\n\"", text.data() );
-		return;
 	}
 
 	Com_sprintf( text.data(), SV_ArraySize(text), "console: %s", p );
@@ -1794,13 +1592,6 @@ void SV_AddOperatorCommands( void ) {
 	static constexpr std::array<operatorCommand_t, 1> mapCommands = {{
 		{ "map", SV_Map_f },
 	}};
-	static constexpr std::array<operatorCommand_t, 5> qlFactoryCommands = {{
-		{ "arena", SV_Arena_f },
-		{ "reload_arenas", SV_ArenaReload_f },
-		{ "reload_factories", SV_FactoryReload_f },
-		{ "reload_mappool", SV_MapPoolReload_f },
-		{ "startRandomMap", SV_StartRandomMap_f },
-	}};
 #ifndef PRE_RELEASE_DEMO
 	static constexpr std::array<operatorCommand_t, 3> extraMapCommands = {{
 		{ "devmap", SV_Map_f },
@@ -1838,7 +1629,6 @@ void SV_AddOperatorCommands( void ) {
 #endif
 	SV_AddCommandSet( mapCommands );
 	SV_SetMapCompletionForCommands( mapCommands );
-	SV_AddCommandSet( qlFactoryCommands );
 #ifndef PRE_RELEASE_DEMO
 	SV_AddCommandSet( extraMapCommands );
 	SV_SetMapCompletionForCommands( extraMapCommands );

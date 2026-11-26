@@ -221,11 +221,6 @@ if default_basedir != ''
   common_cpp_args += ['-DDEFAULT_BASEDIR="@0@"'.format(default_basedir)]
 endif
 
-if not ['x86', 'x86_64', 'aarch64', 'arm', 'ppc64le', 'ppc64'].contains(cpu_family) and not cpu_family.startswith('arm')
-  common_c_args += ['-DNO_VM_COMPILED']
-  common_cpp_args += ['-DNO_VM_COMPILED']
-endif
-
 use_opengl_api = build_client and (renderer_default == 'glx' or 'glx' in enabled_renderers)
 use_vulkan_api = build_client and (renderer_default in ['vk', 'rtx'] or 'vk' in enabled_renderers or 'rtx' in enabled_renderers)
 
@@ -290,19 +285,8 @@ qcommon_src = qaa_src + [
   'code/qcommon/q_math.c',
   'code/qcommon/q_shared.c',
   'code/qcommon/unzip.c',
-  'code/qcommon/vm_interpreted.c',
   'code/qcommon/vm.c',
 ]
-
-if cpu_family in ['x86', 'x86_64']
-  qcommon_src += 'code/qcommon/vm_x86.c'
-elif cpu_family == 'aarch64'
-  qcommon_src += 'code/qcommon/vm_aarch64.c'
-elif cpu_family.startswith('arm')
-  qcommon_src += 'code/qcommon/vm_armv7l.c'
-elif cpu_family in ['ppc64le', 'ppc64']
-  qcommon_src += 'code/qcommon/vm_powerpc.c'
-endif
 
 platform_asm_src = []
 client_asm_src = []
@@ -314,8 +298,6 @@ elif cpu_family == 'x86_64'
 endif
 
 server_src = [
-	'code/server/factory_catalog.cpp',
-	'code/server/factory_rotation.cpp',
   'code/server/sv_bot.cpp',
   'code/server/sv_ccmds.cpp',
   'code/server/sv_client.cpp',
@@ -325,10 +307,8 @@ server_src = [
   'code/server/sv_lockstep.cpp',
   'code/server/sv_main.cpp',
   'code/server/sv_net_chan.cpp',
-	'code/server/sv_factory.cpp',
   'code/server/sv_snapshot.cpp',
   'code/server/sv_world.cpp',
-  'code/server/sv_zmq.cpp',
 ]
 
 client_src = [
@@ -343,12 +323,9 @@ client_src = [
   'code/client/cl_net_chan.cpp',
   'code/client/cl_parse.cpp',
   'code/client/cl_scrn.cpp',
-  'code/client/cl_ui.cpp',
   # QAA: QAA's Scaleform front end, recompiled from default.xex (M6).
   'code/client/cl_qaa_ui.cpp',
   'code/client/cl_qaa_ui_raster.cpp',
-  # QAA: no Awesomium WebUI; QAA's menus are Scaleform (M6).
-  'code/qaa/qaa_null_webui.cpp',
   'code/client/audio/snd_main.cpp',
   'code/client/audio/legacy/snd_adpcm.cpp',
   'code/client/audio/legacy/snd_dma.cpp',
@@ -1109,13 +1086,6 @@ huffman_decoder_tests = executable('fnqaa_huffman_decoder_tests',
 )
 test('fnqaa_huffman_decoder', huffman_decoder_tests)
 
-qvm_header_tests = executable('fnqaa_qvm_header_tests',
-  'tests/qvm_header_tests.c',
-  include_directories: include_directories('code/qcommon'),
-  c_args: common_c_args,
-)
-test('fnqaa_qvm_header_bounds', qvm_header_tests)
-
 filesystem_write_bounds_tests = executable('fnqaa_filesystem_write_bounds_tests',
   'tests/filesystem_write_bounds_tests.c',
   include_directories: include_directories('code/qcommon'),
@@ -1136,20 +1106,6 @@ cvar_retail_bounds_tests = executable('fnqaa_cvar_retail_bounds_tests',
   c_args: common_c_args,
 )
 test('fnqaa_cvar_retail_bounds', cvar_retail_bounds_tests)
-
-cvar_ui_policy_tests = executable('fnqaa_cvar_ui_policy_tests',
-  'tests/cvar_ui_policy_tests.c',
-  include_directories: include_directories('code/qcommon'),
-  c_args: common_c_args,
-)
-test('fnqaa_cvar_ui_policy', cvar_ui_policy_tests)
-
-module_provider_policy_tests = executable('fnqaa_module_provider_policy_tests',
-  'tests/module_provider_policy_tests.c',
-  include_directories: include_directories('code/qcommon'),
-  c_args: common_c_args,
-)
-test('fnqaa_module_provider_policy', module_provider_policy_tests)
 
 png_loader_tests = executable('fnqaa_png_loader_tests',
   [
@@ -1196,12 +1152,6 @@ server_cvar_compat_tests = executable('fnqaa_server_cvar_compat_tests',
 )
 test('fnqaa_server_cvar_compat', server_cvar_compat_tests)
 
-arena_script_tests = executable('fnqaa_arena_script_tests',
-  'tests/arena_script_tests.cpp',
-  cpp_args: common_cpp_args,
-)
-test('fnqaa_arena_script', arena_script_tests)
-
 message_codec_tests = executable('fnqaa_message_codec_tests',
   'tests/message_codec_tests.cpp',
   'code/qcommon/msg.cpp',
@@ -1232,52 +1182,6 @@ retail_auth_challenge_tests = executable('fnqaa_retail_auth_challenge_tests',
   cpp_args: common_cpp_args,
 )
 test('fnqaa_retail_auth_challenge', retail_auth_challenge_tests)
-
-game_identity_tests = executable('fnqaa_game_identity_tests',
-  'tests/game_identity_tests.cpp',
-  include_directories: include_directories('code/server'),
-  cpp_args: common_cpp_args,
-)
-test('fnqaa_game_identity', game_identity_tests)
-
-factory_rotation_tests = executable('fnqaa_factory_rotation_tests',
-  'tests/factory_rotation_tests.cpp',
-  'code/server/factory_rotation.cpp',
-  include_directories: include_directories('code/server'),
-  cpp_args: common_cpp_args,
-)
-test('fnqaa_factory_rotation', factory_rotation_tests)
-
-json_document_tests = executable('fnqaa_json_document_tests',
-  'tests/json_document_tests.cpp',
-  include_directories: include_directories('code/server'),
-  cpp_args: common_cpp_args,
-)
-test('fnqaa_json_document', json_document_tests)
-
-factory_catalog_tests = executable('fnqaa_factory_catalog_tests',
-  [
-    'tests/factory_catalog_tests.cpp',
-    'code/server/factory_catalog.cpp',
-  ],
-  include_directories: include_directories('code/server'),
-  cpp_args: common_cpp_args,
-)
-test('fnqaa_factory_catalog', factory_catalog_tests)
-
-stats_event_tests = executable('fnqaa_stats_event_tests',
-  'tests/stats_event_tests.cpp',
-  include_directories: include_directories('code/server'),
-  cpp_args: common_cpp_args,
-)
-test('fnqaa_stats_event', stats_event_tests)
-
-stats_report_tests = executable('fnqaa_stats_report_tests',
-  'tests/stats_report_tests.cpp',
-  include_directories: include_directories('code/server'),
-  cpp_args: common_cpp_args,
-)
-test('fnqaa_stats_report', stats_report_tests)
 
 demo_stream_tests = executable('fnqaa_demo_stream_tests',
   'tests/demo_stream_tests.cpp',
@@ -1320,13 +1224,6 @@ collision_capsule_trace_tests = executable('fnqaa_collision_capsule_trace_tests'
   dependencies: collision_capsule_trace_deps,
 )
 test('fnqaa_collision_capsule_trace', collision_capsule_trace_tests)
-
-zmq_endpoint_tests = executable('fnqaa_zmq_endpoint_tests',
-  'tests/zmq_endpoint_tests.cpp',
-  include_directories: include_directories('code/server'),
-  cpp_args: common_cpp_args,
-)
-test('fnqaa_zmq_endpoint', zmq_endpoint_tests)
 
 if get_option('glx-tests')
   glx_logic_tests = executable('fnqaa_glx_logic_tests',

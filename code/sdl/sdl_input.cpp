@@ -58,7 +58,7 @@ static qboolean mouseAvailable = qfalse;
 using fnql::input::PointerMode;
 using fnql::input::PointerOwner;
 
-static constexpr int kPointerMenuMask = KEYCATCH_UI | KEYCATCH_CGAME | KEYCATCH_BROWSER;
+static constexpr int kPointerMenuMask = KEYCATCH_UI | KEYCATCH_CGAME;
 
 static cvar_t *in_mouse;
 
@@ -96,8 +96,7 @@ static PointerOwner s_pointerOwner = PointerOwner::Gameplay;
 static PointerMode  s_pointerMode;
 static qboolean     s_pointerModeValid;
 static constexpr int kTextInputCatcherMask =
-	KEYCATCH_CONSOLE | KEYCATCH_UI | KEYCATCH_MESSAGE |
-	KEYCATCH_BROWSER;
+	KEYCATCH_CONSOLE | KEYCATCH_UI | KEYCATCH_MESSAGE;
 static qboolean     s_textInputActive;
 static qboolean     s_textInputFailureReported;
 
@@ -347,7 +346,6 @@ static int IN_PointerConsumerIdentity( void )
 	const int catcher = Key_GetCatcher();
 
 	if ( catcher & KEYCATCH_CONSOLE ) return KEYCATCH_CONSOLE;
-	if ( catcher & KEYCATCH_BROWSER ) return KEYCATCH_BROWSER;
 	if ( catcher & KEYCATCH_UI ) return KEYCATCH_UI;
 	if ( catcher & KEYCATCH_CGAME ) return KEYCATCH_CGAME;
 	return 0;
@@ -1957,7 +1955,6 @@ static void IN_HandleWindowEvent( Uint32 type, const SDL_WindowEvent *window, in
 			IN_QueueInputReset( qfalse );
 			gw_active = qfalse;
 			gw_minimized = qtrue;
-			CL_WebHost_NotifyAppActivation( qfalse );
 			mouse_focus = qfalse;
 			s_absPointerOutside = qfalse;
 			s_fullscreenOcclusionReset = qfalse;
@@ -2005,7 +2002,6 @@ static void IN_HandleWindowEvent( Uint32 type, const SDL_WindowEvent *window, in
 			if ( glw_state.isFullscreen ) {
 				gw_minimized = qtrue;
 			}
-			CL_WebHost_NotifyAppActivation( qfalse );
 			mouse_focus = qfalse;
 			s_absPointerOutside = qfalse;
 			s_fullscreenOcclusionReset = qfalse;
@@ -2019,7 +2015,6 @@ static void IN_HandleWindowEvent( Uint32 type, const SDL_WindowEvent *window, in
 			IN_QueueInputReset( qtrue );
 			gw_active = qtrue;
 			gw_minimized = qfalse;
-			CL_WebHost_NotifyAppActivation( qtrue );
 			mouse_focus =
 				( SDL_GetMouseFocus() == SDL_window ||
 					glw_state.isFullscreen ) ? qtrue : qfalse;

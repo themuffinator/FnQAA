@@ -95,10 +95,11 @@ Vorbis.
 | `audio-tests`, `glx-tests` | `true` | build those unit tests |
 | `strict-warnings` | `false` | warnings are errors in FnQAA's targets |
 
-FnQL's Steam integration (Steamworks, the Workshop, Steam install detection)
-is removed from FnQAA, and its Awesomium WebUI is not part of it; there is
-no option for either. `code/qaa/qaa_null_webui.cpp` implements the WebUI's
-engine interface with every service unavailable.
+FnQL's Quake Live services are not part of FnQAA, and there is no option
+for any of them: Steam (Steamworks, the Workshop, install detection), the
+Awesomium WebUI and its in-game advertisements, factories and map pools,
+ZMQ rcon and stats, and the hosting of Quake Live game, cgame and ui modules
+(QVM or native). The engine runs only QAA's own recompiled modules.
 
 ## Tests
 

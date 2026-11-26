@@ -1217,13 +1217,6 @@ void Cmd_ExecuteString( const char *text ) {
 		return;
 	}
 
-#ifndef DEDICATED
-	// check ui commands
-	if ( com_cl_running && com_cl_running->integer && UI_GameCommand() ) {
-		return;
-	}
-#endif
-
 	if ( Cmd_ExecuteAlias( cmd_argv[ 0 ] ) ) {
 		return;
 	}

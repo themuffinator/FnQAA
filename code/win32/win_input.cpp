@@ -57,7 +57,7 @@ static POINT client_center;
 using fnql::input::PointerMode;
 using fnql::input::PointerOwner;
 
-static constexpr int kPointerMenuMask = KEYCATCH_UI | KEYCATCH_CGAME | KEYCATCH_BROWSER;
+static constexpr int kPointerMenuMask = KEYCATCH_UI | KEYCATCH_CGAME;
 
 static PointerOwner s_pointerOwner = PointerOwner::Gameplay;
 static qboolean s_pointerConfined;
@@ -78,9 +78,6 @@ static int IN_PointerConsumerIdentity( void )
 	const int catcher = Key_GetCatcher();
 	if ( catcher & KEYCATCH_CONSOLE ) {
 		return KEYCATCH_CONSOLE;
-	}
-	if ( catcher & KEYCATCH_BROWSER ) {
-		return KEYCATCH_BROWSER;
 	}
 	if ( catcher & KEYCATCH_UI ) {
 		return KEYCATCH_UI;

@@ -4098,50 +4098,19 @@ Con_MessageMode_f
 */
 static void Con_ToggleMessageCatcher( void ) {
 	Key_SetCatcher( Key_GetCatcher() ^ KEYCATCH_MESSAGE );
-	if ( cgvm && cgvm->dllExports ) {
-		VM_Call( cgvm, 0, ( Key_GetCatcher() & KEYCATCH_MESSAGE ) ? CG_CHAT_DOWN : CG_CHAT_UP );
-	}
 }
 
 
 static int Con_GetChatFieldY( void ) {
-	int chatFieldY = 413;
-
-	if ( cgvm && cgvm->dllExports ) {
-		const int cgameY = VM_Call( cgvm, 0, CG_GET_CHAT_FIELD_Y );
-
-		if ( cgameY > 0 ) {
-			chatFieldY = cgameY;
-		}
-	}
-
-	return chatFieldY;
+	return 413;
 }
 
 static int Con_GetChatFieldPixelWidth( void ) {
-	int chatFieldWidth = SCREEN_WIDTH;
-
-	if ( cgvm && cgvm->dllExports ) {
-		const int cgameWidth = VM_Call( cgvm, 0, CG_GET_CHAT_FIELD_PIXEL_WIDTH );
-
-		if ( cgameWidth > 0 ) {
-			chatFieldWidth = cgameWidth;
-		}
-	}
-
-	return chatFieldWidth;
+	return SCREEN_WIDTH;
 }
 
 static int Con_GetChatFieldWidthInChars( qboolean teamChat ) {
 	int width = 73;
-
-	if ( cgvm && cgvm->dllExports ) {
-		const int cgameWidth = VM_Call( cgvm, 0, CG_GET_CHAT_FIELD_WIDTH_IN_CHARS );
-
-		if ( cgameWidth > 0 ) {
-			width = cgameWidth;
-		}
-	}
 
 	if ( teamChat && width > 5 ) {
 		width -= 5;
@@ -4794,14 +4763,6 @@ static void Con_Linefeed( bool skipnotify )
 static int Con_GetTimestampTime( void ) {
 	int timestampTime = cl.serverTime;
 
-	if ( con_timestamps && con_timestamps->integer == 1 ) {
-		const int physicsTime = CL_GetCGamePhysicsTime();
-
-		if ( physicsTime > 0 ) {
-			timestampTime = physicsTime;
-		}
-	}
-
 	if ( timestampTime < 0 ) {
 		timestampTime = 0;
 	}
@@ -5068,9 +5029,8 @@ static void Con_DrawNotify( void )
 {
 	// Retail suppresses the chat overlay only for a full-screen menu.  A cgame
 	// key catcher must not hide it, because message mode outranks cgame in the
-	// key dispatch and stays typable underneath.  KEYCATCH_BROWSER is FnQL's
-	// own carrier for the retail WebUI surface, so it joins KEYCATCH_UI here.
-	if ( Key_GetCatcher() & (KEYCATCH_UI | KEYCATCH_BROWSER) ) {
+	// key dispatch and stays typable underneath.
+	if ( Key_GetCatcher() & KEYCATCH_UI ) {
 		return;
 	}
 
@@ -5300,7 +5260,7 @@ void Con_DrawConsole( void ) {
 
 	// if disconnected, render console full screen
 	if ( cls.state == CA_DISCONNECTED ) {
-		if ( !( Key_GetCatcher( ) & (KEYCATCH_UI | KEYCATCH_CGAME | KEYCATCH_BROWSER)) ) {
+		if ( !( Key_GetCatcher( ) & (KEYCATCH_UI | KEYCATCH_CGAME)) ) {
 			Con_DrawSolidConsole( 1.0 );
 			return;
 		}

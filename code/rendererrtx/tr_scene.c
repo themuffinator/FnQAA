@@ -1262,15 +1262,6 @@ void RE_AddAdditiveLightToScene( const vec3_t org, float intensity, float r, flo
 }
 
 
-/* Retail QL exposes this no-argument renderer hook to refresh loading-screen
- * advertisement state without coupling the renderer to client ownership. */
-void AdvertisementBridge_UpdateLoadingViewParameters( void ) {
-	if ( ri.AdvertisementBridge_RefreshLoadingViewParameters ) {
-		ri.AdvertisementBridge_RefreshLoadingViewParameters();
-	}
-}
-
-
 void *R_GetCommandBuffer( int bytes );
 
 /*

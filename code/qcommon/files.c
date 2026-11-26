@@ -33,7 +33,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "qcommon.h"
 #include "filesystem_write_bounds.h"
 #include "unzip.h"
-#include "quakelive_pk3_xor.h"
 // QAA: Quake Arena Arcade's package (STFS) and archive (BPK) readers.
 #include "../qaa/qaa_bpk.h"
 #include "../qaa/qaa_bpk_archive.h"
@@ -255,7 +254,6 @@ typedef enum {
 typedef struct pack_s {
 	char			*pakFilename;				// c:\quake3\baseq3\pak0.pk3
 	char			*pakBasename;				// pak0
-	char			*readFilename;				// zip path actually opened by unzip
 	const char		*pakGamename;				// baseq3
 	packFormat_t	format;						// pk3 zip or Quake II pak
 	unzFile			handle;						// handle to zip file
@@ -264,7 +262,6 @@ typedef struct pack_s {
 	int				numfiles;					// number of files in pk3
 	int				referenced;					// referenced file flags
 	qboolean		exclude;					// found in \fs_excludeReference list
-	qboolean		quakeliveEncrypted;
 	struct qaaBpk_s	*qaaBpk;					// QAA: PACK_FORMAT_BPK archive; fileInPack_t.pos is its record index
 	fileInPack_t	*qaaFiles;					// QAA: one entry per BPK record, named once looked up
 	int				hashSize;					// hash table size (power of 2)
@@ -346,11 +343,8 @@ static	int			fs_packCount;			// total number of packs in searchpath
 static	int			fs_dirCount;			// total number of directories in searchpath
 
 static	int			fs_checksumFeed;
-static	unsigned int	fs_quakeLivePk3TempCounter;
 
 
-static qboolean FS_IsQuakeLiveEncryptedZipFile( const char *zipfile );
-static char *FS_CreateQuakeLiveDecryptedZipFile( const char *zipfile );
 static pack_t *FS_LoadZipFile( const char *zipfile );
 static pack_t *FS_LoadPakFile( const char *pakfile );
 static int FS_QAA_OpenBpkRecord( fileHandle_t *file, pack_t *pak, uint32_t index, const char *name ); // QAA
@@ -1668,21 +1662,6 @@ static qboolean FS_GeneralRef( const char *filename )
 	if ( !Q_stricmp( filename, "vm/qagame.qvm" ) )
 		return qfalse;
 
-	// Like qagame.qvm above, the FnQL-game server module is server-only:
-	// reading it must not make clients (retail ones included) download or
-	// require the package that carries it.  The retail qagamex86.dll keeps its
-	// historical reference behavior.
-	if ( !Q_stricmp( filename, FNQL_GAME_SERVER_MODULE_FILE ) )
-		return qfalse;
-
-	// The FnQL-game client package is optional: reading its cgame or ui must
-	// not make the pak referenced, so a server never asks a retail client to
-	// download or hold it.  An FnQL client that runs them on a pure server
-	// reports the package by its cgame checksum instead (CL_SendPureChecksums).
-	if ( !Q_stricmp( filename, FNQL_GAME_CGAME_MODULE_FILE ) ||
-		!Q_stricmp( filename, FNQL_GAME_UI_MODULE_FILE ) )
-		return qfalse;
-
 	if ( strstr( filename, "levelshots" ) )
 		return qfalse;
 
@@ -1778,7 +1757,7 @@ static int FS_OpenFileInPak( fileHandle_t *file, pack_t *pak, fileInPack_t *pakF
 	}
 
 	if ( !pak->handle ) {
-		pak->handle = unzOpen( pak->readFilename ? pak->readFilename : pak->pakFilename );
+		pak->handle = unzOpen( pak->pakFilename );
 		if ( !pak->handle ) {
 			Com_Printf( S_COLOR_RED "Error opening %s@%s\n", pak->pakBasename, pakFile->name );
 			*file = FS_INVALID_HANDLE;
@@ -1788,9 +1767,9 @@ static int FS_OpenFileInPak( fileHandle_t *file, pack_t *pak, fileInPack_t *pakF
 
 	if ( uniqueFILE ) {
 		// open a new file on the pakfile
-		zipHandle = unzReOpen( pak->readFilename ? pak->readFilename : pak->pakFilename, pak->handle );
+		zipHandle = unzReOpen( pak->pakFilename, pak->handle );
 		if ( zipHandle == NULL ) {
-			Com_Printf( S_COLOR_RED "Couldn't reopen %s", pak->readFilename ? pak->readFilename : pak->pakFilename );
+			Com_Printf( S_COLOR_RED "Couldn't reopen %s", pak->pakFilename );
 			*file = FS_INVALID_HANDLE;
 			return -1;
 		}
@@ -2592,36 +2571,6 @@ int FS_ReadFileInPurePak( const char *filename, int pureChecksum, void **buffer 
 }
 
 
-/*
-================
-FS_PureChecksumsForFile
-
-Writes the pure checksums of every loaded pak holding filename, in search
-order, and returns how many there are (at most maxChecksums).
-================
-*/
-int FS_PureChecksumsForFile( const char *filename, int *checksums, int maxChecksums ) {
-	const searchpath_t	*search;
-	long			fullHash;
-	int				count = 0;
-
-	if ( !fs_searchpaths || !filename || !filename[0] || !checksums || maxChecksums <= 0 ||
-		FS_CheckDirTraversal( filename ) ) {
-		return 0;
-	}
-	fullHash = FS_HashFileName( filename, 0U );
-	for ( search = fs_searchpaths ; search && count < maxChecksums ; search = search->next ) {
-		if ( !search->pack || search->pack->exclude ) {
-			continue;
-		}
-		if ( FS_FindFileInPack( search->pack, filename, fullHash ) ) {
-			checksums[ count++ ] = search->pack->pure_checksum;
-		}
-	}
-	return count;
-}
-
-
 static const char *FS_GetPackExtension( const char *filename )
 {
 	if ( COM_CompareExtension( filename, ".pak" ) ) {
@@ -3306,121 +3255,6 @@ static void FS_ConvertFilename( char *name )
 }
 
 
-static qboolean FS_IsQuakeLiveEncryptedZipFile( const char *zipfile )
-{
-	FILE *f;
-	byte head[ 4 ];
-	int i;
-
-	if ( FS_QUAKELIVE_PK3_XOR_LEN < 4 ) {
-		return qfalse;
-	}
-
-	f = Sys_FOpen( zipfile, "rb" );
-	if ( f == NULL ) {
-		return qfalse;
-	}
-
-	if ( fread( head, sizeof( head ), 1, f ) != 1 ) {
-		fclose( f );
-		return qfalse;
-	}
-
-	fclose( f );
-
-	for ( i = 0; i < 4; i++ ) {
-		head[ i ] ^= (byte)fs_quakeLivePk3Xor[ i ];
-	}
-
-	if ( head[ 0 ] != 'P' || head[ 1 ] != 'K' ) {
-		return qfalse;
-	}
-
-	if ( ( head[ 2 ] == 0x03 && head[ 3 ] == 0x04 ) ||
-		( head[ 2 ] == 0x05 && head[ 3 ] == 0x06 ) ||
-		( head[ 2 ] == 0x07 && head[ 3 ] == 0x08 ) ) {
-		return qtrue;
-	}
-
-	return qfalse;
-}
-
-
-static char *FS_CreateQuakeLiveDecryptedZipFile( const char *zipfile )
-{
-	static const int bufferSize = 1 << 16;
-	FILE *in;
-	FILE *out;
-	byte buffer[ 1 << 16 ];
-	const char *basePath;
-	char tempName[ MAX_OSPATH ];
-	char *outPath;
-	size_t readLen;
-	unsigned int keyPos;
-	int i;
-
-	basePath = ( fs_homepath && fs_homepath->string[ 0 ] ) ? fs_homepath->string : Sys_Pwd();
-	if ( basePath == NULL || basePath[ 0 ] == '\0' ) {
-		return NULL;
-	}
-
-	Com_sprintf( tempName, sizeof( tempName ), "quakelive-pk3/%08lx_%u.pk3",
-		FS_HashFileName( zipfile, 0U ), fs_quakeLivePk3TempCounter++ );
-
-	outPath = Z_TagMalloc( MAX_OSPATH * 3 + 1, TAG_GENERAL );
-	Q_strncpyz( outPath, FS_BuildOSPath( basePath, ".tmp", tempName ), MAX_OSPATH * 3 + 1 );
-
-	if ( FS_CreatePath( outPath ) ) {
-		Z_Free( outPath );
-		return NULL;
-	}
-
-	in = Sys_FOpen( zipfile, "rb" );
-	if ( in == NULL ) {
-		Z_Free( outPath );
-		return NULL;
-	}
-
-	out = Sys_FOpen( outPath, "wb" );
-	if ( out == NULL ) {
-		fclose( in );
-		Z_Free( outPath );
-		return NULL;
-	}
-
-	// The key position is kept reduced: a running int byte count goes
-	// negative past 2 GiB and would index in front of the key table.
-	keyPos = 0;
-	while ( ( readLen = fread( buffer, 1, bufferSize, in ) ) > 0 ) {
-		for ( i = 0; i < (int)readLen; i++ ) {
-			buffer[ i ] ^= (byte)fs_quakeLivePk3Xor[ ( keyPos + (unsigned int)i ) % FS_QUAKELIVE_PK3_XOR_LEN ];
-		}
-
-		if ( fwrite( buffer, 1, readLen, out ) != readLen ) {
-			fclose( out );
-			fclose( in );
-			remove( outPath );
-			Z_Free( outPath );
-			return NULL;
-		}
-
-		keyPos = ( keyPos + (unsigned int)readLen ) % FS_QUAKELIVE_PK3_XOR_LEN;
-	}
-
-	fclose( out );
-
-	if ( ferror( in ) ) {
-		fclose( in );
-		remove( outPath );
-		Z_Free( outPath );
-		return NULL;
-	}
-
-	fclose( in );
-	return outPath;
-}
-
-
 #ifdef USE_PK3_CACHE
 
 #define PK3_HASH_SIZE 512
@@ -3571,13 +3405,6 @@ static pack_t *FS_LoadCachedPK3( const char *zipfile )
 		return NULL;
 	}
 
-	// A pack loaded from an XOR-encrypted pk3 reads from a decrypted
-	// temporary copy.  Keep that path: pointing readFilename back at the
-	// encrypted original would make every later open fail, and FS_FreePak
-	// would no longer find the temporary file to remove.
-	if ( pak->readFilename == NULL ) {
-		pak->readFilename = pak->pakFilename;
-	}
 	return pak;
 }
 
@@ -3991,7 +3818,7 @@ static qboolean FS_SaveCache( void )
 	while ( sp != NULL )
 	{
 		// QAA: the pk3 cache describes zip archives; BPK packs are rebuilt at mount
-		if ( sp->pack && !sp->pack->quakeliveEncrypted && sp->pack->format != PACK_FORMAT_BPK )
+		if ( sp->pack && sp->pack->format != PACK_FORMAT_BPK )
 		{
 			FS_SavePackToFile( sp->pack, f );
 		}
@@ -4085,11 +3912,6 @@ static pack_t *FS_LoadZipFile( const char *zipfile )
 	const char		*basename;
 	int				fileNameLen;
 	int				baseNameLen;
-	char			*readFilename;
-	qboolean		encrypted;
-
-	readFilename = NULL;
-	encrypted = FS_IsQuakeLiveEncryptedZipFile( zipfile );
 
 #ifdef USE_PK3_CACHE
 	pack = FS_LoadCachedPK3( zipfile );
@@ -4102,17 +3924,6 @@ static pack_t *FS_LoadZipFile( const char *zipfile )
 			pack->pure_checksum = Com_BlockChecksum( pack->headerLongs, sizeof( pack->headerLongs[0] ) * pack->numHeaderLongs );
 			pack->pure_checksum = LittleLong( pack->pure_checksum );
 			pack->checksumFeed = fs_checksumFeed;
-		}
-
-		// a pack restored from the cache file has no decrypted copy yet
-		if ( encrypted && pack->readFilename == pack->pakFilename ) {
-			readFilename = FS_CreateQuakeLiveDecryptedZipFile( zipfile );
-			if ( readFilename == NULL ) {
-				FS_RemoveFromCache( pack );
-				FS_FreePak( pack );
-				return NULL;
-			}
-			pack->readFilename = readFilename;
 		}
 
 		pack->touched = qtrue;
@@ -4131,20 +3942,8 @@ static pack_t *FS_LoadZipFile( const char *zipfile )
 	fileNameLen = (int) strlen( zipfile ) + 1;
 	baseNameLen = (int) strlen( basename ) + 1;
 
-	if ( encrypted ) {
-		readFilename = FS_CreateQuakeLiveDecryptedZipFile( zipfile );
-		if ( readFilename == NULL ) {
-			return NULL;
-		}
-		uf = unzOpen( readFilename );
-	} else {
-		uf = unzOpen( zipfile );
-	}
+	uf = unzOpen( zipfile );
 	if ( uf == NULL ) {
-		if ( readFilename != NULL ) {
-			remove( readFilename );
-			Z_Free( readFilename );
-		}
 		return NULL;
 	}
 	err = unzGetGlobalInfo( uf, &gi );
@@ -4152,10 +3951,6 @@ static pack_t *FS_LoadZipFile( const char *zipfile )
 	if ( err != UNZ_OK ) {
 		if ( uf != NULL ) {
 			unzClose( uf );
-		}
-		if ( readFilename != NULL ) {
-			remove( readFilename );
-			Z_Free( readFilename );
 		}
 		return NULL;
 	}
@@ -4182,10 +3977,6 @@ static pack_t *FS_LoadZipFile( const char *zipfile )
 
 	if ( filecount == 0 ) {
 		unzClose( uf );
-		if ( readFilename != NULL ) {
-			remove( readFilename );
-			Z_Free( readFilename );
-		}
 		return NULL;
 	}
 
@@ -4206,7 +3997,6 @@ static pack_t *FS_LoadZipFile( const char *zipfile )
 	pack->handle = uf;
 	pack->format = PACK_FORMAT_PK3;
 	pack->numfiles = filecount;
-	pack->quakeliveEncrypted = encrypted;
 	pack->hashSize = hashSize;
 	pack->hashTable = (fileInPack_t **)( pack + 1 );
 
@@ -4215,7 +4005,6 @@ static pack_t *FS_LoadZipFile( const char *zipfile )
 
 	pack->pakFilename = (char*)( namePtr + namelen );
 	pack->pakBasename = (char*)( pack->pakFilename + PAD( fileNameLen, sizeof( int ) ) );
-	pack->readFilename = readFilename ? readFilename : pack->pakFilename;
 
 #ifdef USE_PK3_CACHE
 	fs_headerLongs = (int*)( pack->pakBasename + PAD( baseNameLen, sizeof( int ) ) );
@@ -4503,13 +4292,6 @@ static void FS_FreePak( pack_t *pak )
 #endif
 		unzClose( pak->handle );
 		pak->handle = NULL;
-	}
-
-	if ( pak->readFilename && pak->readFilename != pak->pakFilename )
-	{
-		remove( pak->readFilename );
-		Z_Free( pak->readFilename );
-		pak->readFilename = NULL;
 	}
 
 	Z_Free( pak );
@@ -6791,11 +6573,6 @@ void FS_Restart( int checksumFeed ) {
 
 	Q_strncpyz( lastValidBase, fs_basepath->string, sizeof( lastValidBase ) );
 	Q_strncpyz( lastValidGame, fs_gamedirvar->string, sizeof( lastValidGame ) );
-
-	/* Any successful search-path transition can add or remove arena, factory,
-	 * and map-pool sources (game switches, pure reorder, downloads). The
-	 * server-side hook is a no-op until its registries exist. */
-	SV_FactoryRefreshMountedContent();
 }
 
 
@@ -6831,9 +6608,6 @@ qboolean FS_ConditionalRestart( int checksumFeed, qboolean clientRestart )
 	else if( fs_numServerPaks && !fs_reordered ) 
 	{
 		FS_ReorderPurePaks();
-		/* The checksum feed can remain unchanged while pure-server ordering
-		 * changes which mounted factory source wins. */
-		SV_FactoryRefreshMountedContent();
 	}
 	
 	return qfalse;

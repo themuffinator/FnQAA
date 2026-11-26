@@ -32,8 +32,17 @@ header (now `version/fnqaa_version.h`) and FnQL's compiled unit tests.
 Left out: FnQL's Steam provider loader and Workshop adapter, the Awesomium
 WebUI and its web.pak, the audio-zone authoring tool, the Visual Studio
 projects, CMake and Make, release packaging, promo media, `pkg/` and the
-Python source-regression tests. Steam and the WebUI are replaced by null
-backends in `code/qaa/`. Changes to imported files are marked `// QAA:`.
+Python source-regression tests. Changes to imported files are marked
+`// QAA:`.
+
+Removed since the import, as Quake Live features Quake Arena Arcade does not
+have (its `default.xex` and modules hold none of them): Steam, the WebUI
+interface and in-game advertisements, factories, map pools and `sp_arena`
+scripts, ZMQ rcon and stats reporting, the in-band admin `rcon`, Quake Live's
+qagame query exports and cvar configstring groups, the encrypted `.pk3`
+reader, and the hosting of Quake Live and FnQL-game modules: the QVM
+interpreter and compilers, the native module loader with its import tables
+and `vm_*Provider` choice, and the ui module.
 
 FnQL's own credits, which carry into the imported code, include:
 
@@ -43,8 +52,6 @@ FnQL's own credits, which carry into the imported code, include:
   colour escape lineage.
 - [Spearmint](https://github.com/zturtleman/spearmint) for the Quake 3 IHV
   (`IBSP v43`) map loading reference.
-- Luigi Auriemma's [qldec](https://aluigi.altervista.org/papers.htm#qldec)
-  for the Quake Live beta encrypted `.pk3` XOR table reference.
 - [DarkMatter-Q2](https://github.com/Paril/DarkMatter-Q2) for cross-checking
   Quake II `.pak` and `.wal` support.
 - Mikko Mononen's [FontStash](https://github.com/memononen/fontstash) and

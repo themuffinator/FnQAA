@@ -25,11 +25,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "qcommon.h"
 #include "cvar_integer.h"
 #include "cvar_retail_bounds.h"
-#include "cvar_ui_policy.h"
-
-#ifndef DEDICATED
-void CL_WebView_PublishCvarChange( const char *name, const char *value, qboolean replicate );
-#endif
 
 static cvar_t	*cvar_vars = NULL;
 static cvar_t	*cvar_cheats;
@@ -46,57 +41,6 @@ static int	cvar_group[ CVG_MAX ];
 static	cvar_t	*hashTable[FILE_HASH_SIZE];
 static	qboolean cvar_sort = qfalse;
 
-#ifndef DEDICATED
-/*
-================
-Cvar_ShouldReplicateChange
-
-Returns whether a changed cvar should be marked replicated for the WebUI cvar
-event bridge.
-================
-*/
-static qboolean Cvar_ShouldReplicateChange( const cvar_t *var ) {
-	if ( !var ) {
-		return qfalse;
-	}
-
-	if ( var->flags & ( CVAR_PROTECTED | CVAR_USER_CREATED ) ) {
-		return qtrue;
-	}
-
-	if ( (unsigned int)var->flags & 0x80000000u ) {
-		return qtrue;
-	}
-
-	return qfalse;
-}
-
-/*
-================
-Cvar_PublishChange
-
-Publishes a cvar change using the latched value when retail would expose one.
-================
-*/
-static void Cvar_PublishChange( const cvar_t *var ) {
-	const char	*value;
-
-	/* The browser bridge is an external presentation boundary, not a trusted
-	 * cvar reader. CVAR_PRIVATE must suppress the event entirely: publishing a
-	 * redacted marker would still disclose the timing and existence of secret
-	 * changes, while publishing the value exposes credentials to any backend. */
-	if ( !var || ( var->flags & CVAR_PRIVATE ) ) {
-		return;
-	}
-
-	value = var->string ? var->string : "";
-	if ( ( var->flags & CVAR_LATCH ) && var->latchedString ) {
-		value = var->latchedString;
-	}
-
-	CL_WebView_PublishCvarChange( var->name, value, Cvar_ShouldReplicateChange( var ) );
-}
-#endif
 
 /*
 ================
@@ -753,9 +697,6 @@ cvar_t *Cvar_Set2( const char *var_name, const char *value, qboolean force ) {
 		// create it
 		if ( !force ) {
 			var = Cvar_Get( var_name, value, CVAR_USER_CREATED );
-#ifndef DEDICATED
-			Cvar_PublishChange( var );
-#endif
 			return var;
 		} else {
 			return Cvar_Get( var_name, value, 0 );
@@ -846,9 +787,6 @@ cvar_t *Cvar_Set2( const char *var_name, const char *value, qboolean force ) {
 			var->modified = qtrue;
 			var->modificationCount++;
 			cvar_group[ var->group ] = 1;
-#ifndef DEDICATED
-			Cvar_PublishChange( var );
-#endif
 			return var;
 		}
 	}
@@ -873,9 +811,6 @@ cvar_t *Cvar_Set2( const char *var_name, const char *value, qboolean force ) {
 	var->string = CopyString( value );
 	var->value = Q_atof( var->string );
 	var->integer = Cvar_IntegerValue( var, var->string );
-#ifndef DEDICATED
-	Cvar_PublishChange( var );
-#endif
 
 	return var;
 }
@@ -1030,50 +965,6 @@ void Cvar_SetValueSafe( const char *var_name, float value )
 	else
 		Com_sprintf( val, sizeof(val), "%f", value );
 	Cvar_SetSafe( var_name, val );
-}
-
-
-/*
-============
-Cvar_SetFromUI
-
-UI cvar imports 7 and 8. Retail settings cvars registered with
-CVAR_PROTECTED stay writable; see cvar_ui_policy.h for the evidence and the
-private, read-only and init-only exclusions.
-============
-*/
-void Cvar_SetFromUI( const char *var_name, const char *value )
-{
-	if ( !var_name ) {
-		return;
-	}
-	if ( !Cvar_UIWriteAllowed( Cvar_Flags( var_name ) ) ) {
-		if ( value )
-			Com_Printf( S_COLOR_YELLOW "Restricted source tried to set "
-				"\"%s\" to \"%s\"\n", var_name, value );
-		else
-			Com_Printf( S_COLOR_YELLOW "Restricted source tried to "
-				"modify \"%s\"\n", var_name );
-		return;
-	}
-	Cvar_Set2( var_name, value, qtrue );
-}
-
-
-/*
-============
-Cvar_SetValueFromUI
-============
-*/
-void Cvar_SetValueFromUI( const char *var_name, float value )
-{
-	char val[32];
-
-	if( Q_isintegral( value ) )
-		Com_sprintf( val, sizeof(val), "%i", (int)value );
-	else
-		Com_sprintf( val, sizeof(val), "%f", value );
-	Cvar_SetFromUI( var_name, val );
 }
 
 
@@ -2446,47 +2337,6 @@ void Cvar_RegisterLegacy( void *vmCvar, const char *varName, const char *default
 	Com_Memset( &retail, 0, sizeof( retail ) );
 	Cvar_Register( &retail, varName, defaultValue, flags, privateFlag );
 	Cvar_CopyRetailToLegacy( legacy, &retail );
-}
-
-
-/*
-=====================
-Cvar_RegisterBounded
-
-basically a slightly modified Cvar_Get for native modules that need QL-style
-numeric bounds and the affected host cvar pointer
-=====================
-*/
-cvar_t *Cvar_RegisterBounded( vmCvar_t *vmCvar, const char *varName, const char *defaultValue,
-	const char *minimumValue, const char *maximumValue, int flags, int privateFlag )
-{
-	cvar_t	*cv;
-
-	if ( flags & INVALID_FLAGS ) {
-		Com_DPrintf( S_COLOR_YELLOW "WARNING: VM tried to set invalid flags 0x%02x on cvar '%s'\n", ( flags & INVALID_FLAGS ), varName );
-		flags &= ~INVALID_FLAGS;
-	}
-
-	cv = Cvar_FindVar( varName );
-
-	if ( cv && ( cv->flags & CVAR_PRIVATE ) && privateFlag ) {
-		Com_DPrintf( S_COLOR_YELLOW "WARNING: VM tried to register private cvar '%s'\n", varName );
-		return cv;
-	} else {
-		cv = Cvar_Get( varName, defaultValue, flags | CVAR_VM_CREATED );
-		Cvar_CheckRange( cv, minimumValue, maximumValue, CV_RETAIL_BOUNDED );
-	}
-
-	if (!vmCvar)
-		return cv;
-
-	vmCvar->handle = cv - cvar_indexes;
-	vmCvar->modificationCount = -1;
-	vmCvar->flags = cv->flags;
-
-	Cvar_Update( vmCvar, 0 );
-
-	return cv;
 }
 
 

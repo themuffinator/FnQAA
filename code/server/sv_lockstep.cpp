@@ -44,16 +44,6 @@ version.
 #include <utility>
 #include <vector>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#ifdef _MSC_VER
-#include <intrin.h>
-#define FNQL_RETURN_ADDRESS() _ReturnAddress()
-#else
-#define FNQL_RETURN_ADDRESS() __builtin_return_address( 0 )
-#endif
-#endif
 
 namespace {
 
@@ -63,11 +53,6 @@ namespace {
 
 constexpr int ScriptFormatVersion = 1;
 constexpr std::uint32_t RecordFormatVersion = 1;
-// sv_lockstepQueries 1 writes version 2: the same layout plus 'G' records.
-constexpr std::uint32_t RecordFormatVersionQueries = 2;
-// sv_lockstepSteam 1 writes version 3: version 2's layout ('G' records only
-// with sv_lockstepQueries 1) plus 'T' records.
-constexpr std::uint32_t RecordFormatVersionSteam = 3;
 constexpr std::array<char, 8> RecordMagic = { 'F', 'N', 'Q', 'L', 'L', 'S', 'T', 'P' };
 
 // The virtual clock (com_frameTime, trap_Milliseconds) starts here.
@@ -93,8 +78,6 @@ enum class RecordTag : std::uint8_t {
 	Configstring = 'C',
 	ServerCommand = 'S',
 	ServerCommandOverflow = 'O',
-	GameQueries = 'G',
-	SteamCall = 'T',
 	FrameEnd = 'X',
 	End = 'Q',
 };
@@ -116,16 +99,11 @@ enum class EndReason : std::uint32_t {
 
 cvar_t *sv_lockstep;
 cvar_t *sv_lockstepSeed;
-cvar_t *sv_lockstepTraceRand;
 cvar_t *sv_lockstepScript;
 cvar_t *sv_lockstepRecord;
 cvar_t *sv_lockstepFrames;
-cvar_t *sv_lockstepQueries;
-cvar_t *sv_lockstepSteam;
 
 bool lockstepEnabled = false;
-bool lockstepQueries = false;
-bool lockstepSteam = false;
 std::uint32_t lockstepSeed = 0;
 int lockstepFrameLimit = 0;
 std::uint32_t gameInitCount = 0;
@@ -935,10 +913,7 @@ struct Session {
 	std::vector<std::string> configstrings;
 	std::vector<PendingServerCommand> serverCommands;
 	std::uint32_t droppedServerCommands = 0;
-	std::vector<std::array<std::int32_t, 5>> steamCalls;	// kind, client, a, b, result
-	std::uint32_t droppedSteamCalls = 0;
 	std::vector<ExecutedCommand> executed;
-	std::vector<std::uint8_t> queries;		// the last 'G' payload written
 };
 
 Session session;
@@ -1065,9 +1040,6 @@ void ConnectScriptedClient( std::size_t scriptIndex ) {
 	scripted.owned = true;
 	session.slotOwner[static_cast<std::size_t>( clientNum )] = static_cast<int>( scriptIndex );
 
-	// like any human, a scripted client gets its own id (sv_lockstep seeds
-	// those ids with a constant).  QAA: no Steam, so no ticket identity.
-	SV_AssignClientGameIdentity( cl );
 	SV_UserinfoChanged( cl, qtrue, qfalse );
 
 	const intptr_t denied = VM_Call( gvm, 3, GAME_CLIENT_CONNECT, clientNum, qtrue, qfalse );
@@ -1111,8 +1083,7 @@ void DeliverGamestate( client_t &cl ) {
 void WriteHeader() {
 	RecordWriter &out = session.record;
 	out.Bytes( RecordMagic.data(), RecordMagic.size() );
-	out.U32( lockstepSteam ? RecordFormatVersionSteam
-		: lockstepQueries ? RecordFormatVersionQueries : RecordFormatVersion );
+	out.U32( RecordFormatVersion );
 	out.U32( static_cast<std::uint32_t>( sizeof( playerState_t ) ) );
 	out.U32( static_cast<std::uint32_t>( sizeof( entityState_t ) ) );
 	out.U32( static_cast<std::uint32_t>( sizeof( usercmd_t ) ) );
@@ -1123,7 +1094,7 @@ void WriteHeader() {
 	out.U32( lockstepSeed );
 	out.U32( static_cast<std::uint32_t>( lockstepFrameLimit ) );
 	out.String( std::string( Cvar_VariableString( "mapname" ) ) );
-	out.String( std::string( Cvar_VariableString( "vm_gameProvider" ) ) );
+	out.String( std::string( gvm ? gvm->providerName : "" ) );
 	out.String( session.scriptName );
 	out.U32( static_cast<std::uint32_t>( session.clients.size() ) );
 	for ( std::size_t i = 0; i < session.clients.size(); ++i ) {
@@ -1143,7 +1114,6 @@ void Finish( EndReason reason ) {
 	}
 	session.finished = true;
 	session.serverCommands.clear();
-	session.steamCalls.clear();
 	session.executed.clear();
 	Com_Printf( "sv_lockstep: session ended after %d frame(s) (%s)\n", session.frame,
 		reason == EndReason::FrameLimit ? "frame limit" : "server shutdown" );
@@ -1294,72 +1264,6 @@ void RunCommands( int frame ) {
 	}
 }
 
-// The answers of the retail qagame query exports for this frame, in the 'G'
-// payload layout of docs/fnql/SERVER_LOCKSTEP.md. The exports are pure
-// predicates in both modules, so asking them changes no game state.
-void BuildGameQueries( std::vector<std::uint8_t> &payload ) {
-	payload.clear();
-	auto u8 = [&payload]( bool value ) { payload.push_back( value ? 1u : 0u ); };
-	auto i32 = [&payload]( int value ) {
-		const std::uint32_t bits = static_cast<std::uint32_t>( value );
-		for ( int shift = 0; shift < 32; shift += 8 ) {
-			payload.push_back( static_cast<std::uint8_t>( bits >> shift ) );
-		}
-	};
-
-	std::array<int, MAX_CLIENTS> slots{};
-	int count = 0;
-	if ( SV_GameQueryExportsAvailable() && svs.clients && sv.gameClients ) {
-		for ( int slot = 0; slot < sv.maxclients && slot < MAX_CLIENTS; ++slot ) {
-			if ( svs.clients[slot].state == CS_ACTIVE ) {
-				slots[static_cast<std::size_t>( count++ )] = slot;
-			}
-		}
-	}
-
-	i32( count );
-	for ( int i = 0; i < count; ++i ) {
-		i32( slots[static_cast<std::size_t>( i )] );
-	}
-	for ( int i = 0; i < count; ++i ) {
-		const int slot = slots[static_cast<std::size_t>( i )];
-		u8( SV_GameIsClientAdmin( slot ) != qfalse );
-		i32( SV_GameGetClientScore( slot, 0 ) );
-	}
-	for ( int i = 0; i < count; ++i ) {
-		const int a = slots[static_cast<std::size_t>( i )];
-		for ( int j = 0; j < count; ++j ) {
-			const int b = slots[static_cast<std::size_t>( j )];
-			const unsigned bits = ( SV_GameCanClientSeeClient( a, b ) ? 1u : 0u )
-				| ( SV_GameShouldSuppressVoiceToClient( a, b ) ? 2u : 0u )
-				| ( SV_GameAreEnemyClients( a, b ) ? 4u : 0u );
-			payload.push_back( static_cast<std::uint8_t>( bits ) );
-		}
-	}
-
-	const std::size_t entityCountAt = payload.size();
-	i32( 0 );
-	int entities = 0;
-	if ( count && sv.gentities ) {
-		for ( int number = 0; number < sv.num_entities && number < MAX_GENTITIES; ++number ) {
-			const sharedEntity_t *ent = SV_GentityNum( number );
-			if ( !ent->r.linked || ( ent->r.svFlags & SVF_NOCLIENT ) ) {
-				continue;
-			}
-			++entities;
-			i32( number );
-			u8( SV_GameIsObjectiveEntity( number ) != qfalse );
-			for ( int i = 0; i < count; ++i ) {
-				u8( SV_GameSuppressesThawProgressEvent( slots[static_cast<std::size_t>( i )], number ) != qfalse );
-			}
-		}
-	}
-	const std::uint32_t entityBits = static_cast<std::uint32_t>( entities );
-	for ( int k = 0; k < 4; ++k ) {
-		payload[entityCountAt + static_cast<std::size_t>( k )] = static_cast<std::uint8_t>( entityBits >> ( 8 * k ) );
-	}
-}
-
 void WriteFrame() {
 	RecordWriter &out = session.record;
 	out.Tag( RecordTag::Frame );
@@ -1417,17 +1321,6 @@ void WriteFrame() {
 		}
 	}
 
-	if ( lockstepQueries ) {
-		std::vector<std::uint8_t> queries;
-		BuildGameQueries( queries );
-		if ( session.frame == 0 || queries != session.queries ) {
-			session.queries = std::move( queries );
-			out.Tag( RecordTag::GameQueries );
-			out.U32( static_cast<std::uint32_t>( session.queries.size() ) );
-			out.Bytes( session.queries.data(), session.queries.size() );
-		}
-	}
-
 	for ( int index = 0; index < MAX_CONFIGSTRINGS; ++index ) {
 		const char *current = sv.configstrings[index] ? sv.configstrings[index] : "";
 		std::string &cached = session.configstrings[static_cast<std::size_t>( index )];
@@ -1447,23 +1340,6 @@ void WriteFrame() {
 	if ( session.droppedServerCommands ) {
 		out.Tag( RecordTag::ServerCommandOverflow );
 		out.U32( session.droppedServerCommands );
-	}
-
-	// the module's Steam statistic and achievement calls, in call order; an
-	// overflow is one record of kind 0 carrying the dropped count
-	for ( const std::array<std::int32_t, 5> &call : session.steamCalls ) {
-		out.Tag( RecordTag::SteamCall );
-		for ( const std::int32_t value : call ) {
-			out.I32( value );
-		}
-	}
-	if ( session.droppedSteamCalls ) {
-		out.Tag( RecordTag::SteamCall );
-		out.I32( 0 );
-		out.I32( -1 );
-		out.I32( static_cast<std::int32_t>( session.droppedSteamCalls ) );
-		out.I32( 0 );
-		out.I32( 0 );
 	}
 
 	out.Tag( RecordTag::FrameEnd );
@@ -1508,21 +1384,6 @@ void SV_LockstepInit( void ) {
 	Cvar_SetDescription( sv_lockstepRecord, "sv_lockstep: per-frame recording written under fs_homepath." );
 	sv_lockstepFrames = Cvar_Get( "sv_lockstepFrames", "0", CVAR_INIT | CVAR_PROTECTED );
 	Cvar_SetDescription( sv_lockstepFrames, "sv_lockstep: quit after this many recorded frames; 0 runs until stopped." );
-	sv_lockstepQueries = Cvar_Get( "sv_lockstepQueries", "0", CVAR_INIT | CVAR_PROTECTED );
-	Cvar_CheckRange( sv_lockstepQueries, "0", "1", CV_INTEGER );
-	Cvar_SetDescription( sv_lockstepQueries,
-		"sv_lockstep: also record the answers of the qagame query exports (visibility, objectives, voice, "
-		"admin, enemies, score) whenever they change; writes recording format 2." );
-	sv_lockstepSteam = Cvar_Get( "sv_lockstepSteam", "0", CVAR_INIT | CVAR_PROTECTED );
-	Cvar_CheckRange( sv_lockstepSteam, "0", "1", CV_INTEGER );
-	Cvar_SetDescription( sv_lockstepSteam,
-		"sv_lockstep: also record the game module's Steam statistic and achievement calls (imports 201, "
-		"203 and 204) with their answers; writes recording format 3." );
-	sv_lockstepTraceRand = Cvar_Get( "sv_lockstepTraceRand", "0", CVAR_INIT | CVAR_PROTECTED );
-	Cvar_CheckRange( sv_lockstepTraceRand, "0", "1", CV_INTEGER );
-	Cvar_SetDescription( sv_lockstepTraceRand,
-		"sv_lockstep: log every rand() a game module draws from a shared C runtime, with its call site "
-		"(Windows; modules with a static runtime are not seen)." );
 
 	if ( !sv_lockstep->integer ) {
 		return;
@@ -1546,8 +1407,6 @@ void SV_LockstepInit( void ) {
 	}
 
 	lockstepEnabled = true;
-	lockstepQueries = sv_lockstepQueries->integer != 0;
-	lockstepSteam = sv_lockstepSteam->integer != 0;
 	session.slotOwner.fill( -1 );
 	Com_Printf( "sv_lockstep: enabled: fixed 1000/sv_fps frames run back to back on a virtual clock, "
 		"seed %u\n", lockstepSeed );
@@ -1643,107 +1502,12 @@ void SV_LockstepEndFrame( void ) {
 	session.executed.clear();
 	session.serverCommands.clear();
 	session.droppedServerCommands = 0;
-	session.steamCalls.clear();
-	session.droppedSteamCalls = 0;
 	++session.frame;
 	if ( lockstepFrameLimit > 0 && session.frame >= lockstepFrameLimit ) {
 		Finish( EndReason::FrameLimit );
 		// the same path as typing "quit": shut the server down and exit 0
 		Cbuf_ExecuteText( EXEC_NOW, "quit\n" );
 	}
-}
-
-// ---------------------------------------------------------------------------
-// rand() tracing (sv_lockstepTraceRand)
-//
-// A module that takes rand() from a shared C runtime DLL (the retail qagame
-// imports it from MSVCR100.dll) has its import slot pointed at a wrapper that
-// logs each draw with the frame and the caller's offset in the module, so a
-// differential can tell where two modules' random streams part.
-// ---------------------------------------------------------------------------
-
-#ifdef _WIN32
-namespace {
-
-using CrtRand = int( __cdecl * )( void );
-CrtRand tracedRand = nullptr;
-std::uintptr_t tracedModuleBase = 0;
-unsigned tracedDraws = 0;
-
-int __cdecl TraceRand( void ) {
-	const int value = tracedRand();
-	const std::uintptr_t caller = reinterpret_cast<std::uintptr_t>( FNQL_RETURN_ADDRESS() );
-	Com_Printf( "sv_lockstep: rand #%u = %d at frame %d from +0x%x\n", tracedDraws++, value, session.frame,
-		static_cast<unsigned>( caller - tracedModuleBase ) );
-	return value;
-}
-
-bool HookModuleRand( void *addressInModule ) {
-	MEMORY_BASIC_INFORMATION info{};
-	if ( !addressInModule || !VirtualQuery( addressInModule, &info, sizeof( info ) ) || !info.AllocationBase ) {
-		return false;
-	}
-	auto *const base = static_cast<std::uint8_t *>( info.AllocationBase );
-	const auto *dos = reinterpret_cast<const IMAGE_DOS_HEADER *>( base );
-	if ( dos->e_magic != IMAGE_DOS_SIGNATURE ) {
-		return false;
-	}
-	const auto *nt = reinterpret_cast<const IMAGE_NT_HEADERS *>( base + dos->e_lfanew );
-	const IMAGE_DATA_DIRECTORY &dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-	if ( nt->Signature != IMAGE_NT_SIGNATURE || !dir.VirtualAddress ) {
-		return false;
-	}
-	for ( auto *imp = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR *>( base + dir.VirtualAddress ); imp->Name; ++imp ) {
-		if ( Q_stricmpn( reinterpret_cast<const char *>( base + imp->Name ), "msvcr", 5 ) || !imp->OriginalFirstThunk ) {
-			continue;
-		}
-		auto *names = reinterpret_cast<IMAGE_THUNK_DATA *>( base + imp->OriginalFirstThunk );
-		auto *slots = reinterpret_cast<IMAGE_THUNK_DATA *>( base + imp->FirstThunk );
-		for ( ; names->u1.AddressOfData; ++names, ++slots ) {
-			if ( IMAGE_SNAP_BY_ORDINAL( names->u1.Ordinal ) ) {
-				continue;
-			}
-			const auto *byName = reinterpret_cast<const IMAGE_IMPORT_BY_NAME *>( base + names->u1.AddressOfData );
-			if ( std::strcmp( reinterpret_cast<const char *>( byName->Name ), "rand" ) ) {
-				continue;
-			}
-			if ( slots->u1.Function == reinterpret_cast<decltype( slots->u1.Function )>( &TraceRand ) ) {
-				return true;	// this image is already traced
-			}
-			DWORD protect = 0;
-			if ( !VirtualProtect( &slots->u1.Function, sizeof( slots->u1.Function ), PAGE_READWRITE, &protect ) ) {
-				return false;
-			}
-			tracedRand = reinterpret_cast<CrtRand>( slots->u1.Function );
-			slots->u1.Function = reinterpret_cast<decltype( slots->u1.Function )>( &TraceRand );
-			VirtualProtect( &slots->u1.Function, sizeof( slots->u1.Function ), protect, &protect );
-			tracedModuleBase = reinterpret_cast<std::uintptr_t>( base );
-			return true;
-		}
-	}
-	return false;
-}
-
-} // namespace
-#endif
-
-void SV_LockstepTraceGameRand( void *addressInModule ) {
-	if ( !lockstepEnabled || !sv_lockstepTraceRand || !sv_lockstepTraceRand->integer ) {
-		return;
-	}
-#ifdef _WIN32
-	// every GAME_INIT checks again: a map_restart may load a fresh image of
-	// the module, and the draw count carries on across it
-	if ( HookModuleRand( addressInModule ) ) {
-		Com_Printf( "sv_lockstep: tracing the game module's rand() (module base 0x%x)\n",
-			static_cast<unsigned>( tracedModuleBase ) );
-	} else {
-		Com_Printf( "sv_lockstep: the game module takes no rand() from a shared C runtime; nothing to trace\n" );
-	}
-#else
-	(void)addressInModule;
-	Com_Printf( "sv_lockstep: rand() tracing is only available on Windows\n" );
-#endif
 }
 
 int SV_LockstepGameSeed( void ) {
@@ -1816,17 +1580,6 @@ void SV_LockstepRecordServerCommand( int clientNum, const char *text ) {
 		return;
 	}
 	session.serverCommands.push_back( { clientNum, std::string( text ) } );
-}
-
-void SV_LockstepRecordSteamCall( int kind, int clientNum, int a, int b, int result ) {
-	if ( !lockstepSteam || !Running() || !session.recording ) {
-		return;
-	}
-	if ( session.steamCalls.size() >= PendingServerCommandLimit ) {
-		++session.droppedSteamCalls;
-		return;
-	}
-	session.steamCalls.push_back( { kind, clientNum, a, b, result } );
 }
 
 qboolean SV_LockstepIsScriptedClient( const client_t *client ) {

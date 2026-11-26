@@ -25,23 +25,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include <array>
 #include <cstring>
 
-namespace {
-
-struct QLCvarConfigstringChannel {
-	int cvarFlag;
-	int configstring;
-	const char *label;
-};
-
-constexpr std::array<QLCvarConfigstringChannel, 4> kQLCvarConfigstringChannels{{
-	{ CVAR_QL_PMOVE_SETTINGS, CS_QL_PMOVE_SETTINGS, "pmove settings" },
-	{ CVAR_QL_ARMOR_TIERED, CS_QL_ARMOR_TIERED, "tiered armor" },
-	{ CVAR_QL_WEAPON_RELOAD, CS_QL_WEAPON_RELOAD, "weapon reload" },
-	{ CVAR_QL_PLAYER_APPEARANCE, CS_QL_PLAYER_APPEARANCE, "player appearance" },
-}};
-
-}
-
 /*
 ===============
 SV_SendConfigstring
@@ -160,35 +143,6 @@ void SV_SetConfigstring (int index, const char *val) {
 		}
 	}
 }
-
-/*
-================
-SV_UpdateQLCvarConfigstrings
-
-Retail Quake Live groups native qagame cvars by four public flag bits and
-publishes each group as an info string owned by the engine. Native cgame reads
-these exact configstrings during bootstrap and whenever a flagged cvar changes.
-================
-*/
-void SV_UpdateQLCvarConfigstrings( qboolean force ) {
-	for ( const QLCvarConfigstringChannel &channel : kQLCvarConfigstringChannels ) {
-		if ( !force && !( cvar_modifiedFlags & channel.cvarFlag ) ) {
-			continue;
-		}
-
-		qboolean truncated = qfalse;
-		const char *info = Cvar_InfoString( channel.cvarFlag, &truncated );
-		SV_SetConfigstring( channel.configstring, info );
-		cvar_modifiedFlags &= ~channel.cvarFlag;
-
-		if ( truncated ) {
-			Com_Printf( S_COLOR_YELLOW
-				"WARNING: truncated Quake Live %s configstring 0x%X\n",
-				channel.label, channel.configstring );
-		}
-	}
-}
-
 
 /*
 ===============
@@ -452,53 +406,6 @@ static void SV_ClearServer( void ) {
 
 /*
 ================
-SV_PublishFnQLClientPaks
-
-FnQL extension, not retail.  On a pure server, lists the loaded paks that
-hold the FnQL-game cgame (the FnQL-game client package) in sv_fnqlClientPaks.
-An FnQL client then runs that cgame only from one of these paks and reports
-its checksum where retail reports the cgamex86.dll pak, and SV_VerifyPaks_f
-accepts it.  With no such pak, an unpure server or sv_fnqlClientModules 0,
-the value is empty, so systeminfo carries exactly what it did before and
-only the retail cgame checksum is accepted.
-================
-*/
-void SV_PublishFnQLClientPaks( void ) {
-	std::array<char, MAX_STRING_CHARS> list{};
-
-	sv.numFnqlClientPaks = 0;
-	if ( sv.pure != 0 && sv_fnqlClientModules && sv_fnqlClientModules->integer ) {
-		sv.numFnqlClientPaks = FS_PureChecksumsForFile( FNQL_GAME_CGAME_MODULE_FILE,
-			sv.fnqlClientPakChecksums, static_cast<int>( std::size( sv.fnqlClientPakChecksums ) ) );
-	}
-	for ( int i = 0; i < sv.numFnqlClientPaks; i++ ) {
-		Q_strcat( list.data(), static_cast<int>( list.size() ),
-			va( i ? " %i" : "%i", sv.fnqlClientPakChecksums[i] ) );
-	}
-	Cvar_Set( "sv_fnqlClientPaks", list.data() );
-	if ( sv.numFnqlClientPaks ) {
-		Com_Printf( "Pure server accepts the FnQL-game client package (%s).\n", list.data() );
-	}
-}
-
-
-/*
-================
-SV_AcceptsFnQLClientPak
-================
-*/
-qboolean SV_AcceptsFnQLClientPak( int pureChecksum ) {
-	for ( int i = 0; i < sv.numFnqlClientPaks; i++ ) {
-		if ( sv.fnqlClientPakChecksums[i] == pureChecksum ) {
-			return qtrue;
-		}
-	}
-	return qfalse;
-}
-
-
-/*
-================
 SV_SpawnServer
 
 Change the server to a new map, taking all connected
@@ -654,9 +561,6 @@ void SV_SpawnServer( const char *mapname, qboolean killBots ) {
 	SV_InitGameProgs();
 
 	// don't allow a map_restart if game is modified
-	if ( sv_ammoPack ) {
-		sv_ammoPack->modified = qfalse;
-	}
 	sv_gametype->modified = qfalse;
 
 	sv_pure->modified = qfalse;
@@ -768,8 +672,6 @@ void SV_SpawnServer( const char *mapname, qboolean killBots ) {
 		}
 	}
 
-	SV_PublishFnQLClientPaks();
-
 	// QAA: PC deviation, no Workshop references configstring (no Steam)
 
 	// save systeminfo and serverinfo strings
@@ -779,14 +681,10 @@ void SV_SpawnServer( const char *mapname, qboolean killBots ) {
 	SV_SetConfigstring( CS_SERVERINFO, Cvar_InfoString( CVAR_SERVERINFO, nullptr ) );
 	cvar_modifiedFlags &= ~CVAR_SERVERINFO;
 
-	// Retail native cgame prediction consumes these engine-owned cvar groups.
-	SV_UpdateQLCvarConfigstrings( qtrue );
-
 	// any media configstring setting now should issue a warning
 	// and any configstring changes should be reliably transmitted
 	// to all clients
 	sv.state = SS_GAME;
-	Zmq_InitStatsPublisher();
 	// QAA: PC deviation, no Steam GameServer to start
 
 	// send a heartbeat now so the master will get up to date info
@@ -803,7 +701,6 @@ void SV_SpawnServer( const char *mapname, qboolean killBots ) {
 	Com_Printf ("-----------------------------------\n");
 
 	Sys_SetStatus( "Running map %s", mapname );
-	SV_MapPoolRefreshCvars();
 
 	// suppress hitch warning
 	Com_FrameInit();
@@ -826,18 +723,12 @@ void SV_Init( void )
 
 	// serverinfo vars
 	Cvar_Get ("dmflags", "0", CVAR_SERVERINFO);
-	// Retail loads arena metadata, the factory registry, and its map pool
-	// before registering the gameplay-facing server cvars below.
-	SV_FactoryInit();
 	// The currently shipped retail qagame registers 50 here. Match the module
 	// boundary so startup does not retain a stale Quake III reset value.
 	Cvar_Get ("fraglimit", "50", CVAR_SERVERINFO);
 	Cvar_Get ("timelimit", "0", CVAR_SERVERINFO);
 	sv_gametype = Cvar_Get ("g_gametype", "0", CVAR_SERVERINFO | CVAR_LATCH );
 	Cvar_SetDescription( sv_gametype, "Set the gametype to mod." );
-	sv_ammoPack = Cvar_Get( "g_ammoPack", "1", CVAR_LATCH );
-	Cvar_SetDescription( sv_ammoPack,
-		"Select the retail Quake Live ammunition-pack ruleset." );
 	Cvar_Get ("sv_keywords", "", CVAR_SERVERINFO);
 	//Cvar_Get ("protocol", va("%i", PROTOCOL_VERSION), CVAR_SERVERINFO | CVAR_ROM);
 	sv_mapname = Cvar_Get ("mapname", "nomap", CVAR_SERVERINFO | CVAR_ROM);
@@ -870,14 +761,6 @@ void SV_Init( void )
 	Cvar_SetDescription( sv_dlRate, "Bandwidth allotted to pack archive downloads via UDP, in kbyte/s." );
 	sv_floodProtect = Cvar_Get( "sv_floodProtect", "1", CVAR_ARCHIVE | CVAR_SERVERINFO );
 	Cvar_SetDescription( sv_floodProtect, "Toggle server flood protection to keep players from bringing the server down." );
-	sv_enableRankings = Cvar_Get( "sv_enableRankings", "0", CVAR_ARCHIVE | CVAR_SERVERINFO );
-	Cvar_CheckRange( sv_enableRankings, "0", "1", CV_INTEGER );
-	Cvar_SetDescription( sv_enableRankings, "Retained Quake Live rankings compatibility toggle. FnQL keeps this disabled because no live rankings service is owned by the engine." );
-	sv_rankingsActive = Cvar_Get( "sv_rankingsActive", "0", CVAR_SERVERINFO );
-	Cvar_SetDescription( sv_rankingsActive, "Reports whether the retained Quake Live rankings compatibility surface is active." );
-	sv_gtid = Cvar_Get( "sv_gtid", "", CVAR_SERVERINFO | CVAR_ROM );
-	Cvar_SetDescription( sv_gtid,
-		"Retail Quake Live game-type identifier published by compatible game modules." );
 	sv_idleRestart = Cvar_Get( "sv_idleRestart", "1", 0 );
 	Cvar_CheckRange( sv_idleRestart, "0", "1", CV_INTEGER );
 	Cvar_SetDescription( sv_idleRestart,
@@ -920,18 +803,7 @@ void SV_Init( void )
 	Cvar_Get( "sv_referencedPaks", "", CVAR_SYSTEMINFO | CVAR_ROM );
 	sv_referencedPakNames = Cvar_Get( "sv_referencedPakNames", "", CVAR_SYSTEMINFO | CVAR_ROM );
 	// FnQL extension (docs/fnql/GAME_MODULES.md): which loaded paks carry an
-	// FnQL-game client package this pure server accepts.  Empty, and so absent
-	// from systeminfo, unless such a pak is loaded.
-	Cvar_Get( "sv_fnqlClientPaks", "", CVAR_SYSTEMINFO | CVAR_ROM );
-	sv_fnqlClientModules = Cvar_Get( "sv_fnqlClientModules", "1", CVAR_ARCHIVE | CVAR_LATCH );
-	Cvar_SetDescription( sv_fnqlClientModules,
-		"On a pure server, accept FnQL clients that run the FnQL-game cgame from an "
-		"FnQL-game client package this server has loaded (" FNQL_GAME_CGAME_MODULE_FILE
-		" in a pk3). 0 accepts only the retail cgame. Takes effect on the next map." );
 	Cvar_SetDescription( sv_referencedPakNames, "Variable holds a list of all the pack archives the server loaded data from." );
-	Cvar_Get( "sv_rankingsProvider", "Unavailable", CVAR_ROM );
-	Cvar_Get( "sv_rankingsPolicy", "compatibility-unavailable", CVAR_ROM );
-	SV_GameRefreshRankingsPolicyCvars();
 
 	// server vars
 	sv_rconPassword = Cvar_Get ("rconPassword", "", CVAR_TEMP | CVAR_PRIVATE );
@@ -1025,8 +897,6 @@ void SV_Init( void )
 	Cvar_SetGroup( sv_minRate, CVG_SERVER );
 	Cvar_SetGroup( sv_maxRate, CVG_SERVER );
 	Cvar_SetGroup( sv_fps, CVG_SERVER );
-	Cvar_SetGroup( sv_enableRankings, CVG_SERVER );
-	Cvar_SetGroup( sv_rankingsActive, CVG_SERVER );
 	Cvar_SetGroup( sv_audioPVS, CVG_SERVER );
 	Cvar_SetGroup( sv_audioPVSRange, CVG_SERVER );
 	Cvar_SetGroup( sv_audioPVSMaxEntities, CVG_SERVER );
@@ -1035,7 +905,6 @@ void SV_Init( void )
 	// force initial check
 	SV_TrackCvarChanges();
 
-	Zmq_RegisterCvarsAndInitRcon();
 	SV_InitChallenger();
 }
 
@@ -1099,7 +968,6 @@ void SV_Shutdown( const char *finalmsg ) {
 
 	// close an sv_lockstep recording before the final messages and the game shutdown
 	SV_LockstepShutdown( finalmsg );
-	SV_ClearPendingAdminCommands();
 
 #ifdef USE_IPV6
 	NET_LeaveMulticast6();
@@ -1112,7 +980,6 @@ void SV_Shutdown( const char *finalmsg ) {
 	SV_RemoveOperatorCommands();
 	SV_MasterShutdown();	// QAA: no Steam stats to flush or GameServer to stop
 	SV_ShutdownGameProgs();
-	Zmq_ShutdownStatsPublisher();
 	SV_InitChallenger();
 
 	// Free the clients BEFORE SV_ClearServer(): it memsets sv, and SV_Clients()
@@ -1134,9 +1001,6 @@ void SV_Shutdown( const char *finalmsg ) {
 	if ( svs.clients ) {
 		SV_ZFree( svs.clients );
 	}
-	// Retail restores factory-backed cvars after GAME_SHUTDOWN, level clearing,
-	// and client destruction, but before the server-static state is zeroed.
-	SV_FactoryShutdown();
 	// Keep shutdown safe on the small Win32 game thread stack.  An aggregate
 	// assignment here creates a temporary larger than 512 KiB in debug builds.
 	std::memset( &svs, 0, sizeof( svs ) );

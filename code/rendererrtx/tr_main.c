@@ -3286,8 +3286,6 @@ static void R_GenerateDrawSurfs( void ) {
 
 	R_AddWorldSurfaces ();
 
-	R_UpdateAdvertisements();
-
 	R_AddPolygonSurfaces();
 
 	// set the projection matrix with the minimum zfar

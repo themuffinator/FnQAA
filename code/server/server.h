@@ -75,10 +75,6 @@ typedef struct {
 	int				serverId;			// changes each server start
 	int				restartedServerId;	// changes each map restart
 	int				checksumFeed;		// the feed key that we use to compute the pure checksum strings
-	// pure checksums of the loaded FnQL-game client packages this pure
-	// server accepts as a client's cgame (published as sv_fnqlClientPaks)
-	int				fnqlClientPakChecksums[8];
-	int				numFnqlClientPaks;
 	int				snapshotCounter;	// incremented for each snapshot built
 	int				timeResidual;		// <= 1000 / sv_frame->value
 	char			*configstrings[MAX_CONFIGSTRINGS];
@@ -181,9 +177,6 @@ typedef struct client_s {
 	char			lastClientCommandString[MAX_STRING_CHARS];
 	sharedEntity_t	*gentity;			// SV_GentityNum(clientnum)
 	char			name[MAX_NAME_LENGTH];			// extracted from userinfo, high bits masked
-	// QAA: PC deviation, no Steam identity or auth session; a QL qagame keys
-	// its access list by this per-connection id instead (game_identity.hpp)
-	uint64_t		gameIdentity;						// import slot 200 answer, 0 for a bot or a free slot
 
 	gameStateAck_t	gamestateAck;
 	qboolean		downloading;		// set at "download", reset at gamestate retransmission
@@ -214,7 +207,6 @@ typedef struct client_s {
 	int				rate;				// bytes / second, 0 - unlimited
 	int				snapshotMsec;		// requests a snapshot every snapshotMsec unless rate choked
 	qboolean		pureAuthentic;
-	qboolean		fnqlClientPackage;	// its pure cgame checksum named an accepted FnQL-game client package
 	qboolean		gotCP;				// TTimo - additional flag to distinguish between a bad pure checksum, and no cp command at all
 	qboolean		rageQuit;			// retail qagame import 192: announce the coming drop as a ragequit
 	netchan_t		netchan;
@@ -322,22 +314,17 @@ extern	cvar_t	*sv_killserver;
 extern	cvar_t	*sv_mapname;
 extern	cvar_t	*sv_mapChecksum;
 extern	cvar_t	*sv_referencedPakNames;
-extern	cvar_t	*sv_fnqlClientModules;
 extern	cvar_t	*sv_serverid;
 extern	cvar_t	*sv_minRate;
 extern	cvar_t	*sv_maxRate;
 extern	cvar_t	*sv_dlRate;
 extern	cvar_t	*sv_gametype;
-extern	cvar_t	*sv_ammoPack;
 extern	cvar_t	*sv_pure;
 extern	cvar_t	*sv_floodProtect;
-extern	cvar_t	*sv_enableRankings;
-extern	cvar_t	*sv_rankingsActive;
 extern	cvar_t	*sv_lanForceRate;
 extern	cvar_t	*sv_serverType;
 extern	cvar_t	*sv_autoRecordDemos;
 extern	cvar_t	*sv_cheats;
-extern	cvar_t	*sv_gtid;
 extern	cvar_t	*sv_idleRestart;
 extern	cvar_t	*sv_idleExit;
 extern	cvar_t	*sv_errorExit;
@@ -378,20 +365,6 @@ int SV_RateMsec( const client_t *client );
 qboolean SV_HandleQuitOnExitLevel( const char *context );
 void SV_ResetServerCvarRuntime( void );
 
-void Zmq_RegisterCvarsAndInitRcon( void );
-void Zmq_UpdatePasswords( void );
-void Zmq_InitStatsPublisher( void );
-void Zmq_ShutdownStatsPublisher( void );
-void Zmq_ShutdownRuntime( void );
-void Zmq_PumpRcon( void );
-void Zmq_BroadcastRconOutput( const char *message );
-void Zmq_SubmitMatchReport( const void *report );
-void Zmq_ReportPlayerEvent( unsigned int steamIdLow, unsigned int steamIdHigh,
-	const void *clientStats, const char *eventName, const void *payload );
-void Zmq_SubmitMatchReportJson( const char *json );
-void Zmq_SubmitMatchSummaryJson( const char *json );
-void Zmq_ReportPlayerEventJson( const char *eventName, const char *json );
-qboolean Zmq_RconActive( void );
 
 
 //
@@ -400,7 +373,6 @@ qboolean Zmq_RconActive( void );
 void SV_SetConfigstring( int index, const char *val );
 void SV_GetConfigstring( int index, char *buffer, int bufferSize );
 void SV_UpdateConfigstrings( client_t *client );
-void SV_UpdateQLCvarConfigstrings( qboolean force );
 
 void SV_SetUserinfo( int index, const char *val );
 void SV_GetUserinfo( int index, char *buffer, int bufferSize );
@@ -408,26 +380,6 @@ void SV_GetUserinfo( int index, char *buffer, int bufferSize );
 void SV_SpawnServer( const char *mapname, qboolean killBots );
 void SV_ChangeMaxClients( void );
 
-// Retail Quake Live factory, arena, and map-pool compatibility.
-void SV_FactoryInit( void );
-void SV_FactoryShutdown( void );
-void SV_FactoryDeactivate( void );
-void SV_FactoryReload_f( void );
-void SV_ArenaReload_f( void );
-void SV_MapPoolReload_f( void );
-void SV_StartRandomMap_f( void );
-qboolean SV_FactoryExists( const char *factoryName );
-qboolean SV_FactoryHasActive( void );
-qboolean SV_FactoryCatalogEmpty( void );	// QAA: no factories, Quake III's map command
-qboolean SV_FactoryPrepareMap( const char *mapName, const char *factoryName,
-	qboolean factoryArgumentPresent, qboolean developerMap );
-void SV_FactoryPrintMapUsage( const char *commandName );
-int SV_FactoryWebCatalogJsonSize( void );
-qboolean SV_FactoryBuildWebCatalogJson( char *buffer, int bufferSize );
-int SV_MapPoolWebCatalogJsonSize( void );
-qboolean SV_MapPoolBuildWebCatalogJson( char *buffer, int bufferSize );
-void SV_MapPoolRefreshCvars( void );
-void SV_FactoryRefreshMountedContent( void );
 
 
 
@@ -440,8 +392,6 @@ void SV_InitChallenger( void );
 void SV_DirectConnect( const netadr_t *from );
 void SV_PrintClientStateChange( const client_t *cl, clientState_t newState );
 
-void SV_ExecutePendingAdminCommands( void );
-void SV_ClearPendingAdminCommands( void );
 void SV_ExecuteClientMessage( client_t *cl, msg_t *msg );
 void SV_UserinfoChanged( client_t *cl, qboolean updateUserinfo, qboolean runFilter );
 
@@ -491,32 +441,10 @@ playerState_t *SV_GameClientNum( int num );
 svEntity_t	*SV_SvEntityForGentity( sharedEntity_t *gEnt );
 sharedEntity_t *SV_GEntityForSvEntity( svEntity_t *svEnt );
 void		SV_InitGameProgs ( void );
-void		SV_RegisterGameCvars( void );
-void		SV_PublishFnQLClientPaks( void );
-qboolean	SV_AcceptsFnQLClientPak( int pureChecksum );
 int			SV_ClientMessageLimit( const client_t *client );
 qboolean	SV_SinglePlayerIgnoresRemote( void );
-void		SV_GameRefreshRankingsPolicyCvars( void );
 void		SV_ShutdownGameProgs ( void );
 void		SV_RestartGameProgs( void );
-void		SV_AssignClientGameIdentity( client_t *client );	// once per connection, before GAME_CLIENT_CONNECT
-uint64_t	SV_ClientGameIdentity( int clientNum );				// what QL import slot 200 answers
-const void	*SV_Stats_ProcessMatchReport( const void *report, char *buffer, int bufferSize );
-void		SV_Stats_ProcessEvent( unsigned int idLow, unsigned int idHigh,
-				const void *clientStats, const char *eventName, const void *payload );
-void		SV_Stats_ProcessMatchReportJson( const char *json );
-void		SV_Stats_ProcessEventJson( unsigned int idLow, unsigned int idHigh,
-				const char *eventName, const char *json );
-// Retail Quake Live qagame query exports (native structured ABI only). Each
-// answers its documented neutral value when the loaded module lacks the slot.
-qboolean	SV_GameQueryExportsAvailable( void );
-qboolean	SV_GameCanClientSeeClient( int viewerClientNum, int targetClientNum );
-qboolean	SV_GameSuppressesThawProgressEvent( int viewerClientNum, int entityNum );
-qboolean	SV_GameIsObjectiveEntity( int entityNum );
-qboolean	SV_GameShouldSuppressVoiceToClient( int senderClientNum, int recipientClientNum );
-qboolean	SV_GameIsClientAdmin( int clientNum );
-qboolean	SV_GameAreEnemyClients( int clientNumA, int clientNumB );
-int		SV_GameGetClientScore( int clientNum, int fallbackScore );
 qboolean	SV_inPVS (const vec3_t p1, const vec3_t p2);
 
 //
@@ -549,17 +477,11 @@ void		SV_LockstepBeginFrame( void );
 void		SV_LockstepClientThink( void );
 void		SV_LockstepEndFrame( void );
 int			SV_LockstepGameSeed( void );
-void		SV_LockstepTraceGameRand( void *addressInModule );
 void		SV_LockstepSeedLevel( int *checksumFeed );
 int			SV_LockstepMilliseconds( void );
 int			SV_LockstepRealTime( qtime_t *qtime );
 void		SV_LockstepMatchGuid( char *buffer, int bufferSize );
 void		SV_LockstepRecordServerCommand( int clientNum, const char *text );
-// sv_lockstepSteam: the game module's Steam statistic and achievement calls
-#define LOCKSTEP_STEAM_ADD_STAT			1	// a = statistic, b = delta
-#define LOCKSTEP_STEAM_HAS_ACHIEVEMENT	2	// a = achievement, result = the answer
-#define LOCKSTEP_STEAM_UNLOCK_ACHIEVEMENT	3	// a = achievement
-void		SV_LockstepRecordSteamCall( int kind, int clientNum, int a, int b, int result );
 qboolean	SV_LockstepIsScriptedClient( const client_t *client );
 const char	*SV_LockstepClientAddress( const client_t *client );
 qboolean	SV_LockstepClientPing( const client_t *client, int *ping );

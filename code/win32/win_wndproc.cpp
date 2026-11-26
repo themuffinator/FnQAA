@@ -226,7 +226,6 @@ static int WIN_PointerConsumerIdentity( void )
 	const int catcher = Key_GetCatcher();
 
 	if ( catcher & KEYCATCH_CONSOLE ) return KEYCATCH_CONSOLE;
-	if ( catcher & KEYCATCH_BROWSER ) return KEYCATCH_BROWSER;
 	if ( catcher & KEYCATCH_UI ) return KEYCATCH_UI;
 	if ( catcher & KEYCATCH_CGAME ) return KEYCATCH_CGAME;
 	return 0;
@@ -577,7 +576,6 @@ static void VID_AppActivate( qboolean active )
 	// earlier queued key-down after focus has already been lost.
 	WIN_QueueInputReset( active );
 
-	CL_WebHost_NotifyAppActivation( active );
 	IN_Activate( active );
 
 	if ( active ) {
@@ -1111,11 +1109,6 @@ LRESULT WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM  wParam, LPARAM lParam 
 				// free for the desktop; in fullscreen this also prevents an
 				// underlying UI/browser catcher from exposing its host cursor.
 				SetCursor( NULL );
-				return TRUE;
-			}
-			HCURSOR browserCursor = (HCURSOR)CL_WebHost_GetCursorHandle();
-			if ( browserCursor ) {
-				SetCursor( browserCursor );
 				return TRUE;
 			}
 			if ( Key_GetCatcher() & ( KEYCATCH_UI | KEYCATCH_CGAME ) ) {

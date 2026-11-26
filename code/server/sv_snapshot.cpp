@@ -317,34 +317,15 @@ static void SV_SortEntityNumbers( SnapshotEntityNumbers &numbers ) {
 
 // Quake Live's playerState eFlags bit for a client on the spectator team
 // (retail qagame ClientSpawn 0x1003bda2; Quake III used it for EF_VOTED).
-constexpr int QL_EF_SPECTATOR = 0x00004000;
-
-/*
-===============
-SV_SnapshotSingleClientNum
-
-Retail quakelive_steam.exe 0x4e53d2-0x4e53f6 compares an SVF_SINGLECLIENT
-entity with the viewing client's own slot while its playerState carries
-EF_SPECTATOR, and with ps.clientNum otherwise. Legacy modules keep the
-Quake III rule, since that eFlags bit means something else to them.
-===============
-*/
-static int SV_SnapshotSingleClientNum( const clientSnapshot_t *frame, int viewerClientNum ) {
-	if ( SV_GameQueryExportsAvailable() && ( frame->ps.eFlags & QL_EF_SPECTATOR ) ) {
-		return viewerClientNum;
-	}
-	return frame->ps.clientNum;
-}
-
 /*
 ===============
 SV_EntityPassesSnapshotClientFlags
 ===============
 */
-static bool SV_EntityPassesSnapshotClientFlags( const sharedEntity_t *ent, int clientNum, int singleClientNum ) {
+static bool SV_EntityPassesSnapshotClientFlags( const sharedEntity_t *ent, int clientNum ) {
 	// entities can be flagged to be sent to only one client
 	if ( ent->r.svFlags & SVF_SINGLECLIENT ) {
-		if ( ent->r.singleClient != singleClientNum ) {
+		if ( ent->r.singleClient != clientNum ) {
 			return false;
 		}
 	}
@@ -365,43 +346,6 @@ static bool SV_EntityPassesSnapshotClientFlags( const sharedEntity_t *ent, int c
 	}
 
 	return true;
-}
-
-enum class SnapshotGameVisibility {
-	Normal,		// area and PVS decide
-	Forced,		// the game module includes it regardless of PVS
-	Suppressed	// the game module hides it from this viewer
-};
-
-/*
-===============
-SV_GameSnapshotVisibility
-
-Mirrors retail quakelive_steam.exe 0x4e548c-0x4e54f0, reached for every
-non-broadcast entity that passed the client flags: slot 13 first drops a
-Freeze Tag thaw-progress event for the viewer, then slot 12 (client entities)
-or slot 14 (everything else) can include the entity before the area and PVS
-pass. The viewer is the snapshot owner's own slot (0x4e5789: client->gentity
-s.number), not the followed ps.clientNum. Native-only, so legacy QVM and
-classic DLL modules keep the Quake III visibility rules.
-===============
-*/
-static SnapshotGameVisibility SV_GameSnapshotVisibility( int viewerClientNum, int entityNum ) {
-	if ( !SV_GameQueryExportsAvailable() ) {
-		return SnapshotGameVisibility::Normal;
-	}
-
-	if ( SV_GameSuppressesThawProgressEvent( viewerClientNum, entityNum ) ) {
-		return SnapshotGameVisibility::Suppressed;
-	}
-
-	if ( entityNum >= 0 && entityNum < MAX_CLIENTS ) {
-		return SV_GameCanClientSeeClient( viewerClientNum, entityNum )
-			? SnapshotGameVisibility::Forced : SnapshotGameVisibility::Normal;
-	}
-
-	return SV_GameIsObjectiveEntity( entityNum )
-		? SnapshotGameVisibility::Forced : SnapshotGameVisibility::Normal;
 }
 
 /*
@@ -490,7 +434,7 @@ knows how to consume for sound.
 ===============
 */
 static void SV_AddAudioReachableEntities( const vec3_t origin, int clientarea, clientSnapshot_t *frame,
-									SnapshotEntityNumbers &eNums, int viewerClientNum ) {
+									SnapshotEntityNumbers &eNums ) {
 	int e;
 	int added;
 	float range;
@@ -521,18 +465,12 @@ static void SV_AddAudioReachableEntities( const vec3_t origin, int clientarea, c
 		}
 
 		ent = SV_GentityNum( es->number );
-		if ( !SV_EntityPassesSnapshotClientFlags( ent, frame->ps.clientNum,
-				SV_SnapshotSingleClientNum( frame, viewerClientNum ) ) ) {
+		if ( !SV_EntityPassesSnapshotClientFlags( ent, frame->ps.clientNum ) ) {
 			continue;
 		}
 
 		svEnt = &sv.svEntities[ es->number ];
 		if ( svEnt->snapshotCounter == sv.snapshotCounter ) {
-			continue;
-		}
-		// the opt-in audio expansion never re-adds what the game module hides
-		if ( SV_GameQueryExportsAvailable()
-			&& SV_GameSuppressesThawProgressEvent( viewerClientNum, es->number ) ) {
 			continue;
 		}
 		if ( !SV_AreasVisibleForSnapshot( clientarea, svEnt ) ) {
@@ -555,7 +493,7 @@ SV_AddEntitiesVisibleFromPoint
 ===============
 */
 static void SV_AddEntitiesVisibleFromPoint( const vec3_t origin, clientSnapshot_t *frame,
-									SnapshotEntityNumbers &eNums, bool portal, int viewerClientNum ) {
+									SnapshotEntityNumbers &eNums, bool portal ) {
 	int		e, i;
 	sharedEntity_t *ent;
 	svEntity_t	*svEnt;
@@ -565,7 +503,6 @@ static void SV_AddEntitiesVisibleFromPoint( const vec3_t origin, clientSnapshot_
 	int		leafnum;
 	byte	*clientpvs;
 	byte	*bitvector;
-	int		singleClientNum;
 
 	// during an error shutdown message we may need to transmit
 	// the shutdown message after the server has shutdown, so
@@ -582,13 +519,12 @@ static void SV_AddEntitiesVisibleFromPoint( const vec3_t origin, clientSnapshot_
 	frame->areabytes = CM_WriteAreaBits( frame->areabits, clientarea );
 
 	clientpvs = CM_ClusterPVS (clientcluster);
-	singleClientNum = SV_SnapshotSingleClientNum( frame, viewerClientNum );
 
 	for ( e = 0 ; e < svs.currFrame->count; e++ ) {
 		es = svs.currFrame->ents[ e ];
 		ent = SV_GentityNum( es->number );
 
-		if ( !SV_EntityPassesSnapshotClientFlags( ent, frame->ps.clientNum, singleClientNum ) ) {
+		if ( !SV_EntityPassesSnapshotClientFlags( ent, frame->ps.clientNum ) ) {
 			continue;
 		}
 
@@ -603,16 +539,6 @@ static void SV_AddEntitiesVisibleFromPoint( const vec3_t origin, clientSnapshot_
 		if ( ent->r.svFlags & SVF_BROADCAST ) {
 			eNums.Add( *svEnt, e );
 			continue;
-		}
-
-		switch ( SV_GameSnapshotVisibility( viewerClientNum, es->number ) ) {
-		case SnapshotGameVisibility::Suppressed:
-			continue;
-		case SnapshotGameVisibility::Forced:
-			eNums.Add( *svEnt, e );
-			continue;
-		case SnapshotGameVisibility::Normal:
-			break;
 		}
 
 		// ignore if not touching a PV leaf
@@ -665,14 +591,14 @@ static void SV_AddEntitiesVisibleFromPoint( const vec3_t origin, clientSnapshot_
 				}
 			}
 			eNums.MarkUnordered();
-			SV_AddEntitiesVisibleFromPoint( ent->s.origin2, frame, eNums, portal, viewerClientNum );
+			SV_AddEntitiesVisibleFromPoint( ent->s.origin2, frame, eNums, portal );
 		}
 	}
 
 	ent = SV_GentityNum( frame->ps.clientNum );
 	// extension: merge second PVS at ent->r.s.origin2
 	if ( ent->r.svFlags & SVF_SELF_PORTAL2 && !portal ) {
-		SV_AddEntitiesVisibleFromPoint( ent->r.s.origin2, frame, eNums, true, viewerClientNum );
+		SV_AddEntitiesVisibleFromPoint( ent->r.s.origin2, frame, eNums, true );
 		eNums.MarkUnordered();
 	}
 }
@@ -889,8 +815,8 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 
 	// add all the entities directly visible to the eye, which
 	// may include portal entities that merge other viewpoints
-	SV_AddEntitiesVisibleFromPoint( org, frame, entityNumbers, false, cl );
-	SV_AddAudioReachableEntities( org, clientArea, frame, entityNumbers, cl );
+	SV_AddEntitiesVisibleFromPoint( org, frame, entityNumbers, false );
+	SV_AddAudioReachableEntities( org, clientArea, frame, entityNumbers );
 
 	// if there were portals visible, there may be out of order entities
 	// in the list which will need to be resorted for the delta compression

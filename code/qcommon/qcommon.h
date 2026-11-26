@@ -324,25 +324,6 @@ PROTOCOL
 // are migrated and validated against retail Steam assets.
 #define	QL_RETAIL_PROTOCOL_VERSION	NETCHAN_QL_RETAIL_PROTOCOL_VERSION
 #define	QL_NATIVE_CGAME_DLL	"cgamex86.dll"
-// FnQL-game modules carry this prefix so they never shadow the retail
-// modules in a search path; vm_gameProvider, vm_cgameProvider and
-// vm_uiProvider select them explicitly (docs/fnql/GAME_MODULES.md).
-#define	FNQL_GAME_MODULE_PREFIX	"fnql_"
-#define	FNQL_GAME_SERVER_MODULE_FILE	FNQL_GAME_MODULE_PREFIX "qagame" ARCH_STRING DLL_EXT
-#define	FNQL_GAME_CGAME_MODULE_FILE	FNQL_GAME_MODULE_PREFIX "cgame" ARCH_STRING DLL_EXT
-#define	FNQL_GAME_UI_MODULE_FILE	FNQL_GAME_MODULE_PREFIX "ui" ARCH_STRING DLL_EXT
-// Default providers (FnQL-game milestone 12).  "auto" takes an FnQL-game
-// module only when it declares FNQL_MODULE_CAP_RETAIL_WIRE and falls back to
-// the retail-named module when none is usable, so an install without the
-// FnQL-game modules keeps the historical retail path.  "retail" stays one
-// cvar away.  Retail client modules exist only for 32-bit x86 (Windows);
-// everywhere else the FnQL-game cgame and ui are the only ones there are.
-#define	VM_GAME_PROVIDER_DEFAULT	"auto"
-#if id386 && defined( _WIN32 )
-#define	VM_CLIENT_PROVIDER_DEFAULT	"auto"
-#else
-#define	VM_CLIENT_PROVIDER_DEFAULT	"fnql"
-#endif
 // 1.31 - 67
 
 #define DEFAULT_PROTOCOL_VERSION	QL_RETAIL_PROTOCOL_VERSION
@@ -420,15 +401,6 @@ VIRTUAL MACHINE
 typedef struct vm_s vm_t;
 
 typedef enum {
-	VMI_NATIVE,
-	VMI_BYTECODE,
-	VMI_COMPILED,
-	// Internal-only mode: reload bytes pinned from a native module that was
-	// successfully opened before pure-server restrictions were applied.
-	VMI_PINNED_NATIVE
-} vmInterpret_t;
-
-typedef enum {
 	TRAP_MEMSET = 100,
 	TRAP_MEMCPY,
 	TRAP_STRNCPY,
@@ -450,28 +422,21 @@ typedef enum {
 	VM_GAME = 0,
 #ifndef USE_DEDICATED
 	VM_CGAME,
-	VM_UI,
 #endif
 	VM_COUNT
 } vmIndex_t;
 
-// Quake Live native cgame exports and some compatibility VMs use more than
-// Vanilla Quake3's four vmMain arguments.
+// QAA's game modules take up to 15 vmMain arguments after the command.
 #define MAX_VMMAIN_CALL_ARGS 16
 
 typedef intptr_t (QDECL *vmMainFunc_t)( int command, ... );
 
-typedef intptr_t (*syscall_t)( intptr_t *parms );
-typedef intptr_t (QDECL *dllSyscall_t)( intptr_t callNum, ... );
-typedef void (QDECL *dllEntry_t)( dllSyscall_t syscallptr );
-typedef void (QDECL *dllEntryNative_t)( void **exports, void *imports, int *apiVersion );
-
 void	VM_Init( void );
-void	VM_MigrateArchivedProviders( void );	// after the configs execute, before command-line +set
-vm_t	*VM_Create( vmIndex_t index, syscall_t systemCalls, dllSyscall_t dllSyscalls, vmInterpret_t interpret );
-vm_t	*VM_CreateNative( vmIndex_t index, syscall_t systemCalls, dllSyscall_t dllSyscalls, vmInterpret_t interpret, void *dllImports, int dllApiVersion );
-// QAA: a module the engine hosts itself (QAA's recompiled qagame and cgame): VM_Call goes to entry,
-// VM_Free to destroy and VM_Restart to restart.
+// QAA: the only modules are the ones the engine hosts itself, QAA's recompiled
+// qagame and cgame (sv_qaa_game.inc, cl_qaa_cgame.inc): VM_Call goes to entry,
+// VM_Free to destroy and VM_Restart to restart. There is no QVM interpreter
+// and no native module loader.
+vm_t	*VM_CreateHosted( vmIndex_t index, vmMainFunc_t entry, void (*destroy)( vm_t *self ), vm_t *(*restart)( vm_t *self ) );
 // QAA: the guest runtime's error hook (code/qaa/qaa_guest_host.cpp)
 #ifdef __cplusplus
 extern "C" {
@@ -484,11 +449,6 @@ extern intptr_t ( *QAA_SV_GameUiTrap )( int trap, const int32_t *args );
 #ifdef __cplusplus
 }
 #endif
-vm_t	*VM_CreateHosted( vmIndex_t index, vmMainFunc_t entry, void (*destroy)( vm_t *self ), vm_t *(*restart)( vm_t *self ) );
-qboolean VM_HasPinnedNativeModule( vmIndex_t index );
-qboolean VM_PureNativeCandidate( vmIndex_t index );
-void	VM_SetPureClientModulePaks( const char *checksums );
-qboolean VM_NativeModulePureChecksum( const vm_t *vm, qboolean *fnqlModule, int *checksum );
 
 void	VM_Free( vm_t *vm );
 void	VM_Clear(void);
@@ -497,20 +457,6 @@ void	VM_Forced_Unload_Done(void);
 vm_t	*VM_Restart( vm_t *vm );
 
 intptr_t	QDECL VM_Call( vm_t *vm, int nargs, int callNum, ... );
-qboolean	VM_CallGameRegisterCvars( vm_t *vm );
-qboolean	VM_CallCGameRegisterCvars( vm_t *vm );
-
-void	VM_Debug( int level );
-void	VM_CheckBounds( const vm_t *vm, unsigned int address, unsigned int length );
-void	VM_CheckBounds2( const vm_t *vm, unsigned int addr1, unsigned int addr2, unsigned int length );
-
-#if 1
-#define VM_CHECKBOUNDS VM_CheckBounds
-#define VM_CHECKBOUNDS2 VM_CheckBounds2
-#else // for performance evaluation purposes
-#define VM_CHECKBOUNDS(vm,a,b)
-#define VM_CHECKBOUNDS2(vm,a,b,c)
-#endif
 
 void	*GVM_ArgPtr( intptr_t intValue );
 
@@ -668,13 +614,9 @@ cvar_t *Cvar_Get( const char *var_name, const char *value, int flags );
 // if value is "", the value will not override a previously set value.
 
 void	Cvar_Register( vmCvar_t *vmCvar, const char *varName, const char *defaultValue, int flags, int privateFlag );
-// Preserve the smaller Quake III vmCvar_t memory layout for legacy vmMain/QVM modules.
+// The Quake III vmCvar_t memory layout, which QAA's game modules use.
 void	Cvar_RegisterLegacy( void *vmCvar, const char *varName, const char *defaultValue, int flags, int privateFlag );
 // basically a slightly modified Cvar_Get for the interpreted modules
-
-cvar_t *Cvar_RegisterBounded( vmCvar_t *vmCvar, const char *varName, const char *defaultValue,
-	const char *minimumValue, const char *maximumValue, int flags, int privateFlag );
-// Cvar_Register plus Quake Live numeric bounds for native modules.
 
 void	Cvar_Update( vmCvar_t *vmCvar, int privateFlag );
 void	Cvar_UpdateLegacy( void *vmCvar, int privateFlag );
@@ -701,8 +643,6 @@ void	Cvar_SetIntegerValue( const char *var_name, int value );
 void	Cvar_SetValueSafe( const char *var_name, float value );
 // expands value to a string and calls Cvar_Set/Cvar_SetSafe
 
-void	Cvar_SetFromUI( const char *var_name, const char *value );
-void	Cvar_SetValueFromUI( const char *var_name, float value );
 // UI cvar writes: like Cvar_SetSafe, but retail settings cvars registered
 // with CVAR_PROTECTED stay writable (private and protected ROM/INIT do not)
 
@@ -891,7 +831,6 @@ void FS_TouchFileInPak( const char *filename );
 qboolean FS_PureServerActive( void );
 qboolean FS_PurePakForFile( const char *filename, int *pChecksum );
 int		FS_ReadFileInPurePak( const char *filename, int pureChecksum, void **buffer );
-int		FS_PureChecksumsForFile( const char *filename, int *checksums, int maxChecksums );
 
 void FS_BypassPure( void );
 void FS_RestorePure( void );
@@ -1179,7 +1118,6 @@ extern	cvar_t	*com_cl_running;
 extern	cvar_t	*com_yieldCPU;
 #endif
 
-extern	cvar_t	*vm_rtChecks;
 #ifdef USE_AFFINITY_MASK
 extern	cvar_t	*com_affinityMask;
 #endif
@@ -1291,7 +1229,6 @@ qboolean CL_Disconnect( qboolean showMainMenu );
 void CL_ResetOldGame( void );
 void CL_Shutdown( const char *finalmsg, qboolean quit );
 void CL_Frame( int msec, int realMsec );
-void CL_WebHost_Frame( void );
 qboolean CL_GameCommand( void );
 void CL_KeyEvent (int key, qboolean down, unsigned time);
 void CL_ResetInputState( void );
@@ -1327,7 +1264,6 @@ void	CL_ForwardCommandToServer( const char *string );
 // things like godmode, noclip, etc, are commands directed to the server,
 // so when they are typed in at the console, they will need to be forwarded.
 
-void CL_CDDialog( void );
 // bring up the "need a cd to play" dialog
 
 void CL_ShutdownAll( void );
@@ -1342,7 +1278,6 @@ void CL_FlushMemory( void );
 void CL_StartHunkUsers( void );
 // start all the client stuff using the hunk
 
-void CL_RegisterCGameCvars( void );
 // register cgame-owned native startup cvars without initializing a level
 
 void CL_Snd_Restart(void);
@@ -1367,8 +1302,6 @@ qboolean CL_GameSwitch( void );
 // server interface
 //
 void SV_Init( void );
-void SV_FactoryRefreshMountedContent( void );
-void SV_RegisterGameCvars( void );
 void SV_Shutdown( const char *finalmsg );
 qboolean SV_ShouldErrorExit( errorParm_t code );
 void SV_Frame( int msec, int realMsec );
@@ -1389,8 +1322,6 @@ void SV_RemoveDedicatedCommands( void );
 //
 // UI interface
 //
-qboolean UI_GameCommand( void );
-qboolean UI_usesUniqueCDKey(void);
 
 /*
 ==============================================================

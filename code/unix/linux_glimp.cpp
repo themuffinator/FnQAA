@@ -192,10 +192,9 @@ static int mouse_threshold;
 
 static int win_x, win_y;
 
-static constexpr int kPointerMenuMask = KEYCATCH_UI | KEYCATCH_CGAME | KEYCATCH_BROWSER;
+static constexpr int kPointerMenuMask = KEYCATCH_UI | KEYCATCH_CGAME;
 static constexpr int kTextInputCatcherMask =
-	KEYCATCH_CONSOLE | KEYCATCH_UI | KEYCATCH_MESSAGE |
-	KEYCATCH_BROWSER;
+	KEYCATCH_CONSOLE | KEYCATCH_UI | KEYCATCH_MESSAGE;
 
 using fnql::input::PointerMode;
 using fnql::input::PointerOwner;
@@ -799,7 +798,6 @@ static int IN_PointerConsumerIdentity( void )
 	const int catcher = Key_GetCatcher();
 
 	if ( catcher & KEYCATCH_CONSOLE ) return KEYCATCH_CONSOLE;
-	if ( catcher & KEYCATCH_BROWSER ) return KEYCATCH_BROWSER;
 	if ( catcher & KEYCATCH_UI ) return KEYCATCH_UI;
 	if ( catcher & KEYCATCH_CGAME ) return KEYCATCH_CGAME;
 	return 0;

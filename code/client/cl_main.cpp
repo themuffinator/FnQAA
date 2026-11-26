@@ -104,7 +104,6 @@ cvar_t	*cl_drawRecording;
 static int cl_demoRecordMessageModificationCount;
 static int cl_drawRecordingModificationCount;
 cvar_t	*cl_menuAspect;
-cvar_t	*cl_menuBlur;
 cvar_t	*cl_cinematicAspect;
 cvar_t	*cl_captureActive;
 cvar_t	*cl_playerHighlight;
@@ -374,18 +373,6 @@ static void CL_ShutdownRef( refShutdownCode_t code );
 static void CL_InitGLimp_Cvars( void );
 
 static void CL_NextDemo( void );
-
-/*
-===============
-CL_CDDialog
-
-Called by Com_Error when a cd is needed
-===============
-*/
-void CL_CDDialog( void ) {
-	cls.cddialog = qtrue;	// start it next frame
-}
-
 
 /*
 =======================================================================
@@ -864,7 +851,6 @@ static void CL_Record_f( void ) {
 
 	Com_TruncateLongString( clc.recordNameShort, clc.recordName );
 	clc.demorecording = qtrue;
-	CL_WebView_PublishGameDemo( clc.recordName, clc.recordNameShort );
 
 	if ( Cvar_VariableIntegerValue( "ui_recordSPDemo" ) ) {
 	  clc.spDemoRecording = qtrue;
@@ -1291,6 +1277,40 @@ static void CL_NextDemo( void ) {
 //======================================================================
 
 /*
+====================
+CL_InitUI
+
+QAA: Quake Arena Arcade has no ui module. Its menus, HUD and scoreboards are
+Scaleform GFx movies run by default.xex's SFUI layer, which FnQAA recompiles
+and hosts (cl_qaa_ui.cpp, docs/UI.md). Without it the client runs with the
+console only.
+====================
+*/
+void CL_InitUI( void ) {
+	// disallow vl.collapse for UI elements
+	re.VertexLighting( qfalse );
+
+	if ( QAA_UI_Init() ) {
+		cls.uiStarted = qtrue;
+		return;
+	}
+	Com_Printf( S_COLOR_YELLOW "No Scaleform front end (qaa_ui): "
+		"the client runs with the console only.\n" );
+}
+
+
+/*
+====================
+CL_ShutdownUI
+====================
+*/
+void CL_ShutdownUI( void ) {
+	Key_SetCatcher( Key_GetCatcher() & ~KEYCATCH_UI );
+	cls.uiStarted = qfalse;
+}
+
+
+/*
 =====================
 CL_ShutdownVMs
 =====================
@@ -1317,7 +1337,6 @@ void CL_ShutdownAll( void ) {
 
 	// clear and mute all sounds until next registration
 	S_DisableSounds();
-	CL_WebHost_NotifySoundsStopped();
 
 	// shutdown VMs
 	CL_ShutdownVMs();
@@ -1396,7 +1415,6 @@ void CL_MapLoading( void ) {
 		return;
 	}
 
-	CL_WebHost_HideForGameTransition();
 	Con_Close();
 	Key_SetCatcher( 0 );
 
@@ -1412,10 +1430,7 @@ void CL_MapLoading( void ) {
 	} else {
 		// clear nextmap so the cinematic shutdown doesn't execute it
 		Cvar_Set( "nextmap", "" );
-		// This is an in-progress local-game transition, not a terminal
-		// disconnect. Restoring the retained WebUI here would resume and focus
-		// its game.start route after the transition hide above, allowing it to
-		// reacquire the screen when the new cgame reaches CA_ACTIVE.
+		// an in-progress local-game transition, not a terminal disconnect
 		CL_Disconnect( qfalse );
 		Q_strncpyz( cls.servername, "localhost", sizeof(cls.servername) );
 		cls.state = CA_CHALLENGING;		// so the connect screen is drawn
@@ -1424,7 +1439,6 @@ void CL_MapLoading( void ) {
 		SCR_UpdateScreen();
 		clc.connectTime = -RETRANSMIT_TIMEOUT;
 		NET_StringToAdr( cls.servername, &clc.serverAddress, NA_UNSPEC );
-		CL_WebView_PublishGameStartForAddress( &clc.serverAddress );
 		// we don't need a challenge on the localhost
 		CL_CheckForResend();
 	}
@@ -1508,27 +1522,6 @@ static bool CL_RestoreOldGame( void )
 
 /*
 =====================
-CL_RestoreMainMenuAfterDisconnect
-
-The retained retail WebUI owns terminal disconnects.  The native UI is only a
-fallback when that external browser runtime cannot resume.
-=====================
-*/
-static void CL_RestoreMainMenuAfterDisconnect( void ) {
-	if ( CL_WebHost_ShowAfterDisconnect() ) {
-		return;
-	}
-
-	if ( uivm ) {
-		S_StopAllSounds();
-		VM_Call( uivm, 1, UI_SET_ACTIVE_MENU, UIMENU_MAIN );
-		Key_SetCatcher( ( Key_GetCatcher() & ~KEYCATCH_BROWSER ) | KEYCATCH_UI );
-	}
-}
-
-
-/*
-=====================
 CL_Disconnect
 
 Called when a connection, demo, or cinematic is being terminated.
@@ -1550,20 +1543,12 @@ qboolean CL_Disconnect( qboolean showMainMenu ) {
 	}
 
 	cl_disconnecting = true;
-	const qboolean publishGameEnd =
-		( cls.state >= CA_CONNECTED || clc.demoplaying || clc.demorecording )
-			? qtrue : qfalse;
 
-	// Retail enters fullscreen UI mode before publishing game.end. Resetting
-	// timescale here also prevents a slow-motion or demo timescale from leaking
-	// into the browser menu after the session has ended.
+	// Resetting timescale here prevents a slow-motion or demo timescale from
+	// leaking into the menus after the session has ended.
 	Cvar_Set( "timescale", "1" );
 	Cvar_Set( "r_uiFullScreen", "1" );
 	challengeRequestMode = fnql::client::auth::ChallengeRequestMode::None;
-
-	if ( publishGameEnd ) {
-		CL_WebView_PublishGameEnd();
-	}
 
 	// Stop demo recording
 	if ( clc.demorecording ) {
@@ -1599,17 +1584,11 @@ qboolean CL_Disconnect( qboolean showMainMenu ) {
 
 	SCR_StopCinematic();
 	S_StopAllSounds();
-	CL_WebHost_NotifySoundsStopped();
 	Key_ClearStates();
-
-	if ( uivm && showMainMenu ) {
-		VM_Call( uivm, 1, UI_SET_ACTIVE_MENU, UIMENU_NONE );
-	}
 
 	// Remove pure paks
 	FS_PureServerSetLoadedPaks( "", "" );
 	FS_PureServerSetReferencedPaks( "", "" );
-	VM_SetPureClientModulePaks( "" );
 
 	FS_ClearPakReferences( FS_GENERAL_REF | FS_UI_REF | FS_CGAME_REF );
 
@@ -1649,10 +1628,6 @@ qboolean CL_Disconnect( qboolean showMainMenu ) {
 		noGameRestart = false;
 	else
 		cl_restarted = CL_RestoreOldGame();
-
-	if ( showMainMenu ) {
-		CL_RestoreMainMenuAfterDisconnect();
-	}
 
 	cl_disconnecting = false;
 
@@ -1862,21 +1837,10 @@ void CL_Disconnect_f( void ) {
 		if ( com_sv_running && com_sv_running->integer
 			&& ( !com_dedicated || !com_dedicated->integer ) ) {
 			SV_Shutdown( "Server quit\n" );
-
-			// SV_Shutdown uses CL_Disconnect(qfalse), because most server
-			// shutdowns are map or process transitions. This command is the
-			// terminal exception: release the stale in-game native menu before
-			// offering the retained WebUI its post-game route.
-			if ( cls.state == CA_DISCONNECTED ) {
-				if ( uivm ) {
-					VM_Call( uivm, 1, UI_SET_ACTIVE_MENU, UIMENU_NONE );
-				}
-				CL_RestoreMainMenuAfterDisconnect();
-			}
 			return;
 		}
 
-		// Match retail's single recovery path so console, VM, and WebUI-issued
+		// Match retail's single recovery path so console- and VM-issued
 		// disconnects cannot diverge in cleanup or menu restoration.
 		Cvar_Set( "com_errorMessage", "" );
 		Com_Error( ERR_DISCONNECT, "Disconnected from server" );
@@ -2028,8 +1992,6 @@ static void CL_Connect_f( void ) {
 
 	// server connection string
 	Cvar_Set( "cl_currentServerAddress", server );
-	CL_WebView_PublishGameStartForAddress( &clc.serverAddress );
-	CL_WebHost_HideForGameTransition();
 }
 
 #define MAX_RCON_MESSAGE (MAX_STRING_CHARS+4)
@@ -2121,17 +2083,7 @@ static void CL_SendPureChecksums( void ) {
 		return;
 
 	// if we are pure we need to send back a command with our referenced pk3 checksums
-	//
-	// Retail reports the pak holding cgamex86.dll.  An FnQL-game cgame
-	// reports the pak it was actually read from, which the server accepted
-	// through sv_fnqlClientPaks; it never claims the retail checksum.
-	qboolean fnqlCgame = qfalse;
-	if ( VM_NativeModulePureChecksum( cgvm, &fnqlCgame, &binChecksum ) ) {
-		// binChecksum is the accepted FnQL-game client package
-	} else if ( fnqlCgame ) {
-		Com_Error( ERR_DROP, "CL_SendPureChecksums: the FnQL-game cgame was not read "
-			"from a pak this pure server accepts" );
-	} else if ( !FS_FileIsInPAK( QL_NATIVE_CGAME_DLL, &binChecksum, nullptr ) ) {
+	if ( !FS_FileIsInPAK( QL_NATIVE_CGAME_DLL, &binChecksum, nullptr ) ) {
 		Com_Error( ERR_FATAL, "CL_SendPureChecksums: no pak file for %s", QL_NATIVE_CGAME_DLL );
 	}
 
@@ -2270,7 +2222,6 @@ static void CL_Vid_Restart( refShutdownCode_t shutdownCode ) {
 
 	// clear and mute all sounds until next registration
 	S_DisableSounds();
-	CL_WebHost_NotifySoundsStopped();
 
 	// shutdown VMs
 	CL_ShutdownVMs();
@@ -2306,12 +2257,7 @@ static void CL_Vid_Restart( refShutdownCode_t shutdownCode ) {
 		CL_SendPureChecksums();
 	}
 
-	cls.startCgame = qfalse;
-	// Renderer, sound, UI, and cgame restarts can register a different set of
-	// public cvars. Refresh the retained WebUI schema once after that lifecycle
-	// boundary instead of rediscovering every cvar on a frame timer.
-	CL_WebHost_InvalidateConfigSnapshot();
-}
+	cls.startCgame = qfalse;}
 
 
 /*
@@ -3683,24 +3629,6 @@ void CL_Frame( int msec, int realMsec ) {
 	}
 #endif
 
-	if ( cls.cddialog ) {
-		// bring up the cd error dialog if needed
-		cls.cddialog = qfalse;
-		VM_Call( uivm, 1, UI_SET_ACTIVE_MENU, UIMENU_NEED_CD );
-	} else	if ( cls.state == CA_DISCONNECTED && !( Key_GetCatcher( ) & KEYCATCH_UI )
-		&& !( Key_GetCatcher() & KEYCATCH_BROWSER ) && !CL_UIMenusAreVisible()
-		&& !Cvar_VariableIntegerValue( "ui_browserAwesomiumPending" )
-		&& !com_sv_running->integer && uivm ) {
-		// Bring up the menu once.  UI_MENUS_ANY_VISIBLE covers menus whose input
-		// catcher was temporarily yielded during a renderer or browser transition.
-		//
-		// Routes that reach CA_DISCONNECTED without requesting a terminal menu
-		// still converge here (for example a server-side shutdown or finished
-		// demo). CL_Disconnect_f handles its listen-server terminal exception
-		// directly because a stale native in-game menu would fail this guard.
-		CL_RestoreMainMenuAfterDisconnect();
-	}
-
 	// Retail cl_avidemo is a deterministic screenshot-sequence path. It stays
 	// independent of FnQL's AVI/video-pipe recorder so both interfaces retain
 	// their established ownership and output formats.
@@ -3825,8 +3753,6 @@ void CL_Frame( int msec, int realMsec ) {
 
 	// resend a connection request if necessary
 	CL_CheckForResend();
-
-	CL_CheckCGameNativeImportIntegrity();
 
 	// decide on the serverTime to render
 	CL_SetCGameTime();
@@ -3987,8 +3913,6 @@ static void CL_InitRenderer( void ) {
 	cls.biasY = canvas.biasY;
 
 	Con_CheckResize();
-	CL_AdvertisementBridge_UpdateViewParameters();
-	CL_WebHost_RefreshSurfaceSize();
 
 	SCR_Init();
 }
@@ -4277,14 +4201,6 @@ static void CL_InitRef( void ) {
 	rimp.Sys_LowPhysicalMemory = Sys_LowPhysicalMemory;
 	rimp.Com_RealTime = Com_RealTime;
 	rimp.SetClientMessageRendererNodeCount = CL_SetRetailClientMessageRendererNodeCount;
-	rimp.PublishGameScreenshot = CL_WebView_PublishGameScreenshot;
-	rimp.AdvertisementBridge_RefreshLoadingViewParameters = CL_AdvertisementBridge_RefreshLoadingViewParameters;
-	rimp.AdvertisementBridge_GetCellDisplayState = CL_AdvertisementBridge_GetCellDisplayState;
-	rimp.AdvertisementBridge_GetCellLabel = CL_AdvertisementBridge_GetCellLabel;
-	rimp.AdvertisementBridge_GetLabelList1Count = CL_AdvertisementBridge_GetLabelList1Count;
-	rimp.AdvertisementBridge_GetLabelList1Entry = CL_AdvertisementBridge_GetLabelList1Entry;
-	rimp.AdvertisementBridge_GetLabelList2Count = CL_AdvertisementBridge_GetLabelList2Count;
-	rimp.AdvertisementBridge_GetLabelList2Entry = CL_AdvertisementBridge_GetLabelList2Entry;
 
 	rimp.GLimp_InitGamma = GLimp_InitGamma;
 	rimp.GLimp_SetGamma = GLimp_SetGamma;
@@ -4871,15 +4787,6 @@ void CL_Init( void ) {
 		"Menu aspect correction:\n"
 		" 1 - retain the retail QL centered 4:3 menu layout (default)\n"
 		" 0 - stretch menu widgets, including 3D model viewports, to the framebuffer" );
-	cl_menuBlur = Cvar_Get( "cl_menuBlur", "1", CVAR_ARCHIVE );
-	Cvar_CheckRange( cl_menuBlur, "0", "1", CV_FLOAT );
-	Cvar_SetDescription( cl_menuBlur,
-		"Soft-focus strength applied to the frame behind an in-game menu.\n"
-		" 0 - leave the scene sharp\n"
-		" 0..1 - scales both the blur radius and how far the softened copy\n"
-		"        replaces the sharp frame (1 is the default full soft focus)\n"
-		"Gameplay is never affected; the effect exists only while a menu is open.\n"
-		"The connect screen and the console are not softened." );
 	cl_cinematicAspect = Cvar_Get( "cl_cinematicAspect", "1", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_cinematicAspect, "0", "1", CV_INTEGER );
 	Cvar_SetDescription( cl_cinematicAspect,
@@ -5059,8 +4966,6 @@ void CL_Init( void ) {
 	Cvar_Get ("cg_viewsize", "100", CVAR_ARCHIVE_ND );
 	Cvar_Get ("cg_stereoSeparation", "0.4", CVAR_ARCHIVE);
 
-	CL_WebHost_Init();
-
 	//
 	// register client commands
 	//
@@ -5106,9 +5011,6 @@ void CL_Init( void ) {
 	Cmd_SetCommandCompletionFunc( "dlmap", CL_CompleteDownloadMap );
 #endif
 	Cmd_AddCommand( "modelist", CL_ModeList_f );
-	QLWebHost_RegisterCommands();
-	CL_WebPak_Init();
-	CL_WebHost_BootstrapAwesomiumMenu();
 
 	Cvar_Set( "cl_running", "1" );
 #ifdef USE_MD5
@@ -5148,8 +5050,6 @@ void CL_Shutdown( const char *finalmsg, qboolean quit ) {
 
 	noGameRestart = quit != qfalse;
 	CL_Disconnect( qfalse );
-	CL_WebHost_Shutdown();
-	CL_WebPak_Shutdown();
 
 	// clear and mute all sounds until next registration
 	S_DisableSounds();
@@ -5191,7 +5091,6 @@ void CL_Shutdown( const char *finalmsg, qboolean quit ) {
 	Cmd_RemoveCommand ("serverinfo");
 	Cmd_RemoveCommand ("systeminfo");
 	Cmd_RemoveCommand ("modelist");
-	QLWebHost_UnregisterCommands();
 
 #ifdef USE_CURL
 	Com_DL_Cleanup( &download );
@@ -5325,7 +5224,6 @@ static void CL_ServerInfoPacket( const netadr_t *from, msg_t *msg ) {
 
 			Info_SetValueForKey( ping.info, "nettype", va( "%d", type ) );
 			CL_SetServerInfoByAddress( from, infoString, ping.time );
-			CL_WebHost_OnServerInfoResponse( from, infoString, ping.time );
 
 			return;
 		}
@@ -5474,7 +5372,6 @@ static void CL_ServerStatusResponse( const netadr_t *from, msg_t *msg ) {
 	char	*v[2];
 	int		i, l, score, ping;
 	int		len;
-	qboolean publishBrowserDetails;
 	serverStatus_t *serverStatus;
 
 	serverStatus = nullptr;
@@ -5490,7 +5387,6 @@ static void CL_ServerStatusResponse( const netadr_t *from, msg_t *msg ) {
 	}
 
 	s = MSG_ReadStringLine( msg );
-	publishBrowserDetails = CL_WebHost_OnServerStatusResponseInfo( from, s );
 
 	len = 0;
 	Com_sprintf(serverStatus->string.data() + len, static_cast<int>( serverStatus->string.size() ) - len, "%s", s);
@@ -5534,9 +5430,6 @@ static void CL_ServerStatusResponse( const netadr_t *from, msg_t *msg ) {
 
 		len = strlen(serverStatus->string.data());
 		Com_sprintf(serverStatus->string.data() + len, static_cast<int>( serverStatus->string.size() ) - len, "\\%s", s);
-		if ( publishBrowserDetails ) {
-			CL_WebHost_OnServerStatusResponsePlayer( from, s );
-		}
 
 		if (serverStatus->print) {
 			//score = ping = 0;
@@ -5563,9 +5456,6 @@ static void CL_ServerStatusResponse( const netadr_t *from, msg_t *msg ) {
 	serverStatus->pending = false;
 	if (serverStatus->print) {
 		serverStatus->retrieved = true;
-	}
-	if ( publishBrowserDetails ) {
-		CL_WebHost_OnServerStatusResponseComplete( from );
 	}
 }
 

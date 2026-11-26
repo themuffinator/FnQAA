@@ -672,12 +672,10 @@ CL_MouseEvent
 void CL_MouseEvent( int dx, int dy /*, int time*/ ) {
 	if ( Key_GetCatcher() & KEYCATCH_CONSOLE ) {
 		Con_MouseEvent( dx, dy );
-	} else if ( Key_GetCatcher() & ( KEYCATCH_BROWSER | KEYCATCH_UI | KEYCATCH_CGAME ) ) {
+	} else if ( Key_GetCatcher() & ( KEYCATCH_UI | KEYCATCH_CGAME ) ) {
 		// SE_MOUSE is a relative gameplay lane. An absolute owner may have been
 		// selected by an earlier queued key event (for example Escape) after the
 		// platform already queued this delta; never reinterpret it as a position.
-		return;
-	} else if ( !CL_AdvertisementBridge_IsDelayElapsed() ) {
 		return;
 	} else if ( Cvar_VariableIntegerValue( "cg_ignoreMouseInput" ) ) {
 		return;
@@ -687,47 +685,6 @@ void CL_MouseEvent( int dx, int dy /*, int time*/ ) {
 		cl.mouseDy[cl.mouseIndex] =
 			fnql::input::SaturatingAddInt( cl.mouseDy[cl.mouseIndex], dy );
 	}
-}
-
-
-/*
-=================
-CL_ProjectDrawableToRetailModule
-
-Platform producers project into renderer drawable pixels, which is the space the
-console and the WebUI browser address directly. A supersampling renderer however
-enlarges that private target, and CL_CopyRetailGlconfig deliberately keeps
-handing native retail modules the public capture dimensions instead. _UI_MouseEvent
-and CG_MouseEvent divide the position by their own glconfig, and the retail UI
-discards any result that leaves 640x480, so an unconverted position makes an
-in-game menu track at double speed and then stop responding entirely outside the
-top-left quadrant.
-
-Convert into the space the module was told it owns. Bytecode modules read the
-private dimensions through CL_GetGlconfig and draw through the unscaled syscall
-lane, so they keep the drawable position; dllExports is the same retail-native
-discriminator the rest of the client uses. The projection is an identity whenever
-the renderer is not supersampling, and truncating keeps a position strictly
-inside the drawable strictly inside the module's space, so the retail UI's
-upper-bound test cannot reject the last row and column.
-=================
-*/
-static void CL_ProjectDrawableToRetailModule( const vm_t *vm, int *x, int *y ) {
-	fnql::input::PointerProjection projection;
-	fnql::input::PointerPosition position;
-
-	if ( !vm || !vm->dllExports ) {
-		return;
-	}
-
-	projection.hostWidth = cls.glconfig.vidWidth;
-	projection.hostHeight = cls.glconfig.vidHeight;
-	projection.drawableWidth = cls.captureWidth;
-	projection.drawableHeight = cls.captureHeight;
-
-	position = fnql::input::ProjectPointerToDrawable( *x, *y, projection );
-	*x = position.x;
-	*y = position.y;
 }
 
 
@@ -743,20 +700,10 @@ before queueing this event.
 void CL_MouseAbsoluteEvent( int x, int y ) {
 	if ( Key_GetCatcher() & KEYCATCH_CONSOLE ) {
 		Con_SetMousePos( x, y );
-	} else if ( Key_GetCatcher() & KEYCATCH_BROWSER ) {
-		CL_WebView_OnMouseMove( x, y );
-	} else if ( !CL_AdvertisementBridge_IsDelayElapsed() ) {
-		return;
 	} else if ( Cvar_VariableIntegerValue( "cg_ignoreMouseInput" ) ) {
 		return;
-	} else if ( Key_GetCatcher() & KEYCATCH_UI ) {
-		if ( uivm ) {
-			CL_ProjectDrawableToRetailModule( uivm, &x, &y );
-			VM_Call( uivm, 2, UI_MOUSE_EVENT, x, y );
-		}
 	} else if ( Key_GetCatcher() & KEYCATCH_CGAME ) {
 		if ( cgvm ) {
-			CL_ProjectDrawableToRetailModule( cgvm, &x, &y );
 			VM_Call( cgvm, 2, CG_MOUSE_EVENT, x, y );
 		}
 	}
@@ -1372,10 +1319,6 @@ static int cl_retailClientMessageFlags = RETAIL_CLIENT_MESSAGE_FLAG_INITIAL_HIGH
 
 void CL_SetRetailClientMessageViewangleDeltaFlag( void ) {
 	cl_retailClientMessageFlags |= RETAIL_CLIENT_MESSAGE_FLAG_VIEWANGLE_DELTA;
-}
-
-void CL_SetRetailClientMessageCGameImportGuardFlag( void ) {
-	cl_retailClientMessageFlags |= RETAIL_CLIENT_MESSAGE_FLAG_CGAME_IMPORT_GUARD;
 }
 
 void CL_SetRetailClientMessageRendererNodeCount( int nodeCount ) {

@@ -40,59 +40,6 @@ static int RoundToInt( float value )
 	return static_cast<int>( value + 0.5f );
 }
 
-// Milliseconds the soft focus takes to reach the strength cl_menuBlur asks for.
-// Snapping straight to full blur reads as a flicker when a menu is toggled, and
-// a slower ramp starts to feel like input lag on the menu itself.
-constexpr int kMenuBlurFadeMsec = 140;
-
-/*
-Ramp the menu soft-focus strength toward whatever the current screen state asks
-for and return the value this frame should be drawn with. The ramp is wall-clock
-paced rather than frame paced, so the pull into focus takes the same time at 60
-and at 250 fps, and a stalled or backgrounded frame cannot jump it.
-*/
-static float SCR_UpdateMenuBlurStrength( bool targetActive )
-{
-	static int previousTime;
-	static float strength;
-	float target = 0.0f;
-	int delta;
-
-	// Com_Clamp is comparison based, so a non-finite cvar value passes straight
-	// through and latches strength to NaN for the rest of the session: every
-	// later comparison against it is false, so the ramp can never recover even
-	// after the cvar is set back to a sane value.
-	if ( targetActive && cl_menuBlur && cl_menuBlur->value == cl_menuBlur->value ) {
-		target = Com_Clamp( 0.0f, 1.0f, cl_menuBlur->value );
-	}
-
-	delta = previousTime ? cls.realtime - previousTime : 0;
-	previousTime = cls.realtime;
-	// A negative delta is a realtime reset and a very long one is a hitch or a
-	// restored window; neither is elapsed fade time.
-	if ( delta < 0 || delta > 1000 ) {
-		delta = 0;
-	}
-
-	if ( delta <= 0 ) {
-		// No elapsed time to spend: hold. Snapping to the target here would
-		// defeat the fade on the stereo second eye, on a zero-millisecond
-		// frame, and on the hitch the clamp above deliberately discards.
-	} else {
-		const float step = static_cast<float>( delta ) /
-			static_cast<float>( kMenuBlurFadeMsec );
-		if ( strength < target ) {
-			strength = std::min( strength + step, target );
-		} else if ( strength > target ) {
-			strength = std::max( strength - step, target );
-		}
-	}
-
-	if ( strength < 0.001f ) {
-		strength = 0.0f;
-	}
-	return strength;
-}
 
 class ScopedRenderColor {
 public:
@@ -196,18 +143,6 @@ void SCR_AdjustFrom640Uniform( float *x, float *y, float *w, float *h ) {
 	}
 }
 
-
-static void SCR_DrawLegacyBorders( void ) {
-	if ( cls.biasX > 0.0f ) {
-		re.DrawStretchPic( 0, 0, cls.biasX, cls.glconfig.vidHeight, 0, 0, 0, 0, cls.whiteShader );
-		re.DrawStretchPic( cls.glconfig.vidWidth - cls.biasX, 0, cls.biasX, cls.glconfig.vidHeight, 0, 0, 0, 0, cls.whiteShader );
-	}
-
-	if ( cls.biasY > 0.0f ) {
-		re.DrawStretchPic( 0, 0, cls.glconfig.vidWidth, cls.biasY, 0, 0, 0, 0, cls.whiteShader );
-		re.DrawStretchPic( 0, cls.glconfig.vidHeight - cls.biasY, cls.glconfig.vidWidth, cls.biasY, 0, 0, 0, 0, cls.whiteShader );
-	}
-}
 
 /*
 =======================
@@ -1098,68 +1033,18 @@ This will be called twice if rendering in stereo mode
 ==================
 */
 static void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
-	bool uiFullscreen;
-	bool uiVisible;
-	bool browserOverlayRequested;
-	bool browserPendingSurface;
-	bool browserDrawableSurface;
-	bool browserSuppressUiRefresh;
-	bool browserOverlayAllowed;
-	bool uiMenuVisible;
-	bool drawConnectScreen;
-	float menuBlurStrength;
-
 	re.BeginFrame( stereoFrame );
 
-	uiFullscreen = uivm && VM_Call( uivm, 0, UI_IS_FULLSCREEN );
-	uiMenuVisible = CL_UIMenusAreVisible();
-	uiVisible = ( Key_GetCatcher() & KEYCATCH_UI ) && uivm;
-	drawConnectScreen = cls.state == CA_CONNECTING || cls.state == CA_CHALLENGING
-		|| cls.state == CA_CONNECTED;
-	browserOverlayAllowed = !drawConnectScreen && cls.state != CA_LOADING
-		&& cls.state != CA_PRIMED;
-	browserOverlayRequested = browserOverlayAllowed && ( ( Key_GetCatcher() & KEYCATCH_BROWSER )
-		|| Cvar_VariableIntegerValue( "web_browserActive" )
-		|| Cvar_VariableIntegerValue( "ui_browserAwesomiumPending" ) );
-	browserDrawableSurface = browserOverlayRequested && CL_WebHost_HasDrawableSurface();
-	browserPendingSurface = browserOverlayRequested && !browserDrawableSurface;
-	browserSuppressUiRefresh = browserDrawableSurface || ( Key_GetCatcher() & KEYCATCH_BROWSER );
-
-	if ( browserSuppressUiRefresh && cls.state == CA_DISCONNECTED ) {
-		uiFullscreen = true;
-	} else if ( browserPendingSurface && uiFullscreen ) {
-		uiFullscreen = false;
-	}
-	if ( browserDrawableSurface ) {
-		uiFullscreen = true;
-	}
-
-	// Loading and live gameplay are always drawn by cgame plus the native UI
-	// overlays.  A fullscreen main menu must not retain ownership after its
-	// browser surface and key catcher have been released.
-	if ( uiFullscreen && ( cls.state == CA_LOADING || cls.state == CA_PRIMED || cls.state == CA_ACTIVE ) ) {
-		uiFullscreen = false;
-	}
-	if ( uiFullscreen && !browserOverlayRequested
-		&& !( Key_GetCatcher() & KEYCATCH_UI ) ) {
-		uiFullscreen = false;
-	}
-
 	// The retail connection dialog owns the whole frame while establishing a
-	// connection.  Unlike a main menu, fullscreen must not suppress its draw
-	// syscall or the non-game backdrop would be presented by itself.
+	// connection, and nothing else draws behind a disconnected client.
 	if ( cls.state != CA_ACTIVE ) {
 		// BeginFrame does not clear the colour buffer.  Replace every previous
-		// gameplay or browser frame before drawing a 4:3 native status screen.
+		// gameplay frame before drawing a 4:3 native status screen.
 		SCR_DrawNonGameBackdrop();
-	} else if ( uiFullscreen ) {
-		ScopedRenderColor scopedColor( g_color_table[ ColorIndex( COLOR_BLACK ) ] );
-		SCR_DrawLegacyBorders();
 	}
 
-	// if the menu is going to cover the entire screen, we
-	// don't need to render anything under it
-	if ( ( uivm || cgvm || cls.state == CA_ACTIVE ) && ( !uiFullscreen || drawConnectScreen ) ) {	// QAA: also without a ui module
+	// without a cgame there is nothing to draw under the front end
+	if ( cgvm || cls.state == CA_ACTIVE ) {
 		switch( cls.state ) {
 		default:
 			Com_Error( ERR_FATAL, "SCR_DrawScreenField: bad cls.state" );
@@ -1168,37 +1053,18 @@ static void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 			SCR_DrawCinematic();
 			break;
 		case CA_DISCONNECTED:
-			// Do not reset an existing native or browser menu every frame: doing
-			// so restarts its background music on every key event.
-			if ( uivm && !uiMenuVisible && !( Key_GetCatcher() & KEYCATCH_UI )	// QAA: uivm may be absent
-				&& !browserOverlayRequested ) {
-				S_StopAllSounds();
-				VM_Call( uivm, 1, UI_SET_ACTIVE_MENU, UIMENU_MAIN );
-			}
 			break;
 		case CA_CONNECTING:
 		case CA_CHALLENGING:
 		case CA_CONNECTED:
 			// connecting clients will only show the connection dialog
 			SCR_DrawRetailConnectBackdrop();
-			// refresh to update the time
-			if ( uivm ) {	// QAA: uivm may be absent
-				VM_Call( uivm, 1, UI_REFRESH, cls.realtime );
-				VM_Call( uivm, 1, UI_DRAW_CONNECT_SCREEN, qfalse );
-			}
 			break;
 		case CA_LOADING:
 		case CA_PRIMED:
 			// draw the game information screen and loading progress
 			if ( cgvm ) {
 				CL_CGameRendering( stereoFrame );
-			}
-			// also draw the connection information, so it doesn't
-			// flash away too briefly on local or lan games
-			// refresh to update the time
-			if ( uivm ) {	// QAA: uivm may be absent
-				VM_Call( uivm, 1, UI_REFRESH, cls.realtime );
-				VM_Call( uivm, 1, UI_DRAW_CONNECT_SCREEN, qtrue );
 			}
 			break;
 		case CA_ACTIVE:
@@ -1213,39 +1079,10 @@ static void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 		}
 	}
 
-	// Soften everything drawn so far - the 3D scene and the cgame HUD over it -
-	// so the in-game menu that draws next is the only sharp thing on screen. A
-	// fullscreen menu has no scene behind it to soften, and the connect and
-	// loading screens are not in-game menus.  The request has to carry the same
-	// browserSuppressUiRefresh term the menu's own draw does: without it the
-	// whole pyramid ran every frame while the browser owned the surface, with
-	// nothing sharp ever drawn over the softened frame.
-	menuBlurStrength = SCR_UpdateMenuBlurStrength(
-		uiVisible && !uiFullscreen && !browserSuppressUiRefresh
-		&& cls.state == CA_ACTIVE );
-	if ( menuBlurStrength > 0.0f && re.DrawMenuBlur ) {
-		re.DrawMenuBlur( menuBlurStrength );
-	}
-
-	// the menu draws next
-	if ( uiVisible && !browserSuppressUiRefresh ) {
-		VM_Call( uivm, 1, UI_REFRESH, cls.realtime );
-	}
 	// QAA: the Scaleform front end draws over everything but the console:
 	// menus, the HUD and the scoreboards are all its movies (cl_qaa_ui.cpp).
 	QAA_UI_Draw();
 
-	// Native connection and level-loading screens retain exclusive ownership of
-	// the frame even if a late browser callback leaves its overlay state armed.
-	if ( browserOverlayAllowed ) {
-		CL_WebHost_DrawBrowserSurface();
-	}
-
-	// The console is deliberately not softened.  It is the one layer that
-	// finishes the frame's post-processing itself, and every ordering tried
-	// around that either left it drawing with the descriptor sets bloom's blend
-	// pass had bound - so it did not appear at all - or dimmed the live HUD
-	// underneath it while the request faded out.  See MENU_SOFT_FOCUS.md.
 	Con_DrawConsole ();
 
 	// debug graph can be drawn on top of anything
@@ -1290,11 +1127,9 @@ void SCR_UpdateScreen( void ) {
 	}
 	++recursive;
 
-	// If there is no VM, there are also no rendering commands issued. Stop the renderer in
-	// that case.
 	// QAA: Quake Arena Arcade has no ui module (its menus are Scaleform, M6),
-	// so the cgame and the console still draw without one.
-	if ( uivm || cls.rendererStarted )
+	// so the cgame, the front end and the console draw whenever the renderer runs.
+	if ( cls.rendererStarted )
 	{
 		// XXX
 		int in_anaglyphMode = Cvar_VariableIntegerValue("r_anaglyphMode");

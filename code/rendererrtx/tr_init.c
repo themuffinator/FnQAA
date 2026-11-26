@@ -1596,9 +1596,6 @@ static void R_ScreenShot_f( void ) {
 
 	// we will make screenshot right at the end of RE_EndFrame()
 	backEnd.screenshotMask |= typeMask;
-	if ( ri.PublishGameScreenshot && checkname[0] ) {
-		ri.PublishGameScreenshot( checkname, checkname );
-	}
 	if ( typeMask == SCREENSHOT_PNG ) {
 		backEnd.screenShotPNGsilent = silent;
 		Q_strncpyz( backEnd.screenshotPNG, checkname, sizeof( backEnd.screenshotPNG ) );
@@ -2017,7 +2014,6 @@ static void R_Register( void )
 	ri.Cmd_AddCommand( "screenshotBMP", R_ScreenShot_f );
 	ri.Cmd_AddCommand( "gfxinfo", GfxInfo_f );
 	ri.Cmd_AddCommand( "r_staticLightReload", R_StaticMapLightsReload_f );
-	ri.Cmd_AddCommand( "advertlist", R_AdvertisementList_f );
 #ifdef USE_VULKAN
 	ri.Cmd_AddCommand( "vkinfo", VkInfo_f );
 #endif
@@ -3286,7 +3282,6 @@ static void RE_Shutdown( refShutdownCode_t code ) {
 	ri.Cmd_RemoveCommand( "skinlist" );
 	ri.Cmd_RemoveCommand( "gfxinfo" );
 	ri.Cmd_RemoveCommand( "r_staticLightReload" );
-	ri.Cmd_RemoveCommand( "advertlist" );
 	ri.Cmd_RemoveCommand( "shaderstate" );
 #ifdef USE_VULKAN
 	ri.Cmd_RemoveCommand( "vkinfo" );
@@ -3919,7 +3914,6 @@ refexport_t *GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.SetUnderwaterView = RE_SetUnderwaterView;
 
 	re.RenderScene = RE_RenderScene;
-	re.AdvertisementBridge_UpdateLoadingViewParameters = AdvertisementBridge_UpdateLoadingViewParameters;
 
 	re.SetColor = RE_SetColor;
 	re.DrawStretchPic = RE_StretchPic;

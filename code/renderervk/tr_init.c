@@ -2158,9 +2158,6 @@ static void R_ScreenShot_f( void ) {
 
 	// we will make screenshot right at the end of RE_EndFrame()
 	backEnd.screenshotMask |= typeMask;
-	if ( ri.PublishGameScreenshot && checkname[0] ) {
-		ri.PublishGameScreenshot( checkname, checkname );
-	}
 
 	if ( typeMask == SCREENSHOT_PNG ) {
 		backEnd.screenShotPNGsilent = silent;
@@ -2674,7 +2671,6 @@ static void R_Register( void )
 	ri.Cmd_AddCommand( "shaderlist", R_ShaderList_f );
 	ri.Cmd_AddCommand( "skinlist", R_SkinList_f );
 	ri.Cmd_AddCommand( "modellist", R_Modellist_f );
-	ri.Cmd_AddCommand( "advertlist", R_AdvertisementList_f );
 	ri.Cmd_AddCommand( "screenshot", R_ScreenShot_f );
 	ri.Cmd_AddCommand( "screenshotPNG", R_ScreenShot_f );
 	ri.Cmd_AddCommand( "screenshotTGA", R_ScreenShot_f );
@@ -3574,7 +3570,6 @@ static void RE_Shutdown( refShutdownCode_t code ) {
 	ri.Printf( PRINT_ALL, "RE_Shutdown( %i )\n", code );
 
 	ri.Cmd_RemoveCommand( "modellist" );
-	ri.Cmd_RemoveCommand( "advertlist" );
 	ri.Cmd_RemoveCommand( "screenshotBMP" );
 	ri.Cmd_RemoveCommand( "screenshotJPEG" );
 	ri.Cmd_RemoveCommand( "screenshotTGA" );
@@ -3743,7 +3738,6 @@ refexport_t *GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.SetUnderwaterView = RE_SetUnderwaterView;
 
 	re.RenderScene = RE_RenderScene;
-	re.AdvertisementBridge_UpdateLoadingViewParameters = AdvertisementBridge_UpdateLoadingViewParameters;
 
 	re.SetColor = RE_SetColor;
 	re.DrawStretchPic = RE_StretchPic;

@@ -3436,92 +3436,6 @@ static void R_LoadSubmodels( const lump_t *l ) {
 	}
 }
 
-/*
-=================
-R_LoadAdvertisements
-
-Quake Live adds a bounded advertisement-model lump after the normal IBSP
-header. Invalid records are ignored individually so one damaged advert cannot
-discard an otherwise valid retail map.
-=================
-*/
-static void R_LoadAdvertisements( const lump_t *l ) {
-	const byte *records;
-	qlAdvertisement_t *out;
-	bmodel_t *bmodel;
-	int count;
-	int i;
-	int j;
-	int modelNum;
-
-	s_worldData.numAdvertisements = 0;
-	s_worldData.advertisements = NULL;
-	if ( !l->filelen ) {
-		return;
-	}
-	if ( l->filelen % sizeof( qlBspAdvertisementDisk_t ) ) {
-		ri.Error( ERR_DROP, "R_LoadAdvertisements: funny lump size" );
-	}
-
-	count = l->filelen / sizeof( qlBspAdvertisementDisk_t );
-	if ( count >= MAX_MAP_ADVERTISEMENTS ) {
-		ri.Error( ERR_DROP, "R_LoadAdvertisements: number of advertisements exceeds level limit" );
-	}
-
-	records = fileBase + l->fileofs;
-	out = ri.Hunk_Alloc( count * sizeof( *out ), h_low );
-	s_worldData.advertisements = out;
-
-	for ( i = 0; i < count; ++i ) {
-		qlBspAdvertisementDisk_t record;
-		const qlBspAdvertisementDisk_t *in = &record;
-
-		Com_Memcpy( &record, records + i * sizeof( record ), sizeof( record ) );
-		if ( !QLBSP_ParseAdvertisementModel( in->model, &modelNum ) ) {
-			modelNum = -1;
-		}
-		if ( !QLBSP_AdvertisementGeometryFinite( in ) ) {
-			ri.Printf( PRINT_DEVELOPER,
-				"cell ID %d has non-finite advertisement geometry; ignoring it\n",
-				LittleLong( in->cellId ) );
-			continue;
-		}
-
-		bmodel = ( modelNum >= 0 && modelNum < s_worldData.numBmodels ) ?
-			&s_worldData.bmodels[modelNum] : NULL;
-		if ( !bmodel || bmodel->numSurfaces != 1 ) {
-			ri.Printf( PRINT_DEVELOPER,
-				"cell ID %d has no single-surface brush model; ignoring it\n",
-				LittleLong( in->cellId ) );
-			continue;
-		}
-
-		out[s_worldData.numAdvertisements].cellId = LittleLong( in->cellId );
-		out[s_worldData.numAdvertisements].bmodel = bmodel;
-		VectorAdd( bmodel->bounds[0], bmodel->bounds[1],
-			out[s_worldData.numAdvertisements].center );
-		VectorScale( out[s_worldData.numAdvertisements].center, 0.5f,
-			out[s_worldData.numAdvertisements].center );
-		for ( j = 0; j < 3; ++j ) {
-			out[s_worldData.numAdvertisements].normal[j] = LittleFloat( in->normal[j] );
-		}
-		for ( j = 0; j < 4; ++j ) {
-			out[s_worldData.numAdvertisements].points[j][0] = LittleFloat( in->points[j][0] );
-			out[s_worldData.numAdvertisements].points[j][1] = LittleFloat( in->points[j][1] );
-			out[s_worldData.numAdvertisements].points[j][2] = LittleFloat( in->points[j][2] );
-		}
-		out[s_worldData.numAdvertisements].cullState = CULL_OUT;
-		out[s_worldData.numAdvertisements].occlusionQueryIds[0] = 0;
-		out[s_worldData.numAdvertisements].occlusionQueryIds[1] = 0;
-		out[s_worldData.numAdvertisements].queryListIndex = -1;
-		out[s_worldData.numAdvertisements].viewArea = 0;
-		out[s_worldData.numAdvertisements].projectedNormalX = 0.0f;
-		out[s_worldData.numAdvertisements].projectedNormalY = 0.0f;
-		out[s_worldData.numAdvertisements].sourceIndex = i;
-		++s_worldData.numAdvertisements;
-	}
-}
-
 
 
 //==================================================================
@@ -4050,7 +3964,6 @@ void RE_LoadWorldMap( const char *name ) {
 		void *v;
 	} buffer;
 	byte		*startMarker;
-	lump_t		qlAdvertisementsLump = { 0, 0 };
 
 	if ( tr.worldMapLoaded ) {
 		ri.Error( ERR_DROP, "ERROR: attempted to redundantly load world map" );
@@ -4133,22 +4046,6 @@ void RE_LoadWorldMap( const char *name ) {
 		ri.Error( ERR_DROP, "%s: %s has wrong file identifier", __func__, name );
 	}
 
-	if ( header->version == BSP_VERSION_QL ) {
-		const qlBspLumpResult_t lumpResult =
-			QLBSP_ReadAdvertisementLump( buffer.b, (size_t)size,
-				&qlAdvertisementsLump );
-		if ( lumpResult == QL_BSP_LUMP_TRUNCATED_HEADER ) {
-			ri.Error( ERR_DROP, "%s: %s has truncated QL extra lump header",
-				__func__, name );
-		}
-		if ( lumpResult != QL_BSP_LUMP_OK ||
-			!QLBSP_AdvertisementLumpShapeValid( &qlAdvertisementsLump ) ) {
-			ri.Error( ERR_DROP,
-				"%s: %s has wrong QL advertisement lump size/offset",
-				__func__, name );
-		}
-	}
-
 	// load into heap
 	R_LoadLightmaps( &header->lumps[LUMP_LIGHTMAPS], &header->lumps[LUMP_SURFACES] );	// QAA: the surfaces give the page size
 	R_PreLoadFogs( &header->lumps[LUMP_FOGS] );
@@ -4159,9 +4056,6 @@ void RE_LoadWorldMap( const char *name ) {
 	R_LoadMarksurfaces( &header->lumps[LUMP_LEAFSURFACES] );
 	R_LoadNodesAndLeafs( &header->lumps[LUMP_NODES], &header->lumps[LUMP_LEAFS] );
 	R_LoadSubmodels( &header->lumps[LUMP_MODELS] );
-	if ( header->version == BSP_VERSION_QL ) {
-		R_LoadAdvertisements( &qlAdvertisementsLump );
-	}
 	R_LoadVisibility( &header->lumps[LUMP_VISIBILITY] );
 	R_LoadEntities( &header->lumps[LUMP_ENTITIES] );
 	R_LoadLightGrid( &header->lumps[LUMP_LIGHTGRID] );

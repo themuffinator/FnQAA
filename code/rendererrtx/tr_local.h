@@ -1182,23 +1182,6 @@ typedef struct {
 	int			numSurfaces;
 } bmodel_t;
 
-#define	MAX_MAP_ADVERTISEMENTS	30
-
-typedef struct {
-	int			cellId;
-	bmodel_t	*bmodel;
-	vec3_t		center;
-	vec3_t		normal;
-	vec3_t		points[4];
-	int			cullState;
-	GLuint		occlusionQueryIds[2];
-	int			queryListIndex;
-	int			viewArea;
-	float		projectedNormalX;
-	float		projectedNormalY;
-	int			sourceIndex;
-} qlAdvertisement_t;
-
 typedef struct {
 	char		name[MAX_QPATH];		// ie: maps/tim_dm2.bsp
 	char		baseName[MAX_QPATH];	// ie: tim_dm2
@@ -1220,9 +1203,6 @@ typedef struct {
 
 	int			numsurfaces;
 	msurface_t	*surfaces;
-
-	int			numAdvertisements;
-	qlAdvertisement_t	*advertisements;
 
 	int			nummarksurfaces;
 	msurface_t	**marksurfaces;
@@ -1706,8 +1686,6 @@ int			R_LerpTag( orientation_t *tag, qhandle_t handle, int startFrame, int endFr
 void		R_ModelBounds( qhandle_t handle, vec3_t mins, vec3_t maxs );
 
 void		R_Modellist_f (void);
-void		R_AdvertisementList_f( void );
-void		R_UpdateAdvertisements( void );
 
 //====================================================
 
@@ -2784,7 +2762,6 @@ void RE_AddPolyToScene( qhandle_t hShader , int numVerts, const polyVert_t *vert
 void RE_AddLightToScene( const vec3_t org, float intensity, float r, float g, float b );
 void RE_AddAdditiveLightToScene( const vec3_t org, float intensity, float r, float g, float b );
 void RE_AddLinearLightToScene( const vec3_t start, const vec3_t end, float intensity, float r, float g, float b );
-void AdvertisementBridge_UpdateLoadingViewParameters( void );
 void RE_AddLiquidInteractionToScene( const liquidInteraction_t *interaction );
 void RE_SetUnderwaterView( const underwaterView_t *view );
 void R_StaticMapLightsReload_f( void );

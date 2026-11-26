@@ -81,7 +81,8 @@ extraction step is needed. FnQL 57f081f is imported engine-only as `fnqaa` and
 `fnqaa-ded`, without Steam or the WebUI; the package and pak0.bpk mount in
 place (`fs_qaaPackage`), files are found by name hash (`qaa_bpk_name_hash`)
 as retail finds them, and the client and server boot headless from QAA's own
-`default.cfg`. The `devmap` gate waits on the game modules: a map cannot
+`default.cfg`. FnQL's other Quake Live features are removed since (CREDITS.md):
+the engine hosts only QAA's recompiled modules. The `devmap` gate waits on the game modules: a map cannot
 load without qagame (M4) and cgame (M5).
 
 **M3 Recompiler pipeline** (done). XEX decode in the build; recompile
@@ -102,8 +103,8 @@ with structure translation (`code/qaa/qaa_structs.h`), its engine function
 table, host copies of entities and player states that follow guest memory,
 and the guest runtime loaded as a shared library
 (`code/qaa/qaa_guest_host.cpp`). Engine errors raised inside guest code
-unwind the guest first. `map` and `devmap` take Quake III's arguments when
-there are no factories, as QAA's engine does. Done: a headless dedicated
+unwind the guest first. `map` and `devmap` take Quake III's arguments, as
+QAA's engine does (it has no factories). Done: a headless dedicated
 server runs `q3dm6` with QAA's game code. Bots: the botlib traps 200-581
 and the engine table's three botlib entries run FnQL's botlib with QAA's
 structures (`code/server/sv_qaa_botlib.inc`; QAA's own entity layouts and

@@ -36,7 +36,6 @@ typedef struct qlRendererCvars_s {
 	cvar_t *skipLargeBatches;
 	cvar_t *debugShaderIndex;
 	cvar_t *debugSortExcept;
-	cvar_t *debugAds;
 } qlRendererCvars_t;
 
 extern qlRendererCvars_t qlRendererCvars;
@@ -95,9 +94,6 @@ static ID_INLINE void R_QLRegisterRendererCvars( void )
 	qlRendererCvars.debugSortExcept = R_QLRegisterCvar( "r_debugSortExcept", "0",
 		CVAR_CHEAT, NULL, NULL, CV_INTEGER,
 		"Shader sort value exempted from r_debugSort filtering." );
-	qlRendererCvars.debugAds = R_QLRegisterCvar( "r_debugAds", "0", CVAR_TEMP,
-		NULL, NULL, CV_INTEGER,
-		"Print a bounded retail advertisement-surface diagnostic snapshot." );
 	(void)R_QLRegisterCvar( "r_qlOcclusionQueries", "0", CVAR_TEMP | CVAR_PROTECTED,
 		"0", "1", CV_INTEGER,
 		"Internal common-backend occlusion-query capability status." );

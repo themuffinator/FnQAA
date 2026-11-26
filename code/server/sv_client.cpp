@@ -25,20 +25,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../qcommon/protocol_contract.hpp"
 #include "../qcommon/netchan_safety.hpp"
 #include "server_cvar_compat.hpp"
-#include "stats_event.hpp"
-#include "stats_report.hpp"
-#include "game_identity.hpp"
-#include "json_document.hpp"
 
 #include <array>
 #include <cstdint>
-
-namespace {
-
-// QAA: PC deviation, the Steam auth-ticket cache and stat sessions are gone
-fnql::server::stats::ReportAccumulator statsReports;
-
-} // namespace
 
 static void SV_CloseDownload( client_t *cl );
 
@@ -126,7 +115,6 @@ SV_InitChallenger
 */
 void SV_InitChallenger( void )
 {
-	statsReports.Reset();
 	Com_MD5Init();
 }
 
@@ -860,255 +848,6 @@ void SV_RecordDemoMessage( client_t *client, const msg_t *msg )
 
 /*
 ==================
-SV_NextGameIdentity
-
-Seeded once per process: from random bytes, so an anonymous id saved into the
-game's access list by one server run is not handed to someone else by the
-next; or, under sv_lockstep (one scripted session per process), from a
-constant, so repeated runs record identical ids.
-==================
-*/
-static std::uint64_t SV_NextGameIdentity( void ) {
-	static fnql::server::identity::AnonymousIdAllocator allocator;
-
-	if ( !allocator.Seeded() ) {
-		std::uint64_t base = 0;
-		if ( !SV_LockstepActive() ) {
-			Com_RandomBytes( reinterpret_cast<byte *>( &base ), sizeof( base ) );
-		}
-		allocator.Seed( base );
-	}
-	return allocator.Next();
-}
-
-
-/*
-==================
-SV_AssignClientGameIdentity
-
-Decides, once per connection, the id a Quake Live game module will see for
-this slot (import slot 200, game_identity.hpp).  A bot (NA_BOT, assigned only
-by the server) gets none; every human gets an id no other connection shares.
-QAA: PC deviation, no identity comes from Steam or from userinfo.
-==================
-*/
-void SV_AssignClientGameIdentity( client_t *client ) {
-	client->gameIdentity = client->netchan.remoteAddress.type == NA_BOT
-		? 0 : SV_NextGameIdentity();
-}
-
-
-/*
-==================
-SV_ClientGameIdentity
-==================
-*/
-uint64_t SV_ClientGameIdentity( int clientNum ) {
-	if ( !SV_IsClientIndex( clientNum ) ) {
-		return 0;
-	}
-	const client_t &client = SV_ClientForIndex( clientNum );
-	return fnql::server::identity::GameId(
-		client.netchan.remoteAddress.type == NA_BOT, client.gameIdentity );
-}
-
-// QAA: PC deviation, no Steam stats or achievements; what is left publishes
-// the game's match reports and player events over ZMQ (sv_zmq.cpp)
-static void SV_LogStatsLifecycle( const char *stage, const char *detail ) {
-	Com_DPrintf( "Server stats %s: %s\n", stage ? stage : "update",
-		detail ? detail : "no detail" );
-}
-
-/*
-==================
-SV_CopyModuleStatsJson
-
-A source-built game module hands its documents over as text.  Accept only a
-terminated, bounded, well-formed document; anything else is refused whole.
-==================
-*/
-static bool SV_CopyModuleStatsJson( const char *json,
-		std::array<char, fnql::server::json::MaximumDocumentBytes + 1> &document,
-		std::uint32_t &documentBytes ) {
-	document.fill( '\0' );
-	documentBytes = 0;
-	if ( !json ) {
-		return false;
-	}
-	std::size_t length = 0;
-	while ( length <= fnql::server::json::MaximumDocumentBytes && json[length] != '\0' ) {
-		++length;
-	}
-	if ( length == 0 || length > fnql::server::json::MaximumDocumentBytes ||
-		!fnql::server::json::DocumentIsValid( std::string_view( json, length ) ) ) {
-		return false;
-	}
-	memcpy( document.data(), json, length );
-	documentBytes = static_cast<std::uint32_t>( length );
-	return true;
-}
-
-/*
-==================
-SV_PublishMatchReportDocument
-
-The validated MATCH_REPORT, whichever way the game module delivered it.
-==================
-*/
-static void SV_PublishMatchReportDocument(
-		const std::array<char, fnql::server::json::MaximumDocumentBytes + 1> &document,
-		std::uint32_t documentBytes, char *buffer, int bufferSize ) {
-	std::array<char, fnql::server::json::MaximumDocumentBytes + 1> summary{};
-	const std::string_view reportDocument( document.data(), documentBytes );
-	const bool summaryAllowed =
-		fnql::server::stats::ReportAccumulator::MatchSummaryAllowed( reportDocument );
-	const bool merged = summaryAllowed && statsReports.Build(
-		reportDocument, summary.data(), summary.size() );
-	if ( buffer && bufferSize > 0 ) {
-		Q_strncpyz( buffer, merged ? summary.data() : document.data(), bufferSize );
-	}
-	Zmq_SubmitMatchReportJson( document.data() );
-	if ( merged ) {
-		Zmq_SubmitMatchSummaryJson( summary.data() );
-	}
-	SV_LogStatsLifecycle( "match-report",
-		merged ? "published report and eligible PLYR_STATS/PLYR_EVENTS summary"
-			: summaryAllowed ? "published report; bounded summary merge failed"
-				: "published report; training or aborted summary suppressed" );
-}
-
-/*
-==================
-SV_Stats_ProcessMatchReportJson
-==================
-*/
-void SV_Stats_ProcessMatchReportJson( const char *json ) {
-	std::array<char, fnql::server::json::MaximumDocumentBytes + 1> document{};
-	std::uint32_t documentBytes = 0;
-	if ( SV_CopyModuleStatsJson( json, document, documentBytes ) ) {
-		SV_PublishMatchReportDocument( document, documentBytes, nullptr, 0 );
-	} else {
-		SV_LogStatsLifecycle( "match-report",
-			"refused a missing, oversized or malformed module JSON document" );
-	}
-	statsReports.Reset();
-}
-
-/*
-==================
-SV_Stats_ProcessMatchReport
-
-A Quake Live module's report is a JsonCpp object.  QAA: PC deviation, only the
-Steam provider could serialize one, so the report goes out as a null payload.
-==================
-*/
-const void *SV_Stats_ProcessMatchReport( const void *report, char *buffer, int bufferSize ) {
-	if ( buffer && bufferSize > 0 ) {
-		buffer[0] = '\0';
-	}
-	Zmq_SubmitMatchReport( report );
-	SV_LogStatsLifecycle( "match-report",
-		"no retail JSON adapter; published a null payload envelope" );
-	statsReports.Reset();
-	return report;
-}
-
-
-/*
-==================
-SV_Stats_ProcessEvent
-
-As above, a Quake Live module's event payload cannot be serialized.
-==================
-*/
-static void SV_ProcessEventDocument( const char *eventName,
-		const std::array<char, fnql::server::json::MaximumDocumentBytes + 1> &document,
-		std::uint32_t documentBytes );
-
-void SV_Stats_ProcessEvent( unsigned int idLow, unsigned int idHigh,
-		const void *clientStats, const char *eventName, const void *payload ) {
-	if ( !eventName || !eventName[0] ) {
-		return;
-	}
-	Zmq_ReportPlayerEvent( idLow, idHigh, clientStats, eventName, payload );
-	SV_LogStatsLifecycle( "event-process", "no retail JSON adapter" );
-}
-
-
-/*
-==================
-SV_Stats_ProcessEventJson
-
-The same event, from a source-built game module that delivers JSON text.  A
-refused document publishes nothing: there is no opaque payload to fall back
-to, and an empty envelope would misreport the event.
-==================
-*/
-void SV_Stats_ProcessEventJson( unsigned int idLow, unsigned int idHigh,
-		const char *eventName, const char *json ) {
-	std::array<char, fnql::server::json::MaximumDocumentBytes + 1> document{};
-	std::uint32_t documentBytes = 0;
-	if ( !eventName || !eventName[0] ) {
-		return;
-	}
-	// The name becomes the published TYPE; hold it to the shape of retail's.
-	std::size_t nameLength = 0;
-	for ( ; eventName[nameLength] != '\0'; ++nameLength ) {
-		const char c = eventName[nameLength];
-		if ( nameLength >= 64 || !( ( c >= 'A' && c <= 'Z' ) || ( c >= '0' && c <= '9' ) || c == '_' ) ) {
-			SV_LogStatsLifecycle( "event-process", "refused a malformed module event name" );
-			return;
-		}
-	}
-	if ( !SV_CopyModuleStatsJson( json, document, documentBytes ) ) {
-		SV_LogStatsLifecycle( "event-process",
-			"refused a missing, oversized or malformed module JSON document" );
-		return;
-	}
-	(void)idLow;
-	(void)idHigh;
-	SV_ProcessEventDocument( eventName, document, documentBytes );
-}
-
-
-/*
-==================
-SV_ProcessEventDocument
-
-Publication of one validated event document, and the PLAYER_STATS and
-PLAYER_DEATH caches the match summary merges.
-==================
-*/
-static void SV_ProcessEventDocument( const char *eventName,
-		const std::array<char, fnql::server::json::MaximumDocumentBytes + 1> &document,
-		std::uint32_t documentBytes ) {
-	Zmq_ReportPlayerEventJson( eventName, document.data() );
-	const fnql::server::stats::ParsedPlayerEvent event =
-		fnql::server::stats::ParsePlayerEvent( eventName,
-			std::string_view( document.data(), documentBytes ) );
-	if ( !event.valid || event.ignored ||
-		event.kind == fnql::server::stats::PlayerEventKind::Unknown ) {
-		return;
-	}
-	using fnql::server::stats::PlayerEventKind;
-	const bool race = Cvar_VariableIntegerValue( "g_gametype" ) == GT_SINGLE_PLAYER;
-	if ( event.kind == PlayerEventKind::Stats ) {
-		if ( !statsReports.CachePlayerStats(
-			std::string_view( document.data(), documentBytes ) ) ) {
-			SV_LogStatsLifecycle( "event-process", "PLAYER_STATS summary cache full" );
-		}
-	} else if ( event.kind == PlayerEventKind::Death && !race ) {
-		if ( !statsReports.CachePlayerDeath(
-			std::string_view( document.data(), documentBytes ) ) ) {
-			SV_LogStatsLifecycle( "event-process", "PLAYER_DEATH summary cache full" );
-		}
-	}
-	// QAA: PC deviation, no Steam stat or achievement side effects
-}
-
-
-/*
-==================
 SV_DirectConnect
 
 A "connect" OOB command has been received
@@ -1450,8 +1189,6 @@ gotnewcl:
 	// init the netchan queue
 	newcl->netchan_end_queue = &newcl->netchan_start_queue;
 
-	SV_AssignClientGameIdentity( newcl );
-
 	// save the userinfo
 	Q_strncpyz( newcl->userinfo, userinfo.data(), SV_ArraySize(newcl->userinfo) );
 
@@ -1590,7 +1327,6 @@ void SV_DropClient( client_t *drop, const char *reason ) {
 
 	// nuke user info
 	SV_SetUserinfo( SV_ClientIndex( drop ), "" );
-	drop->gameIdentity = 0;
 
 	drop->justConnected = qfalse;
 
@@ -2373,12 +2109,8 @@ static void SV_VerifyPaks_f( client_t *cl ) {
 	if ( sv.pure != 0 ) {
 
 		nBinChkSum = nChkSum1 = 0;
-		// Retail: the client's first checksum is the pak holding
-		// cgamex86.dll.  FnQL extension: an FnQL client running the FnQL-game
-		// cgame names the client package it read it from instead, accepted
-		// only if this server published that pak (SV_PublishFnQLClientPaks).
-		const bool retailBinKnown = FS_FileIsInPAK( QL_NATIVE_CGAME_DLL, &nBinChkSum, nullptr ) != qfalse;
-		bGood = retailBinKnown || sv.numFnqlClientPaks > 0;
+		// the client's first checksum is the pak holding the cgame binary
+		bGood = FS_FileIsInPAK( QL_NATIVE_CGAME_DLL, &nBinChkSum, nullptr ) != qfalse;
 
 		nClientPaks = Cmd_Argc();
 
@@ -2416,14 +2148,9 @@ static void SV_VerifyPaks_f( client_t *cl ) {
 				bGood = false;
 				break;
 			}
-			{
-				const int clientBin = SV_ParseInt( pArg );
-				if ( !( retailBinKnown && clientBin == nBinChkSum ) &&
-					!SV_AcceptsFnQLClientPak( clientBin ) ) {
-					bGood = false;
-					break;
-				}
-				cl->fnqlClientPackage = clientBin != nBinChkSum || !retailBinKnown ? qtrue : qfalse;
+			if ( SV_ParseInt( pArg ) != nBinChkSum ) {
+				bGood = false;
+				break;
 			}
 			// should be sitting at the delimeter now
 			pArg = Cmd_Argv(nCurArg++);
@@ -2466,11 +2193,7 @@ static void SV_VerifyPaks_f( client_t *cl ) {
 
 		if ( bGood ) {
 			cl->pureAuthentic = qtrue;
-			if ( cl->fnqlClientPackage ) {
-				Com_Printf( "%s" S_COLOR_WHITE " is pure with the FnQL-game client package.\n", cl->name );
-			}
 		} else {
-			cl->fnqlClientPackage = qfalse;
 			cl->pureAuthentic = qfalse;
 			cl->lastSnapshotTime = svs.time - 9999; // generate a snapshot immediately
 			cl->state = CS_ZOMBIE; // skip delta generation
@@ -2490,7 +2213,6 @@ SV_ResetPureClient_f
 */
 static void SV_ResetPureClient_f( client_t *cl ) {
 	cl->pureAuthentic = qfalse;
-	cl->fnqlClientPackage = qfalse;
 	cl->gotCP = qfalse;
 }
 
@@ -2567,12 +2289,6 @@ void SV_UserinfoChanged( client_t *cl, qboolean updateUserinfo, qboolean runFilt
 
 	// name for C code
 	val = Info_ValueForKey( cl->userinfo, "name" );
-	// truncate if it is too long as it may cause memory corruption in OSP mod
-	if ( gvm->forceDataMask && strlen( val ) >= buf.size() ) {
-		Q_strncpyz( buf.data(), val, SV_ArraySize(buf) );
-		Info_SetValueForKey( cl->userinfo, "name", buf.data() );
-		val = buf.data();
-	}
 	Q_strncpyz( cl->name, val, SV_ArraySize( cl->name ) );
 
 	val = Info_ValueForKey( cl->userinfo, "handicap" );
@@ -2712,135 +2428,12 @@ void SV_PrintLocations_f( client_t *client ) {
 }
 
 
-/*
-==================
-In-band admin rcon
-
-Retail quakelive_steam.exe registers "rcon" in its client command table
-(0x56bf68 -> 0x4dff80). With at least one argument it asks qagame export 16
-(GAME_IS_CLIENT_ADMIN) about the sender and, for an administrator, executes
-the rest of the command line with the output redirected to the client as
-out-of-band "print" packets (0x4e0018-0x4e007c). No rcon password is involved;
-the game module's admin tier is the authority.
-
-Retail executes the command in the middle of the client's message. FnQL runs
-it from SV_Frame, where the ZMQ rcon path already executes, so a "map",
-"kick" or "killserver" can never free the client or the message being parsed.
-The queue is bounded and cleared on shutdown.
-==================
-*/
-namespace {
-
-constexpr std::size_t SV_PENDING_ADMIN_COMMAND_LIMIT = 8;
-
-struct SV_PendingAdminCommand {
-	netadr_t address;
-	int clientNum;
-	std::array<char, MAX_STRING_CHARS> name;
-	std::array<char, MAX_STRING_CHARS> text;
-};
-
-std::array<SV_PendingAdminCommand, SV_PENDING_ADMIN_COMMAND_LIMIT> svPendingAdminCommands;
-std::size_t svPendingAdminCommandCount;
-netadr_t svAdminRedirectAddress;
-
-// The raw text after the leading command token, so quoting survives as the
-// admin typed it (as SVC_RemoteCommand does for "rcon <password> <command>").
-const char *SV_RawTextAfterCommandToken( const char *text ) {
-	while ( *text && *text <= ' ' ) {
-		++text;
-	}
-	if ( *text == '"' ) {
-		++text;
-		while ( *text && *text != '"' ) {
-			++text;
-		}
-		if ( *text == '"' ) {
-			++text;
-		}
-	} else {
-		while ( *text > ' ' ) {
-			++text;
-		}
-	}
-	while ( *text && *text <= ' ' ) {
-		++text;
-	}
-	return text;
-}
-
-void SV_FlushAdminRedirect( const char *outputbuf ) {
-	if ( *outputbuf ) {
-		NET_OutOfBandPrint( NS_SERVER, &svAdminRedirectAddress, "print\n%s", outputbuf );
-	}
-}
-
-} // namespace
-
-static void SV_AdminRcon_f( client_t *cl ) {
-	if ( Cmd_Argc() < 2 ) {
-		return;
-	}
-
-	const int clientNum = SV_ClientIndex( cl );
-	if ( !SV_GameIsClientAdmin( clientNum ) ) {
-		Com_DPrintf( "Ignored in-band rcon from non-admin client %i\n", clientNum );
-		return;
-	}
-
-	const char *text = SV_RawTextAfterCommandToken( Cmd_Cmd() );
-	if ( !*text ) {
-		return;
-	}
-	if ( svPendingAdminCommandCount >= svPendingAdminCommands.size() ) {
-		Com_Printf( S_COLOR_YELLOW "Dropped in-band rcon from client %i: %i commands already pending\n",
-			clientNum, static_cast<int>( svPendingAdminCommands.size() ) );
-		return;
-	}
-
-	SV_PendingAdminCommand &pending = svPendingAdminCommands[svPendingAdminCommandCount++];
-	pending.address = cl->netchan.remoteAddress;
-	pending.clientNum = clientNum;
-	Q_strncpyz( pending.name.data(), cl->name, static_cast<int>( pending.name.size() ) );
-	Q_strncpyz( pending.text.data(), text, static_cast<int>( pending.text.size() ) );
-}
-
-void SV_ExecutePendingAdminCommands( void ) {
-	if ( !svPendingAdminCommandCount ) {
-		return;
-	}
-
-	// Copy out first: a command may queue nothing, but it may shut the server
-	// down, which clears the queue underneath this loop.
-	std::array<SV_PendingAdminCommand, SV_PENDING_ADMIN_COMMAND_LIMIT> commands = svPendingAdminCommands;
-	const std::size_t count = svPendingAdminCommandCount;
-	svPendingAdminCommandCount = 0;
-
-	for ( std::size_t i = 0; i < count; ++i ) {
-		const SV_PendingAdminCommand &command = commands[i];
-		// TTimo's rcon sizing: accumulate without overflowing an OOB packet
-		std::array<char, 1024 - 16> outputbuf{};
-
-		Com_Printf( "Rcon from admin client %i (%s): %s\n", command.clientNum,
-			command.name.data(), command.text.data() );
-		svAdminRedirectAddress = command.address;
-		Com_BeginRedirect( outputbuf.data(), static_cast<int>( outputbuf.size() ), SV_FlushAdminRedirect );
-		Cmd_ExecuteString( command.text.data() );
-		Com_EndRedirect();
-	}
-}
-
-void SV_ClearPendingAdminCommands( void ) {
-	svPendingAdminCommandCount = 0;
-}
-
-
 struct ucmd_t {
 	const char *name;
 	void (*func)( client_t *cl );
 };
 
-static constexpr std::array<ucmd_t, 10> ucmds = {{
+static constexpr std::array<ucmd_t, 9> ucmds = {{
 	{"userinfo", SV_UpdateUserinfo_f},
 	{"disconnect", SV_Disconnect_f},
 	{"cp", SV_VerifyPaks_f},
@@ -2850,7 +2443,6 @@ static constexpr std::array<ucmd_t, 10> ucmds = {{
 	{"stopdl", SV_StopDownload_f},
 	{"donedl", SV_DoneDownload_f},
 	{"locations", SV_PrintLocations_f},
-	{"rcon", SV_AdminRcon_f},		// retail 0x56bf68: admin-only, see SV_AdminRcon_f
 }};
 
 static const ucmd_t *SV_FindClientCommand( const char *name )
@@ -2936,10 +2528,7 @@ qboolean SV_ExecuteClientCommand( client_t *cl, const char *s ) {
 	} else {
 		// pass unknown strings to the game
 		if ( ucmd == nullptr && sv.state == SS_GAME && cl->state >= CS_PRIMED ) {
-			if ( gvm->forceDataMask )
-				Cmd_Args_Sanitize( "\n\r;" ); // handle ';' for OSP
-			else
-				Cmd_Args_Sanitize( "\n\r" );
+			Cmd_Args_Sanitize( "\n\r" );
 			VM_Call( gvm, 1, GAME_CLIENT_COMMAND, SV_ClientIndex( cl ) );
 		}
 	}
