@@ -121,8 +121,13 @@ translation, and the cgame engine table. The renderer reads QAA's DDS
 textures (`code/renderercommon/tr_image_dds.c`) and loads
 `scripts/master.shader` by name, as QAA's renderer does; the client draws
 without a ui module. Done: a headless client plays `q3dm6` and takes a
-screenshot of the world, items and view weapon. Open: the HUD is
-Scaleform (`ui/hud.gfx`), so it arrives with M6; sound is untested; the
+screenshot of the world, items and view weapon. Sound works: QAA's
+sounds and music are XMA2 (FORMATS.md), decoded by `code/qaa/qaa_xma2.c`
+(ported from FFmpeg) through `snd_codec_xma.cpp`, with retail's `.xma`
+before `.wav` lookup; a headless run on q3dm6 (OpenAL Soft's wave-file
+backend, no audio device) plays the map's music and the cgame's weapon,
+item and player sounds, looping sounds included. Open: the HUD is
+Scaleform (`ui/hud.gfx`), so it arrives with M6; the
 DrawStretchPic y-flip QAA's engine applies is to be checked once 2D draws;
 `S_AddRealLoopingSound` stands in for QAA's own looping-sound call. PC
 deviation: the cgame's model-loading thread is off

@@ -58,6 +58,12 @@ still FnQL's.
 - The [Free60](https://free60.org/) STFS documentation, for the Xbox 360
   package layout read by `tools/stfs.py` and `code/qaa/qaa_stfs.c`.
 - Microsoft's published LZX format description, for `code/qaa/qaa_lzx.c`.
+- [FFmpeg](https://ffmpeg.org/)'s WMA Pro / XMA decoder (`libavcodec/
+  wmaprodec.c`, `wma.c` and `wmaprodata.h`, FFmpeg 7.1, LGPL 2.1 or later,
+  by Baptiste Coudurier, Benjamin Larsson, Ulion, Sascha Sommer and the
+  FFmpeg project): ported into `code/qaa/qaa_xma2.c` and
+  `code/qaa/qaa_xma2_tables.h`, which keep its notices and are used under
+  the GPL as the LGPL allows.
 
 ## Trademark note
 

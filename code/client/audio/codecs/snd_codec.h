@@ -82,6 +82,13 @@ snd_stream_t *S_WAV_CodecOpenStream(const char *filename);
 void S_WAV_CodecCloseStream(snd_stream_t *stream);
 int S_WAV_CodecReadStream(snd_stream_t *stream, int bytes, void *buffer);
 
+// QAA: XMA2 codec (snd_codec_xma.cpp), QAA's only sound format
+extern snd_codec_t xma_codec;
+void *S_XMA_CodecLoad(const char *filename, snd_info_t *info);
+snd_stream_t *S_XMA_CodecOpenStream(const char *filename);
+void S_XMA_CodecCloseStream(snd_stream_t *stream);
+int S_XMA_CodecReadStream(snd_stream_t *stream, int bytes, void *buffer);
+
 // Ogg Vorbis codec
 #ifdef USE_OGG_VORBIS
 extern snd_codec_t ogg_codec;

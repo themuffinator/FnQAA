@@ -132,10 +132,26 @@ ObReferenceObjectByHandle, RtlTryEnterCriticalSection.
   0x56399F5B10D5CC18 and 0x3D74EED49587C6E0 each appear twice, both copies
   with identical stored bytes, so which one a lookup finds does not matter.
 - **observed** Contents by magic: 1,962 DDS (DXT5 1,548, DXT3 296, DXT1 112,
-  DXT2 3, other 3), 670 uncompressed TGA, 662 WAV (22,050 Hz mono seen),
+  DXT2 3, other 3), 670 uncompressed TGA, 662 RIFF `WAVE` (all XMA2, below),
   442 MD3 (`IDP3` v15), 304 JPEG, 54 Scaleform `GFX` (version 9), 45 BSP
   (`IBSP` v47), 45 AAS (`EAAS` v5), and text: shaders, `.menu`, `.skin`,
   animation configs, bot files.
+- **verified** Every sound and music track is **XMA2**, not PCM: all 662
+  RIFF `WAVE` records have format tag 0x166 (`WAVE_FORMAT_XMA2`); 659 are
+  22,050 Hz and 3 are 44,100 Hz, 635 mono and 27 stereo. 655 of them are
+  named `*.xma` (`sound/...` and `music/...`) and 7 are unnamed; pak0 holds
+  no `.wav` name. The game modules still ask for `*.wav`.
+- **code** The sound loader (0x82173DC0) cuts the requested name at its
+  `.` and tries each extension in the table at 0x827EC714, `.xma` then
+  `.wav`, until one opens. For tag 0x166 it keeps the 0x34-byte XMA2 format
+  block for XAudio2's hardware decoder; for 16-bit PCM it byte-swaps the
+  samples to big-endian.
+- **verified** The XMA2 headers: all 662 are one stream (`NumStreams` 1),
+  little-endian, 2,048-byte packets (`data` sizes are whole packets),
+  `EncoderVersion` 4, no loops (`LoopCount` 0, `LoopLength` 0), `PlayBegin`
+  0, and a `PlayLength` 540 to 682 samples short of `SamplesEncoded`.
+  Chunk order is `fmt `, `data`, `seek` (362) or `fmt `, `seek`, `data` (300).
+  `code/qaa/qaa_xma2.c` decodes every one to its full `PlayLength`.
 
 ## XMemCompress / LZX (`code/qaa/qaa_lzx.c`)
 

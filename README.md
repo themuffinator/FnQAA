@@ -11,8 +11,9 @@ or game code is included in this repository.
 > **Status: M4 and M5 under way.** The engine mounts your XBLA package in
 > place and runs Quake Arena Arcade's own game code, recompiled from your
 > package: a local game on `q3dm6` plays and renders, headless, and bots
-> play in it. The Scaleform HUD and menus (M6) and sound are still to come,
-> so the game is not yet playable as on the Xbox. See [the plan](docs/PLAN.md).
+> play in it, with QAA's own sounds and music (XMA2, decoded on the PC).
+> The Scaleform HUD and menus (M6) are still to come, so the game is not
+> yet playable as on the Xbox. See [the plan](docs/PLAN.md).
 
 ## Build
 

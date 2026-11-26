@@ -66,6 +66,18 @@ void *S_CodecGetSound( const char *filename, snd_info_t *info ) {
 
 	ext = COM_GetExtension( localName.data() );
 
+	// QAA: retail behaviour (the sound loader at 0x82173DC0): the name's
+	// extension is cut and "<name>.xma" is tried before "<name>.wav". The
+	// game modules ask for .wav names; pak0.bpk holds only .xma files.
+	if ( !Q_stricmp( ext, "wav" ) ) {
+		COM_StripExtension( filename, altName.data(), static_cast<int>( altName.size() ) );
+		Q_strcat( altName.data(), static_cast<int>( altName.size() ), ".xma" );
+		rtn = info ? xma_codec.load( altName.data(), info ) : xma_codec.open( altName.data() );
+		if ( rtn ) {
+			return rtn;
+		}
+	}
+
 	if ( *ext ) {
 		// Look for the correct loader and use it.
 		for ( codec = codecs; codec; codec = codec->next ) {
@@ -134,6 +146,9 @@ extern "C" void S_CodecInit( void ) {
 #ifdef USE_OGG_VORBIS
 	S_CodecRegister( &ogg_codec );
 #endif
+
+	// QAA: XMA2, the format of every sound in QAA's package
+	S_CodecRegister( &xma_codec );
 
 	// Register wav last so it is tried first when a file extension was not found.
 	S_CodecRegister( &wav_codec );

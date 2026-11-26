@@ -356,6 +356,9 @@ client_src = [
   'code/client/audio/legacy/snd_mix.cpp',
   'code/client/audio/legacy/snd_wavelet.cpp',
   'code/client/audio/codecs/snd_codec_wav.cpp',
+  # QAA: QAA's sounds are XMA2, decoded by code/qaa/qaa_xma2.c.
+  'code/client/audio/codecs/snd_codec_xma.cpp',
+  'code/qaa/qaa_xma2.c',
   'code/client/audio/codecs/snd_codec.cpp',
   'code/client/audio/openal/AudioSystem.cpp',
 ]
@@ -1024,6 +1027,14 @@ qaa_package_tests = executable('openqaa_qaa_package_tests',
   c_args: common_c_args,
 )
 test('openqaa_qaa_package', qaa_package_tests)
+
+# QAA: the XMA2 decoder on synthetic data (its transform, windowing and
+# Huffman tables); the test includes code/qaa/qaa_xma2.c itself.
+qaa_xma2_tests = executable('openqaa_qaa_xma2_tests',
+  'tests/qaa_xma2_tests.c',
+  c_args: common_c_args,
+)
+test('openqaa_qaa_xma2', qaa_xma2_tests)
 
 netchan_profile_tests = executable('openqaa_netchan_profile_tests',
   'tests/netchan_profile_tests.cpp',
