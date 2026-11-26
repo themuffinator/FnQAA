@@ -46,6 +46,8 @@ The user's copy is `Quake Arena Arcade (World) (XBLA).zip`, holding one file:
 
 - **verified** Module exports (ordinal: address):
   qagame 1: 0x88042158, 2: 0x8804C990; cgame 1: 0x86020E68, 2: 0x86031D88.
+  **code** Ordinal 1 is `vmMain` and ordinal 2 is `dllEntry`
+  (`Sys_LoadDll` 0x82184770; see ABI.md).
 - **observed** `default.xex` loads modules by the patterns `game:\%sXe.dll`
   and `game:\%sXe%s.dll`.
 

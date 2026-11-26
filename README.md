@@ -8,14 +8,74 @@ own game code, its `qagameXe.dll` and `cgameXe.dll` modules, is statically
 recompiled from your package into native code on your machine. No game data
 or game code is included in this repository.
 
-> **Status: M1.** The tools read the XBLA package, decrypt and decompress
-> its XEX2 images, decode every file in `pak0.bpk`, and recover 95% of the
-> archive's file names from QAA's own name hash. The engine is not imported
-> yet. See [the plan](docs/PLAN.md).
+> **Status: M3.** The FnQL engine builds as `openqaa` and `openqaa-ded`,
+> mounts the game's data straight from your XBLA package without extracting
+> anything, and boots from the game's own `default.cfg`. QAA's retail
+> `qagame` and `cgame` modules recompile from your package into native
+> libraries, and both run their initialisation in a headless test harness.
+> The engine does not host them yet (M4, M5), and the menus (M6) are still
+> to come, so the game does not play yet. See [the plan](docs/PLAN.md).
+
+## Build
+
+Meson and Ninja, with Visual Studio 2022 on Windows or GCC on Linux. On
+Windows, from the repository root:
+
+```powershell
+pwsh scripts/msvc-env.ps1 meson setup build/msvc --buildtype=release
+pwsh scripts/msvc-env.ps1 meson compile -C build/msvc
+pwsh scripts/msvc-env.ps1 meson test -C build/msvc
+```
+
+On Linux:
+
+```sh
+meson setup build/linux --buildtype=release
+meson compile -C build/linux
+meson test -C build/linux
+```
+
+[BUILD.md](BUILD.md) has the options, dependencies and tests.
+
+## Run
+
+You need your own copy of the game: the STFS package from the XBLA download
+(the file `584108C8/000D0000/0ED9DD87…` inside the zip), or a folder holding
+the package's files (`default.xex`, `baseq3/pak0.bpk`, ...). Point the engine
+at it with `fs_qaaPackage`; it is read in place and never written:
+
+```powershell
+build/msvc/openqaa.exe +set fs_qaaPackage "D:\Games\QAA\0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458"
+```
+
+- `+set fs_qaaPackage <path>`: the package file, a folder holding its files,
+  or a `.bpk` file.
+- `qaa_info`: what is mounted.
+- `qaa_bpkread <hash>`: read a pak0.bpk record by its 64-bit name hash and
+  print its size and CRC-32 (reads only).
+
+pak0.bpk stores only a hash of each file's path, so, as on the Xbox, its
+files are found by exact name and never appear in directory listings
+(`dir`, the game's file lists). Loose files under `baseq3/` in the install
+or home folder override the package. For automated runs use
+`+set com_headless 2`, which starts the client without a window.
+
+## Recompiling the game modules
+
+```sh
+python tools/recomp/build.py --package <package>
+```
+
+This decodes `qagameXe.dll` and `cgameXe.dll` from your package, recompiles
+them with a patched [XenonRecomp](https://github.com/hedge-dev/XenonRecomp)
+and builds native libraries under `build/recomp/` (never committed).
+[docs/RECOMP.md](docs/RECOMP.md) has the requirements, the tests and the
+guest runtime's design.
 
 ## Tools
 
-Build the LZX library, then point the tools at your package:
+The Python tools read the package for investigation. Build the LZX library
+first:
 
 ```sh
 clang -O2 -shared -DQAA_LZX_SHARED -o .tmp/qaa_lzx.dll code/qaa/qaa_lzx.c code/qaa/qaa_bpk.c
@@ -34,6 +94,10 @@ python tools/bpk.py ref/extract/baseq3/pak0.bpk extract -n ref/pak0.names -o ref
 
 - [docs/PLAN.md](docs/PLAN.md): architecture and milestones
 - [docs/FORMATS.md](docs/FORMATS.md): package and file format facts
+- [docs/ABI.md](docs/ABI.md): the engine/game-module interface
+- [docs/RECOMP.md](docs/RECOMP.md): the recompiler pipeline and guest runtime
+- [BUILD.md](BUILD.md): building and testing
+- [CREDITS.md](CREDITS.md): the engine's lineage and the imported FnQL commit
 - [AGENTS.md](AGENTS.md): rules for contributors and AI agents
 
 ## Licence

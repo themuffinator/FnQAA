@@ -9,3 +9,8 @@
 /builddir*/
 __pycache__/
 *.pyc
+
+# Meson subproject sources fetched from subprojects/*.wrap
+/subprojects/*
+!/subprojects/*.wrap
+!/subprojects/packagefiles/

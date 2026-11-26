@@ -16,8 +16,10 @@ XBLA package, as close to the retail game as the PC allows.
 The PDB paths read `C:\QuakeLiveArcade\code\...`. QAA was built from the
 Quake Live code base, which is why FnQL is the right engine base.
 
-Each module exports two ordinals (presumably `dllEntry` and `vmMain`; the
-cgame has the string `vmMain: unknown command %i`). The modules import only
+Each module exports two ordinals: **ordinal 1 is `vmMain` and ordinal 2 is
+`dllEntry`** (`Sys_LoadDll` 0x82184770, see [ABI.md](ABI.md)). Besides the
+numbered syscalls, the engine hands each module a table of engine functions
+through `vmMain` before `INIT`. The modules import only
 CRT-level kernel functions: files, virtual memory, TLS, critical sections,
 events, SEH, and one helper thread in cgame. There is no graphics, audio,
 XAM or network import, so everything else goes through engine syscalls.
@@ -59,9 +61,9 @@ FnQL engine (native renderer, audio, input, net) ◄── syscall bridge ──
   and OS: files to the engine filesystem, memory, TLS, locks, events, the
   cgame helper thread.
 - **Recompiler:** the modules hold about 88K PowerPC instructions each,
-  including about 2,000 VMX/VMX128 vector instructions, so the lifter must
-  cover VMX128. Planned: XenonRecomp (MIT), driven by our decoded images and
-  `.pdata` function tables, run as a build step. To be confirmed in M3.
+  including about 2,000 VMX/VMX128 vector instructions. XenonRecomp (MIT),
+  with patches kept in `tools/recomp/patches/`, recompiles them at build time
+  from configs our analysis generates ([RECOMP.md](RECOMP.md)).
 
 ## Milestones
 
@@ -73,18 +75,32 @@ decodes fully; formats documented.
 names 95% of the entries for tools. Retail cannot list a BPK, so the engine
 needs no names: it opens files by exact name, as retail does.
 
-**M2 Engine.** Import FnQL (engine only) and rebrand it. Mount the STFS
-package and pak0.bpk natively, so no extraction step is needed. Gate: a
-headless `devmap` loads a QAA map in FnQL's renderer and takes a screenshot.
+**M2 Engine** (done; the `devmap` gate moves to M4). Import FnQL (engine
+only) and rebrand it. Mount the STFS package and pak0.bpk natively, so no
+extraction step is needed. FnQL 57f081f is imported engine-only as `openqaa` and
+`openqaa-ded`, without Steam or the WebUI; the package and pak0.bpk mount in
+place (`fs_qaaPackage`), files are found by name hash (`qaa_bpk_name_hash`)
+as retail finds them, and the client and server boot headless from QAA's own
+`default.cfg`. The `devmap` gate waits on the game modules: a map cannot
+load without qagame (M4) and cgame (M5).
 
-**M3 Recompiler pipeline.** XEX decode in the build; recompile qagame and
-cgame; the guest runtime and kernel HLE; call `dllEntry` and `vmMain`.
-Gate: `GAME_INIT` runs and returns.
+**M3 Recompiler pipeline** (done). XEX decode in the build; recompile
+qagame and cgame; the guest runtime and kernel HLE; call `dllEntry` and
+`vmMain`. `tools/recomp/build.py` builds both modules on Windows and Linux.
+In the headless gate, qagame's `GAME_INIT` returns after 95 engine calls,
+and cgame's `CG_INIT` after 690, with its asset-loading thread started.
+Guest exception dispatch is tested on synthetic stacks only, since no real
+run has raised one.
 
-**M4 Server game.** Recover QAA's game trap table from `default.xex`
-(`SV_GameSystemCalls`) and from the module's trap calls; write the bridge
-and its structure translation. Gate: a headless server runs a map with bots
-for N frames, deterministically.
+**ABI** (done): the game and cgame trap tables, vmMain commands, the engine
+function tables and the shared structure layouts are recovered from
+`default.xex` and both modules ([ABI.md](ABI.md), `data/abi/`).
+
+**M4 Server game.** Host the recompiled qagame in the engine: the trap
+bridge and engine function table from ABI.md, with structure translation,
+and the guest runtime's file calls backed by the engine filesystem. Gates: a
+headless `devmap` loads a QAA map and takes a screenshot (M2's gate), and a
+headless server runs a map with bots for N frames, deterministically.
 
 **M5 Client game.** The cgame trap table and bridge. Gate: a headless
 client renders a match with QAA's HUD.
