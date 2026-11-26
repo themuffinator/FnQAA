@@ -34,6 +34,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "filesystem_write_bounds.h"
 #include "unzip.h"
 #include "quakelive_pk3_xor.h"
+// QAA: Quake Arena Arcade's package (STFS) and archive (BPK) readers.
+#include "../qaa/qaa_bpk.h"
+#include "../qaa/qaa_stfs.h"
 
 /*
 =============================================================================
@@ -264,7 +267,8 @@ typedef struct {
 
 typedef enum {
 	PACK_FORMAT_PK3 = 0,
-	PACK_FORMAT_PAK
+	PACK_FORMAT_PAK,
+	PACK_FORMAT_BPK		// QAA: Quake Arena Arcade .bpk, read in place from the package
 } packFormat_t;
 
 typedef struct pack_s {
@@ -281,6 +285,7 @@ typedef struct pack_s {
 	qboolean		exclude;					// found in \fs_excludeReference list
 	qboolean		quakeliveEncrypted;
 	uint64_t		workshopItemId;			// zero for non-Workshop archives
+	struct qaaBpk_s	*qaaBpk;					// QAA: PACK_FORMAT_BPK archive; fileInPack_t.pos is its record index
 	int				hashSize;					// hash table size (power of 2)
 	fileInPack_t*	*hashTable;					// hash table
 	fileInPack_t*	buildBuffer;				// buffer with the filenames etc.
@@ -389,6 +394,7 @@ static qboolean FS_IsQuakeLiveEncryptedZipFile( const char *zipfile );
 static char *FS_CreateQuakeLiveDecryptedZipFile( const char *zipfile );
 static pack_t *FS_LoadZipFile( const char *zipfile );
 static pack_t *FS_LoadPakFile( const char *pakfile );
+static int FS_QAA_OpenBpkRecord( fileHandle_t *file, pack_t *pak, uint32_t index, const char *name ); // QAA
 
 typedef union qfile_gus {
 	FILE*		o;
@@ -411,6 +417,10 @@ typedef struct {
 	handleOwner_t	owner;
 	int			pakIndex;
 	pack_t		*pak;
+	// QAA: a decoded BPK entry. The data is handleFiles.file.v (so the slot
+	// counts as used), zipFileLen bytes long, read from qaaPos.
+	qboolean	qaaMemory;
+	int			qaaPos;
 } fileHandleData_t;
 
 static fileHandleData_t	fsh[MAX_FILE_HANDLES];
@@ -525,6 +535,9 @@ static FILE	*FS_FileForHandle( fileHandle_t f ) {
 	}
 	if ( fsh[f].zipFile ) {
 		Com_Error( ERR_DROP, "FS_FileForHandle: can't get FILE on zip file" );
+	}
+	if ( fsh[f].qaaMemory ) { // QAA
+		Com_Error( ERR_DROP, "FS_FileForHandle: can't get FILE on a BPK entry" );
 	}
 	if ( ! fsh[f].handleFiles.file.o ) {
 		Com_Error( ERR_DROP, "FS_FileForHandle: NULL" );
@@ -1690,6 +1703,12 @@ void FS_FCloseFile( fileHandle_t f ) {
 
 	fd = &fsh[ f ];
 
+	if ( fd->qaaMemory ) { // QAA: decoded BPK entry
+		free( fd->handleFiles.file.v );
+		Com_Memset( fd, 0, sizeof( *fd ) );
+		return;
+	}
+
 	if ( fd->zipFile && fd->pak ) {
 		unzCloseCurrentFile( fd->handleFiles.file.z );
 		if ( fd->handleFiles.unique ) {
@@ -2136,6 +2155,12 @@ static int FS_OpenFileInPak( fileHandle_t *file, pack_t *pak, fileInPack_t *pakF
 		pak->referenced |= FS_UI_REF;
 	}
 
+	if ( pak->format == PACK_FORMAT_BPK ) {
+		// QAA: BPK entries are XMemCompress streams with no seekable
+		// framing, so an open decodes the whole entry into memory.
+		return FS_QAA_OpenBpkRecord( file, pak, (uint32_t)pakFile->pos, pakFile->name );
+	}
+
 	if ( pak->format == PACK_FORMAT_PAK ) {
 		temp = Sys_FOpen( pak->pakFilename, "rb" );
 		if ( temp == NULL ) {
@@ -2513,6 +2538,20 @@ int FS_Read( void *buffer, int len, fileHandle_t f ) {
 
 	buf = (byte *)buffer;
 
+	if ( fsh[f].qaaMemory ) { // QAA: decoded BPK entry
+		const int remainingBytes = fsh[f].zipFileLen - fsh[f].qaaPos;
+		if ( len <= 0 || remainingBytes <= 0 ) {
+			return 0;
+		}
+		if ( len > remainingBytes ) {
+			len = remainingBytes;
+		}
+		Com_Memcpy( buf, (const byte *)fsh[f].handleFiles.file.v + fsh[f].qaaPos, len );
+		fsh[f].qaaPos += len;
+		fs_readCount += len;
+		return len;
+	}
+
 	if ( !fsh[f].zipFile && fsh[f].pak && fsh[f].pak->format == PACK_FORMAT_PAK ) {
 		file = fsh[f].handleFiles.file.o;
 		entryPos = ftell( file );
@@ -2584,7 +2623,7 @@ int FS_Write( const void *buffer, int len, fileHandle_t h ) {
 	if ( len == 0 ) {
 		return 0;
 	}
-	if ( fsh[h].zipFile || !fsh[h].handleFiles.file.o ) {
+	if ( fsh[h].zipFile || fsh[h].qaaMemory || !fsh[h].handleFiles.file.o ) { // QAA: BPK entries are read-only
 		return 0;
 	}
 
@@ -2639,6 +2678,29 @@ int FS_Seek( fileHandle_t f, long offset, fsOrigin_t origin ) {
 	if ( !fs_searchpaths ) {
 		Com_Error( ERR_FATAL, "Filesystem call made without initialization" );
 		return -1;
+	}
+
+	if ( fsh[f].qaaMemory ) { // QAA: decoded BPK entry
+		long target;
+		switch ( origin ) {
+		case FS_SEEK_SET:
+			target = offset;
+			break;
+		case FS_SEEK_CUR:
+			target = fsh[f].qaaPos + offset;
+			break;
+		case FS_SEEK_END:
+			target = fsh[f].zipFileLen + offset;
+			break;
+		default:
+			Com_Error( ERR_FATAL, "Bad origin in FS_Seek" );
+			return -1;
+		}
+		if ( target < 0 || target > fsh[f].zipFileLen ) {
+			return -1;
+		}
+		fsh[f].qaaPos = (int)target;
+		return 0;
 	}
 
 	if ( fsh[f].zipFile == qtrue ) {
@@ -4343,7 +4405,8 @@ static qboolean FS_SaveCache( void )
 
 	while ( sp != NULL )
 	{
-		if ( sp->pack && !sp->pack->quakeliveEncrypted )
+		// QAA: the pk3 cache describes zip archives; BPK packs are rebuilt at mount
+		if ( sp->pack && !sp->pack->quakeliveEncrypted && sp->pack->format != PACK_FORMAT_BPK )
 		{
 			FS_SavePackToFile( sp->pack, f );
 		}
@@ -4841,6 +4904,11 @@ Frees a pak structure and releases all associated resources
 */
 static void FS_FreePak( pack_t *pak )
 {
+	if ( pak->qaaBpk ) { // QAA
+		QAA_BpkClose( pak->qaaBpk );
+		pak->qaaBpk = NULL;
+	}
+
 	if ( pak->handle )
 	{
 #ifdef USE_HANDLE_CACHE
@@ -6404,8 +6472,11 @@ void FS_Shutdown( qboolean closemfp )
 		if ( p->pack )
 		{
 #ifdef USE_PK3_CACHE
+			// QAA: BPK packs are not in the pk3 cache, which frees the others
+			if ( p->pack->format == PACK_FORMAT_BPK )
+				FS_FreePak( p->pack );
 #ifdef USE_HANDLE_CACHE
-			if ( p->pack->next_h )
+			else if ( p->pack->next_h )
 				FS_RemoveFromHandleList( p->pack );
 #endif
 #else
@@ -6567,12 +6638,9 @@ static const char *FS_DefaultHomePath( const char *basePath )
 {
 	const char *homePath;
 
-#ifdef _WIN32
-	homePath = Sys_QuakeLiveProfilePath( basePath );
-	if ( homePath && homePath[0] ) {
-		return homePath;
-	}
-#endif
+	// QAA: PC deviation. Quake Live's SteamID-named profile folder in the
+	// install root does not apply: openQAA has no Steam, so it keeps the
+	// platform user folder (or the install folder) as FnQ3 does.
 
 	homePath = Sys_DefaultHomePath();
 	if ( homePath && homePath[0] ) {
@@ -6581,6 +6649,9 @@ static const char *FS_DefaultHomePath( const char *basePath )
 
 	return basePath ? basePath : "";
 }
+
+
+#include "../qaa/qaa_fs.inc"	// QAA: mounting the Quake Arena Arcade package
 
 
 /*
@@ -6601,8 +6672,11 @@ static void FS_Startup( void ) {
 	Cvar_SetDescription( fs_debug, "Debugging tool for the filesystem. Run the game in debug mode. Prints additional information regarding read files into the console." );
 	fs_copyfiles = Cvar_Get( "fs_copyfiles", "0", CVAR_INIT );
 	Cvar_SetDescription( fs_copyfiles, "Whether or not to copy files when loading them into the game. Every file found in the cdpath will be copied over." );
-	steamPath = Sys_SteamPath();
-	defaultBasePath = ( steamPath && steamPath[0] ) ? steamPath : Sys_DefaultBasePath();
+	// QAA: PC deviation. FnQL defaults fs_basepath to the retail Quake Live
+	// Steam install; openQAA's data comes from the QAA package instead
+	// (fs_qaaPackage), so the Steam library is never searched.
+	steamPath = NULL;
+	defaultBasePath = Sys_DefaultBasePath();
 	fs_basepath = Cvar_Get( "fs_basepath", defaultBasePath, CVAR_INIT | CVAR_PROTECTED | CVAR_PRIVATE );
 	Cvar_SetDescription( fs_basepath, "Write-protected CVAR specifying the path to the retail Quake Live installation folder." );
 	fs_basegame = Cvar_Get( "fs_basegame", BASEGAME, CVAR_INIT | CVAR_PROTECTED );
@@ -6672,6 +6746,10 @@ static void FS_Startup( void ) {
 	if ( !scanWorkshopArchives ) {
 		Com_Printf( "WARNING: Skipping workshop PK3s since pak00 doesn't exist.\n" );
 	}
+
+	// QAA: the package's pak0.bpk is the lowest-priority source, so loose
+	// files in the base, home and mod folders override it.
+	FS_QAA_MountPackage();
 
 	/* Retail QL mounts Workshop sources first.  Because each later source is
 	 * prepended, the normal Steam/base/home roots below retain higher priority. */
@@ -6748,6 +6826,8 @@ static void FS_Startup( void ) {
  	Cmd_AddCommand( "which", FS_Which_f );
 	Cmd_SetCommandCompletionFunc( "which", FS_CompleteFileName );
 	Cmd_AddCommand( "fs_restart", FS_Reload );
+	Cmd_AddCommand( "qaa_bpkread", FS_QAA_BpkRead_f ); // QAA
+	Cmd_AddCommand( "qaa_info", FS_QAA_Info_f ); // QAA
 
 	// print the current search paths
 	//FS_Path_f();
@@ -6759,9 +6839,9 @@ static void FS_Startup( void ) {
 	fs_gamedirvar->modified = qfalse; // We just loaded, it's not modified
 
 	// check original q3a files
-	if ( FS_IsBaseGame( BASEGAME ) || FS_IsBaseGame( BASEDEMO ) ) {
-		FS_CheckIdPaks();
-	}
+	// QAA: PC deviation. openQAA's base data is the QAA package, so FnQL's
+	// Quake Live (pak00) and Quake III (pak0-pak8) checks do not apply.
+	FS_QAA_CheckPackage();
 
 #ifdef FS_MISSING
 	if (missingFiles == NULL) {
@@ -7603,6 +7683,9 @@ int	FS_FOpenFileByMode( const char *qpath, fileHandle_t *f, fsMode_t mode ) {
 
 int FS_FTell( fileHandle_t f ) {
 	int pos;
+	if ( fsh[f].qaaMemory ) { // QAA
+		return fsh[f].qaaPos;
+	}
 	if ( fsh[f].zipFile ) {
 		pos = unztell( fsh[f].handleFiles.file.z );
 	} else {
@@ -7617,6 +7700,9 @@ int FS_FTell( fileHandle_t f ) {
 
 void FS_Flush( fileHandle_t f ) 
 {
+	if ( fsh[f].qaaMemory || fsh[f].zipFile ) { // QAA: nothing to flush on read-only entries
+		return;
+	}
 	fflush( fsh[f].handleFiles.file.o );
 }
 

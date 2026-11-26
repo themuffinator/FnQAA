@@ -1329,6 +1329,19 @@ if get_option('glx-tests')
   test('openqaa_glx_logic', glx_logic_tests)
 endif
 
+# QAA: the client and the dedicated server start headless, mount a synthetic
+# package in place and quit cleanly. With QAA_PACKAGE set to the user's STFS
+# package, both also read a record of the real pak0.bpk by hash.
+if build_client and build_server
+  test('openqaa_headless', python,
+    args: [files('tests/headless_tests.py'), client_exe, server_exe],
+    depends: renderer_targets,
+    env: {'MESON_BUILD_ROOT': meson.current_build_dir()},
+    is_parallel: false,
+    timeout: 300,
+  )
+endif
+
 curl_summary = 'disabled'
 if use_curl
   curl_summary = '@0@ (@1@)'.format(use_curl_dlopen ? 'dlopen' : 'linked', curl_source)
