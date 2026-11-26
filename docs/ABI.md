@@ -154,19 +154,24 @@ handler sends the host name and scores to the menus (game trap 69).
 | 7 | CG_MOUSE_EVENT | dx, dy | 7 |
 | 8 | (empty, returns 0) | | (8 = EVENT_HANDLING) |
 | 9 | CG_EVENT_HANDLING | type | 8 |
-| 10, 11, 13 | QAA, never called by the engine | | - |
+| 10 | **QAA_CG_SCOREBOARD_ROWS** | list id (float) → rows; never called | - |
+| 11 | **QAA_CG_SCOREBOARD_CELL** | list id (float), row, column → string; never called | - |
 | 12 | **QAA_CG_SET_ENGINE_TABLE** | table pointer | - |
+| 13 | QAA, never called | | - |
 | 14 | **QAA_CG_MATCH_START** | | - |
-| 15 | **QAA_CG_PLAYER_VOICE** | three ints | - |
+| 15 | **QAA_CG_PLAYER_TALKING** | memberIndex, clientNum | - |
 
 Differences: `CG_EVENT_HANDLING` moves from 8 to 9 (**code**: `CL_KeyEvent`
 0x82106D20 clears `KEYCATCH_CGAME` and calls 9 with type 0, where Quake III
 calls `CG_EVENT_HANDLING`). FnQL's Quake Live additions 9..18
 (`CG_CHAT_DOWN` ... `CG_GET_PHYSICS_TIME`) do not exist. **observed** 10, 11
 and 13 have no `VM_Call` site in `default.xex` (all 44 sites pass constant
-command numbers, and nothing else calls `vm->entryPoint`). 14 is called by the
-Live lobby code (0x82176370) and puts up "FIGHT!"; 15 by the engine's
-`PlayerVoiceChanged` handler (0x8217C818).
+command numbers, and nothing else calls `vm->entryPoint`). 10 and 11 form a
+scoreboard data provider (row count and cell text for lists 5.0 = team 1,
+6.0 = team 2, 11.0 = everyone; **code** 0x86025170, 0x860253B0), probably a
+Scaleform interface the shipped engine no longer uses. 14 is called by the Live
+lobby code (0x82176370) and puts up "FIGHT!"; 15 by the engine's voice handler
+(0x8217C818) at most once a second for each talking session member.
 
 ## 4. Engine function tables (QAA only)
 
@@ -233,21 +238,21 @@ the context):
 | # | Name | Args → result | What it does |
 |---|---|---|---|
 | 30 | QAA_G_ACTIVE_CLIENT_COUNT | → int | Clients whose state is above `CS_ZOMBIE` |
-| 46 | QAA_G_LIVE_LEAVE_SESSION | | Live session teardown step; called beside `ui_LeavingGame` (inferred) |
-| 47 | QAA_G_AWARD_ACHIEVEMENT | int, int | Achievement award (`AchievementAwarded`), as cgame 114; unused |
+| 46 | QAA_G_MATCH_END | | Stops the active user's rumble; if trap 64 armed it, sets Live context 0xC = 2 and property 0x1000000C = 4 |
+| 47 | QAA_G_AWARD_ACHIEVEMENT | userIndex, achievementId | Awards an achievement once per user (`AchievementAwarded` UI event), as cgame 114; unused |
 | 48 | QAA_G_UI_GOTO_STACK_PATH | path | Menu navigation (`_global.sceneManager.gotoStackPath`); unused |
 | 49 | QAA_G_UI_INGAME_MENU | int → -1 | Opens the in-game menu (`InvokeIngameMenu`); unused |
 | 50, 51, 67, 68 | QAA_G_LIVE_SESSION_INFO_n | → int | Word n of a Live session-info record (0x82176AC8), 0 without a session; 50/67 used by the exit rules, 68 by the scoreboard |
-| 52, 57 | QAA_G_LIVE_SET_52/57 | int (,int) | Hand values to the Live worker thread and signal it; unused |
-| 56, 58 | QAA_G_LIVE_MEMBER_SET/GET | member, value / member → int | Per-member Live session record; unused |
+| 52 | QAA_G_LIVE_SET_PROPERTY | value | Live worker sets property 0x1000000C = value; unused |
+| 56, 57, 58 | QAA_G_LIVE_MEMBER_SET1 / SET0 / GET0 | member, value / member → int | Words 1 and 0 of a 16-byte per-member record that the engine replicates to the session peers (0x19-byte packets); unused |
 | 61..63 | QAA_G_STUB_n | → 0 | Empty |
-| 64 | QAA_G_LIVE_MARK_MATCH | | Sets the flags trap 46 tests; called by the exit rules (inferred: match played) |
+| 64 | QAA_G_MATCH_ARM_END | | If the session has reached the state behind event +0x38, arms trap 46 and makes the next `map_restart` a no-op; called by the exit rules |
 | 65 | QAA_G_UI_COURSE_RESULTS | ptr (0x4C bytes) | Publishes single-player course results to the menus (`_global.courseResults`) |
-| 66 | QAA_G_LIVE_WRITE_STAT | statId, value | Live stats write (`XamSessionRefObjByHandle`, `XMsgStartIORequest`); unused |
+| 66 | QAA_G_LIVE_WRITE_LEADERBOARD | viewId, value | Leaderboard write for the active user: one view, property 0x20000007 (int64) = value; unused |
 | 69 | QAA_G_UI_CACHE_SCORES | hostName, scores | Menus' cached host name and scores |
-| 70 | QAA_G_LIVE_UPDATE_CONTEXT | | Reads `g_gameType`, `ui_sessionType` (inferred: Live context); unused |
-| 71 | QAA_G_LIVE_SHUTDOWN_71 | | Live session call at `GAME_SHUTDOWN` |
-| 72 | QAA_G_LIVE_SUBMIT_STATS | data, size, a3 | Copies a stats blob (< 0x24C bytes) to the Live worker |
+| 70 | QAA_G_LIVE_SET_GAMEMODE | | Property 0x1000000C = 3, or 2 for a ranked session outside tournament; unused |
+| 71 | QAA_G_LIVE_SET_PROPERTY_1 | | Property 0x1000000C = 1; called at `GAME_SHUTDOWN` |
+| 72 | QAA_G_SEND_SCOREBOARD | data, size, reliable | Game-to-cgame scoreboard mailbox (read by cgame 141), also sent to Live peers |
 
 "Unused" means qagame has no syscall site for it (**observed**). 53..55, 59
 and 60 are unhandled.
@@ -295,11 +300,11 @@ QAA-only cgame traps:
 | 7 | QAA_CG_CVAR_VARIABLEVALUE | name → int | `Cvar_VariableValue`, truncated |
 | 36 | QAA_CG_S_REGISTERSOUND_COMPRESSED | name | Registers a sound compressed; result discarded |
 | 93 | QAA_CG_TURN_AROUND | | `cl.viewangles[YAW] += 180` |
-| 112 | QAA_CG_LIVE_112 | | Same call as game 46's first step; unused |
-| 113 | QAA_CG_SET_RUMBLE | 5 ints | Controller vibration (`XamInputSetState`) |
-| 114 | QAA_CG_AWARD_ACHIEVEMENT | int, int | Achievement award (`AchievementAwarded`) |
+| 112 | QAA_CG_STOP_RUMBLE | | Stops the active user's vibration; unused |
+| 113 | QAA_CG_SET_RUMBLE | user, left %, left extra, right %, right extra | Controller vibration (`XamInputSetState`), only when focused and allowed by the profile |
+| 114 | QAA_CG_AWARD_ACHIEVEMENT | userIndex, achievementId | Achievement award, as game 47 |
 | 115 | QAA_CG_ACTIVE_USER_INDEX | → int | Active user / controller index |
-| 116 | QAA_CG_116 | ptr | Called at cgame shutdown (reads `g_gameType`) |
+| 116 | QAA_CG_UI_POSTGAME_PLAYER | ptr (0x48 bytes) | One player's record for the post-game menus, plus score per minute; called at shutdown |
 | 117 | QAA_CG_UI_117 | 4 ptrs | Bulk copy (16 × 0x48 and 16 × 0x6B8 bytes) to the menus; unused |
 | 118 | QAA_CG_UI_WAIT_BEGIN | | "Loading..." overlay; unused |
 | 119 | QAA_CG_UI_HUD_DATA | ptr (0x108 bytes) | `_global.hudData`; unused |
@@ -310,11 +315,11 @@ QAA-only cgame traps:
 | 126, 127, 128 | QAA_CG_UI_EVENT_S/SS/SSDD | name, strings | Menu event with formatted arguments (e.g. `CenterPrint "$fight"`) |
 | 125, 130 | QAA_CG_UI_KILLER_STATS / TOURNAMENT | strings | `_global.statsKiller*`, `_global.tournament*` |
 | 132 | QAA_CG_UI_SET_VALUE | index, value | `_global.uiValues[index]`; unused |
-| 133, 134 | QAA_CG_LIVE_MEMBER_PRESENT / FLAG | member → int | Live session member queries |
+| 133, 134 | QAA_CG_LIVE_MEMBER_TEST / STATE | member → int | Session-member predicates (134: 3 = the active local user, else 2/1/0 from two more predicates) shown in scoreboard columns 6 and 8 |
 | 136, 137 | QAA_CG_R_8C / R_90 | | QAA renderer entries re+0x8C/+0x90; unused |
 | 138, 139 | QAA_CG_LIVE_SESSION_INFO_2 / 0 | → int | As game 50; unused |
 | 140 | QAA_CG_UI_140 | 3 ptrs | Menu call touching cvar `name`; unused |
-| 141 | QAA_CG_141 | ptr → int | Engine state query (clears an event) used per frame |
+| 141 | QAA_CG_GET_SCOREBOARD | buffer → int | Takes the 0x240-byte scoreboard from game 72's mailbox (or a Live peer packet); 1 if new |
 | 142 | QAA_CG_R_RENDER_54 | ptr | Renderer entry re+0x54: queues render command 9 |
 
 "Unused" means the cgame has no syscall site for it (**observed**). The UI
@@ -323,10 +328,18 @@ as documented PC deviations.
 
 **Coverage.** Every number the dispatchers handle has an entry: 218 game, 135
 cgame. Shared traps are mapped to their Quake III/FnQL name with engine
-function and argument types. Of the 57 QAA-only traps, all have a recorded
-behaviour; the exact purpose is inferred, not proven, for game 46, 52, 56-58,
-64, 70, 71 and cgame 116, 133, 134, 141, and the five-int layout of 113 is not
-decoded.
+function and argument types, and every QAA-only trap has its engine behaviour
+recorded (**code**). What remains open: what the session-member predicates
+behind cgame 133/134 test, what the per-member record words of game 56-58
+mean, and the title-defined meaning of Live context 0xC and property
+0x1000000C (the values are recorded). Live property and context ids are read
+from the `XUSER_PROPERTY` / `XUSER_CONTEXT` record shapes the engine builds.
+
+**The scoreboard mailbox works without Xbox Live.** Game 72 always copies its
+data to 0x82A6D6E8 and raises a flag, and cgame 141 returns it to the cgame
+whenever the flag is up, so a local or listen-server game relies on it: the
+bridge must implement 72 and 141 as a game-to-cgame copy even when every other
+Live trap is stubbed. qagame sends 16 records of 0x24 bytes (0x8803A3F0).
 
 ## 6. Shared structures
 
@@ -346,13 +359,13 @@ compiled for a 32-bit target, so both columns use 32-bit pointers.
 | `refdef_t` | 0x170 | 0x170 | **code** | `RE_RenderScene` 0x82148678 |
 | `snapshot_t` | 0xD210 | 0xEE30 | **code** | 0x82100000 |
 | `gameState_t` | 0x4E84 | 0x4E84 | **code** size | cgame trap 53, 0x82101DC0 |
-| `glconfig_t` | 0x2C54 | 0x2C44 | **code** size and key fields | cgame trap 52, 0x82101D94; `CG_Init` 0x86025730 |
+| `glconfig_t` | 0x2C54 | 0x2C44 | **code** size and fields from 0x2C28 | cgame trap 52, 0x82101D94; `GLimp_Init` 0x8213D6E8 |
 | `vmCvar_t` | 0x110 | 0x114 | **code** | `Cvar_Update` 0x82120AA8 |
 | `trace_t` | 0x38 | 0x38 | **code** size, `fraction`, `entityNum` | `SV_Trace` 0x82138788 |
 | `cplane_t` | 0x14 | 0x14 | **observed** | - |
 | `polyVert_t` | 0x18 | 0x18 | **code** stride | `RE_AddPolyToScene` 0x82148090 |
-| `markFragment_t` | 0x8 | 0x8 | **observed** (Quake III layout assumed) | - |
-| `orientation_t` | 0x30 | 0x30 | **observed** (Quake III layout assumed) | - |
+| `markFragment_t` | 0x8 | 0x8 | **code** | `R_AddMarkFragments` 0x82161F78 |
+| `orientation_t` | 0x30 | 0x30 | **code** | `LerpTag` 0x8215EDC0 |
 
 **QAA's network structures are Quake III 1.32's, not Quake Live's.** FnQL
 carries Quake Live's additions, so every structure that embeds
@@ -390,10 +403,12 @@ Quake III 1.32's layout plus one int:
   0x880335E8, masked with 63), 0x1CC `jumppad_frame` (**code**, qagame
   0x8802F3C0), 0x1D0 `entityEventSequence` (**code**, qagame 0x8802F744,
   cgame 0x8601097C).
-- 0x1D4: **a QAA-only int** (**code**), not networked. `ClientThink` (qagame
-  0x88035368) and the cgame's prediction (0x8602EED0) set it to 0 or 1 before
-  every `Pmove`, and the player animation code (qagame 0x88032A64) reads it.
-  Name unknown.
+- 0x1D4: **a QAA-only int** (**code**), not networked; provisional name
+  `qaa_weaponsDisabled`. `ClientThink` (qagame 0x880355CC) sets it to 1 when
+  `g_gametype` is 1 (tournament) and `level.warmupTime` is non-zero, else 0,
+  before every `Pmove`; the pmove weapon routine (0x88032A64) returns at once
+  while it is set, so nobody can fire during duel warmup. The cgame sets it
+  the same way for prediction (0x8602EED0).
 
 Against FnQL (0x1F8): FnQL moves `externalEventTime` to the end, inserts
 `location` 0x8C, `weaponPrimary` 0x94, `fov` 0x9C, and appends `jumpTime`,
@@ -444,8 +459,11 @@ sites). Fields **observed** from the cgame's stores:
 
 - 0x00 `reType` (0..7, checked by the renderer), 0x04 `renderfx`, 0x08
   `hModel`, 0x0C `lightingOrigin[3]`, 0x18 `shadowPlane`, as Quake III.
-- 0x1C..0x4F: a QAA-only 52-byte block; the cgame only ever zeroes 0x1C.
-  Purpose unknown.
+- 0x1C..0x4F: a QAA-only 52-byte block, unused in practice (**observed**):
+  none of the 27 cgame functions that submit a refEntity stores into it (the
+  0xC0 memset clears it), and neither `R_AddEntitySurfaces` (0x8214AF08) nor
+  any load through `tr.currentEntity` (0x82D56138) reads it. The bridge can
+  pass zeros.
 - 0x50 `axis[3][3]`, 0x74 `nonNormalizedAxes`, 0x78 `origin`, 0x84 `frame`,
   0x88 `oldorigin`, 0x94 `oldframe`, 0x98 `backlerp`, 0x9C `skinNum`, 0xA0
   `customSkin`, 0xA4 `customShader`, 0xA8 `shaderRGBA[4]`, 0xAC
@@ -473,10 +491,27 @@ As Quake III and FnQL: `stringOffsets[1024]`, `stringData[16000]`,
 
 ### glconfig_t (0x2C54)
 
-Quake III's layout plus a 16-byte tail at 0x2C44 that the cgame never reads
-(**code**, size only). `hardwareType` 0x2C18, `vidWidth` 0x2C28, `vidHeight`
-0x2C2C are **code** (`CG_Init` 0x86025730); the rest **observed** at Quake III
-positions. FnQL's is 0x2C44 with the same offsets.
+Quake III's layout up to `isFullscreen` (0x2C38); the rest is QAA's. All
+fields from 0x2C28 on are **code** from `GLimp_Init` (0x8213D6E8), which fills
+them from the Xbox video mode (`XVIDEO_MODE` at device +0x1E3C):
+
+| Offset | QAA | Quake III / FnQL |
+|---|---|---|
+| 0x2C28 / 0x2C2C | `vidWidth` / `vidHeight` (render size) | same |
+| 0x2C30 | `windowAspect`, one of two constants picked by widescreen | same |
+| 0x2C34 | `displayFrequency` | same |
+| 0x2C38 | `isFullscreen` (always 1) | same |
+| 0x2C3C | **`fIsWideScreen`** | `stereoEnabled` |
+| 0x2C40 | **float `(float)(vidHeight / vidWidth)`**, integer division | `smpActive` |
+| 0x2C44 | **int, always 0** | (end, 0x2C44) |
+| 0x2C48 | **`smpActive`** (`r_smp`; "Using dual processor acceleration") | - |
+| 0x2C4C | **`fIsInterlaced`** | - |
+| 0x2C50 | **`dwDisplayWidth`** (physical output width) | - |
+
+`hardwareType` 0x2C18 is read by `CG_Init` (0x86025730); the strings and the
+other capability fields are **observed** at Quake III positions. The cgame
+reads `vidWidth`/`vidHeight`; the DrawStretchPic trap (0x82101C9C) reads the
+engine's own `cls.glconfig.vidHeight` (0x82F88260) to flip y.
 
 ### vmCvar_t (0x110)
 
@@ -488,8 +523,12 @@ at 0x10 (0x114).
 
 As Quake III and FnQL. `trace_t` size, `fraction` (0x08) and `entityNum`
 (0x34) **code** (`SV_Trace`); `polyVert_t` stride and `modulate` (0x14)
-**code** (`RE_AddPolyToScene`); the rest **observed** (the renderer's
-`MarkFragments` and `LerpTag` were not read).
+**code** (`RE_AddPolyToScene`); `markFragment_t` `firstPoint` 0x00 and
+`numPoints` 0x04 **code** (`R_AddMarkFragments` 0x82161F78, under
+`MarkFragments` re+0x70); `orientation_t` `origin` 0x00 and `axis` 0x0C
+**code** (`LerpTag` re+0x74, 0x8215EDC0, whose failure path writes both; its
+success path is VMX128 code that Ghidra cannot decode). `cplane_t` and the rest
+of `trace_t` **observed**.
 
 ## 7. Limits
 
@@ -534,6 +573,9 @@ In short, from the facts above:
    everything); `refdef_t`, `trace_t`, `gameState_t`, `polyVert_t` share
    FnQL's layout and only need swapping.
 6. Keep `MAX_CLIENTS` at 16.
+7. Implement game trap 72 and cgame trap 141 as a local mailbox (section 5);
+   the other Live, achievement and rumble traps can be PC stubs or PC
+   equivalents, documented as deviations.
 
 ## 9. How this was recovered
 

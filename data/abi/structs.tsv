@@ -86,7 +86,7 @@ playerState_t	ping	0x1c4	4	int	observed	-	0x1e0	Quake III position; not networke
 playerState_t	pmove_framecount	0x1c8	4	int	code	qagame 0x880335E8 PmoveSingle	0x1e4	incremented and masked with 63
 playerState_t	jumppad_frame	0x1cc	4	int	code	qagame 0x8802F3C0 BG_TouchJumpPad	0x1e8	set from pmove_framecount
 playerState_t	entityEventSequence	0x1d0	4	int	code	BG_PlayerStateToEntityState: qagame 0x8802F744, cgame 0x8601097C	0x1ec	post-incremented
-playerState_t	(qaa_1d4)	0x1d4	4	int	code	qagame 0x88035368 ClientThink and 0x88032A64 pmove; cgame 0x8602EED0 prediction	-	QAA-only, not networked: set to 0 or 1 before every Pmove, read by pmove animation code; name unknown
+playerState_t	qaa_weaponsDisabled	0x1d4	4	int	code	qagame ClientThink 0x880355CC; PM weapon routine 0x88032A64	-	QAA only, not networked (provisional name). Set to 1 when g_gametype == 1 (tournament) and level.warmupTime != 0, else 0, before each Pmove; the pmove weapon routine returns at once while it is non-zero, so nobody can fire during duel warmup. The cgame sets it the same way for prediction (0x8602EED0).
 playerState_t	location	-	-	-	verified	netfield table 0x827EF3B0	0x8c	absent in QAA (FnQL/QL field)
 playerState_t	weaponPrimary	-	-	-	verified	netfield table 0x827EF3B0	0x94	absent in QAA (FnQL/QL field)
 playerState_t	fov	-	-	-	verified	netfield table 0x827EF3B0	0x9c	absent in QAA (FnQL/QL field)
@@ -133,7 +133,7 @@ refEntity_t	renderfx	0x4	4	int	observed	cgame stores after its 41 memsets of 0xC
 refEntity_t	hModel	0x8	4	qhandle_t	observed	cgame stores after its 41 memsets of 0xC0	0x8	
 refEntity_t	lightingOrigin	0xc	12	vec3_t	observed	cgame stores after its 41 memsets of 0xC0	0xc	
 refEntity_t	shadowPlane	0x18	4	float	observed	cgame stores after its 41 memsets of 0xC0	0x18	
-refEntity_t	(qaa_1c)	0x1c	52	unknown	observed	cgame stores after its 41 memsets of 0xC0	-	QAA-only 52-byte block; the cgame only zeroes 0x1C; every later Quake III field moves by +0x34
+refEntity_t	(qaa_1c)	0x1c	52	unknown	observed	cgame: the 27 functions that submit refEntities; renderer R_AddEntitySurfaces 0x8214AF08	-	QAA-only 52-byte block. No cgame function that submits a refEntity (trap 43) stores into 0x1C..0x4F (only the 0xC0 memset clears it), and no renderer load through tr.currentEntity (0x82D56138) or in R_AddEntitySurfaces reads it. Treat as reserved: the bridge can pass zeros.
 refEntity_t	axis	0x50	36	vec3_t[3]	observed	cgame stores after its 41 memsets of 0xC0	0x1c	address taken as axis[0..2]
 refEntity_t	nonNormalizedAxes	0x74	4	qboolean	observed	cgame stores after its 41 memsets of 0xC0	0x40	stores of 0 and 1
 refEntity_t	origin	0x78	12	vec3_t	observed	cgame stores after its 41 memsets of 0xC0	0x44	most-stored field
@@ -191,14 +191,17 @@ glconfig_t	hardwareType	0x2c18	4	int	code	cgame 0x86025730 CG_Init and others	0x
 glconfig_t	deviceSupportsGamma	0x2c1c	4	qboolean	observed	-	0x2c1c	Quake III position; consistent with the code-read fields
 glconfig_t	textureCompression	0x2c20	4	int	observed	-	0x2c20	Quake III position; consistent with the code-read fields
 glconfig_t	textureEnvAddAvailable	0x2c24	4	qboolean	observed	-	0x2c24	Quake III position; consistent with the code-read fields
-glconfig_t	vidWidth	0x2c28	4	int	code	cgame 0x860258D0 CG_Init (screenXScale)	0x2c28	
+glconfig_t	vidWidth	0x2c28	4	int	code	cgame 0x860258D0 CG_Init (screenXScale)	0x2c28	render width (video mode +0x1E70), set by GLimp_Init 0x8213D6E8
 glconfig_t	vidHeight	0x2c2c	4	int	code	cgame 0x860258D4 CG_Init; engine 0x82101C9C DrawStretchPic trap (reads 0x82F88260)	0x2c2c	the engine flips y as vidHeight - y - h
-glconfig_t	windowAspect	0x2c30	4	float	observed	-	0x2c30	Quake III position; consistent with the code-read fields
-glconfig_t	displayFrequency	0x2c34	4	int	observed	-	0x2c34	Quake III position; consistent with the code-read fields
-glconfig_t	isFullscreen	0x2c38	4	qboolean	observed	-	0x2c38	Quake III position; consistent with the code-read fields
-glconfig_t	stereoEnabled	0x2c3c	4	qboolean	observed	-	0x2c3c	Quake III position; consistent with the code-read fields
-glconfig_t	smpActive	0x2c40	4	qboolean	observed	-	0x2c40	Quake III position; consistent with the code-read fields
-glconfig_t	(qaa_2c44)	0x2c44	16	unknown	code	0x82101D94 (size only)	-	QAA-only 16-byte tail; never read by the cgame
+glconfig_t	windowAspect	0x2c30	4	float	code	GLimp_Init 0x8213D6E8	0x2c30	one of two constants chosen by isWideScreen
+glconfig_t	displayFrequency	0x2c34	4	int	code	GLimp_Init 0x8213D6E8	0x2c34	Quake III position; consistent with the code-read fields
+glconfig_t	isFullscreen	0x2c38	4	qboolean	code	GLimp_Init 0x8213D6E8	0x2c38	always 1
+glconfig_t	qaa_isWideScreen	0x2c3c	4	qboolean	code	GLimp_Init 0x8213D6E8	0x2c3c	QAA stores XVIDEO_MODE.fIsWideScreen here (Quake III's stereoEnabled slot)
+glconfig_t	qaa_2c40	0x2c40	4	float	code	GLimp_Init 0x8213D6E8	0x2c40	(float)(vidHeight / vidWidth) with integer division (0 in landscape); Quake III's smpActive slot
+glconfig_t	qaa_2c44	0x2c44	4	int	code	GLimp_Init 0x8213D6E8	-	always 0
+glconfig_t	smpActive	0x2c48	4	qboolean	code	GLimp_Init 0x8213D6E8	-	r_smp; R_Init 0x8213E770 prints "Using dual processor acceleration" when set (Quake III has it at 0x2C40)
+glconfig_t	qaa_isInterlaced	0x2c4c	4	qboolean	code	GLimp_Init 0x8213D6E8	-	XVIDEO_MODE.fIsInterlaced; also read by 0x82197FF8 with vidWidth/vidHeight
+glconfig_t	qaa_displayWidth	0x2c50	4	int	code	GLimp_Init 0x8213D6E8	-	XVIDEO_MODE.dwDisplayWidth (physical output width)
 vmCvar_t	(sizeof)	0x110	272	struct	code	0x82120AA8 Cvar_Update	0x114	Quake III layout
 vmCvar_t	handle	0x0	4	cvarHandle_t	code	0x82120AA8 Cvar_Update	0x0	
 vmCvar_t	modificationCount	0x4	4	int	code	0x82120AA8 Cvar_Update	0x4	
@@ -225,9 +228,9 @@ polyVert_t	(sizeof)	0x18	24	struct	code	0x82148090 RE_AddPolyToScene	0x18	vertex
 polyVert_t	xyz	0x0	12	vec3_t	observed	-	0x0	
 polyVert_t	st	0xc	8	float[2]	observed	-	0xc	
 polyVert_t	modulate	0x14	4	byte[4]	code	0x82148090 RE_AddPolyToScene	0x14	
-markFragment_t	(sizeof)	0x8	8	struct	observed	-	0x8	Quake III layout assumed; the renderer MarkFragments was not located
-markFragment_t	firstPoint	0x0	4	int	observed	-	0x0	
-markFragment_t	numPoints	0x4	4	int	observed	-	0x4	
-orientation_t	(sizeof)	0x30	48	struct	observed	-	0x30	Quake III layout assumed; the cgame calls LerpTag through the vmMain-12 engine table, not trap 51
-orientation_t	origin	0x0	12	vec3_t	observed	-	0x0	
-orientation_t	axis	0xc	36	vec3_t[3]	observed	-	0xc	
+markFragment_t	(sizeof)	0x8	8	struct	code	0x82161F78 (R_AddMarkFragments)	0x8	MarkFragments (re+0x70, 0x821622F8) writes firstPoint and numPoints per 8-byte fragment; points are vec3 (12 bytes)
+markFragment_t	firstPoint	0x0	4	int	code	0x82161F78	0x0	
+markFragment_t	numPoints	0x4	4	int	code	0x82161F78	0x4	
+orientation_t	(sizeof)	0x30	48	struct	code	0x8215EDC0 (re+0x74 LerpTag)	0x30	The failure path writes origin = 0 and axis = identity over words 0..11; the success path is VMX128 code Ghidra does not decode
+orientation_t	origin	0x0	12	vec3_t	code	0x8215EDC0	0x0	
+orientation_t	axis	0xc	36	vec3_t[3]	code	0x8215EDC0	0xc	
