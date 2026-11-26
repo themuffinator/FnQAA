@@ -257,8 +257,16 @@ include_dirs = include_directories(
 )
 
 # QAA: Steam and the Workshop are replaced by a null backend (QAA has no
-# Steam).
-qcommon_src = [
+# Steam); the QAA package readers live in code/qaa.
+qaa_src = [
+  'code/qaa/qaa_bpk.c',
+  'code/qaa/qaa_bpk_hash.c',
+  'code/qaa/qaa_io.c',
+  'code/qaa/qaa_lzx.c',
+  'code/qaa/qaa_stfs.c',
+]
+
+qcommon_src = qaa_src + [
   'code/qaa/qaa_null_services.cpp',
   'code/qcommon/cm_load.c',
   'code/qcommon/cm_patch.c',
@@ -1006,6 +1014,14 @@ if get_option('audio-tests')
   test('openqaa_audio_loopback', audio_loopback_tests, should_fail: false)
 
 endif
+
+# QAA: the package readers on synthetic data (no retail data needed).
+qaa_package_tests = executable('openqaa_qaa_package_tests',
+  ['tests/qaa_package_tests.c'] + qaa_src,
+  include_directories: include_directories('code/qaa'),
+  c_args: common_c_args,
+)
+test('openqaa_qaa_package', qaa_package_tests)
 
 netchan_profile_tests = executable('openqaa_netchan_profile_tests',
   'tests/netchan_profile_tests.cpp',
