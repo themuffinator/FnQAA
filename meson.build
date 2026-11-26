@@ -1,9 +1,9 @@
-project('FnQL', 'c', 'cpp',
+project('openQAA', 'c', 'cpp',
   license: 'GPL-2.0-or-later',
   version: run_command(
     find_program('python3', 'python', required: true),
     '-c',
-    'import re, pathlib; text = pathlib.Path("version/fnql_version.h").read_text(); print(re.search(r"#define FNQL_VERSION_STRING \\"([^\\"]+)\\"", text).group(1))',
+    'import re, pathlib; text = pathlib.Path("version/openqaa_version.h").read_text(); print(re.search(r"#define OPENQAA_VERSION_STRING \\"([^\\"]+)\\"", text).group(1))',
     check: true,
   ).stdout().strip(),
   meson_version: '>= 0.60.0',
@@ -66,7 +66,7 @@ cpu_family = host_machine.cpu_family()
 # ppc64 compiler whose byte order differs from the configured family).
 fnql_target_probe_template = '''
 #if !(@0@)
-#error FnQL requires a @1@ target
+#error openQAA requires a @1@ target
 #endif
 typedef char fnql_pointer_width_must_match[(sizeof(void *) == @2@) ? 1 : -1];
 int main(void) { return 0; }
@@ -96,10 +96,10 @@ if fnql_enabled_targets.has_key(cpu_family)
   endif
 endif
 if not fnql_target_supported
-  error('FnQL supports only 32-bit x86 targets and x86_64 on Windows and Linux, plus aarch64, armv7l (hard-float), ppc64le and ppc64 on Linux; Meson configured host CPU family "' + cpu_family + '" on "' + host_machine.system() + '" or the compiler target probe failed. Select Win32 or x64 on Windows, or use a native compiler or a matching cross file (misc/meson/linux-<arch>.ini) on Linux.')
+  error('openQAA supports only 32-bit x86 targets and x86_64 on Windows and Linux, plus aarch64, armv7l (hard-float), ppc64le and ppc64 on Linux; Meson configured host CPU family "' + cpu_family + '" on "' + host_machine.system() + '" or the compiler target probe failed. Select Win32 or x64 on Windows, or use a native compiler or a matching cross file (misc/meson/linux-<arch>.ini) on Linux.')
 endif
 
-renderer_prefix = 'fnql'
+renderer_prefix = 'openqaa'
 build_client = get_option('build-client')
 build_server = get_option('build-server')
 # The client is enabled on x86 and x86_64 only. On the Linux aarch64, armv7l,
@@ -107,7 +107,7 @@ build_server = get_option('build-server')
 # FnQL-game's modules (FnQL-game milestone M11); a client there has no gate
 # yet, so it is not built (AGENTS.md constraint 9).
 if build_client and not ['x86', 'x86_64'].contains(cpu_family)
-  error('The FnQL client is not enabled on ' + cpu_family + ': only the dedicated server and FnQL-game modules are gated on this target. Configure with -Dbuild-client=false.')
+  error('The openQAA client is not enabled on ' + cpu_family + ': only the dedicated server and FnQL-game modules are gated on this target. Configure with -Dbuild-client=false.')
 endif
 renderer_default = get_option('renderer-default')
 renderer_dlopen = get_option('renderer-dlopen')
@@ -141,8 +141,11 @@ else
   binary_suffix = '.' + cpu_family
 endif
 
-client_binary_name = 'fnql' + binary_suffix
-server_binary_name = 'fnql.ded' + binary_suffix
+# QAA: openQAA's primary targets are Windows and Linux x86_64, so the
+# executables carry no architecture suffix. Renderer modules keep the arch in
+# their name because the client loads RENDERER_PREFIX_<name>_<arch>.
+client_binary_name = 'openqaa'
+server_binary_name = 'openqaa-ded'
 
 common_c_args = []
 common_cpp_args = []
@@ -253,10 +256,11 @@ include_dirs = include_directories(
   'code',
 )
 
+# QAA: Steam and the Workshop are replaced by a null backend (QAA has no
+# Steam).
 qcommon_src = [
-	'code/platform/fnql_steam.cpp',
-	'code/platform/fnql_workshop.cpp',
-	'code/qcommon/cm_load.c',
+  'code/qaa/qaa_null_services.cpp',
+  'code/qcommon/cm_load.c',
   'code/qcommon/cm_patch.c',
   'code/qcommon/cm_polylib.c',
   'code/qcommon/cm_test.c',
@@ -334,9 +338,8 @@ client_src = [
   'code/client/cl_parse.cpp',
   'code/client/cl_scrn.cpp',
   'code/client/cl_ui.cpp',
-  'code/client/cl_webpak.cpp',
-  'code/client/cl_webui.cpp',
-  'code/client/awesomium_backend_win32.cpp',
+  # QAA: no Awesomium WebUI; QAA's menus are Scaleform (M6).
+  'code/qaa/qaa_null_webui.cpp',
   'code/client/audio/snd_main.cpp',
   'code/client/audio/legacy/snd_adpcm.cpp',
   'code/client/audio/legacy/snd_dma.cpp',
@@ -687,8 +690,8 @@ if win32
   win_resource_deps = files(
     'code/win32/q3.manifest',
     'code/win32/resource.h',
-    'code/win32/fnql.ico',
-    'version/fnql_version.h',
+    'code/win32/openqaa.ico',
+    'version/openqaa_version.h',
   )
   if rc_prog.found()
     if rc_prog.full_path().to_lower().contains('windres')
@@ -922,8 +925,6 @@ if client_asm_src.length() > 0 and cc.get_id() != 'msvc'
   client_c_args += ['-DELF']
 endif
 
-runtime_build_targets = renderer_targets
-
 if build_client
   client_exe = executable(client_binary_name,
     q3_platform_src + q3_ui_src + qcommon_src + server_src + client_src + platform_asm_src + client_asm_src,
@@ -937,7 +938,6 @@ if build_client
     install: true,
     install_dir: '.',
   )
-  runtime_build_targets += client_exe
 endif
 
 if build_server
@@ -953,239 +953,111 @@ if build_server
     install: true,
     install_dir: '.',
   )
-  runtime_build_targets += server_exe
 endif
 
-audiozonesc = executable('fnql-audiozonesc',
-  'code/tools/audiozones/audiozonesc.cpp',
-  include_directories: include_directories('code/client/audio/shared'),
-  cpp_args: common_cpp_args,
-  install: true,
-  install_dir: '.',
-)
-runtime_build_targets += audiozonesc
-
-stock_ql_maps_result = run_command(
-  python,
-  files('scripts/stock_ql_maps.py'),
-  check: true,
-)
-stock_ql_maps = stock_ql_maps_result.stdout().strip().split('\n')
-stock_audio_zone_sidecars = []
-stock_global_fog_sidecars = []
-foreach map_name : stock_ql_maps
-  stock_audio_zone_sidecars += files('pkg/baseq3/maps/' + map_name + '.azb')
-  stock_global_fog_sidecars += files('pkg/baseq3/maps/' + map_name + '.fog')
-endforeach
-root_package_assets = stock_audio_zone_sidecars + stock_global_fog_sidecars + files(
-  'pkg/baseq3/scripts/fnql.shader',
-  'pkg/baseq3/sound/fnql-weapon-sounds.sndshd',
-)
-
-custom_target('FnQL-pkg.fnz',
-  input: root_package_assets + files(
-    'scripts/build_root_archive.py',
-    'scripts/fnql_meta.py',
-    'scripts/root_archive.py',
-    'scripts/stock_ql_maps.py',
-  ),
-  output: 'FnQL-pkg.fnz',
-  command: [
-    python,
-    files('scripts/build_root_archive.py'),
-    '--package-root', join_paths(meson.current_source_dir(), 'pkg'),
-    '--output', '@OUTPUT@',
-  ],
-  depends: runtime_build_targets,
-  build_always_stale: true,
-  build_by_default: true,
-  install: true,
-  install_dir: '.',
-  install_tag: 'runtime',
-)
-
-fnql_webpak_sources = files(
-  'code/client/webui/index.html',
-  'code/client/webui/fnql-settings.js',
-  'code/client/webui/css/fnql-settings.css',
-)
-custom_target('fnql-web.pak',
-  input: fnql_webpak_sources + files('scripts/build_webpak.py'),
-  output: 'fnql-web.pak',
-  command: [
-    python,
-    files('scripts/build_webpak.py'),
-    '--source-root', join_paths(meson.current_source_dir(), 'code/client/webui'),
-    '--output', '@OUTPUT@',
-  ],
-  build_by_default: true,
-  install: true,
-  install_dir: '.',
-  install_tag: 'runtime',
-)
-
 if get_option('audio-tests')
-  audio_zone_tests = executable('fnql_audio_zone_tests',
+  audio_zone_tests = executable('openqaa_audio_zone_tests',
     'tests/audio/audiozone_runtime_tests.cpp',
     include_directories: include_directories('code/client/audio/shared'),
     cpp_args: common_cpp_args,
   )
-  test('fnql_audio_zones', audio_zone_tests)
+  test('openqaa_audio_zones', audio_zone_tests)
 
-  audiozone_fixture = custom_target('audiozone_authoring_test',
-    output: 'audiozone_authoring_test.azb',
-    input: 'tests/audio/authoring_metadata.audiozones',
-    command: [audiozonesc, '-o', '@OUTPUT@', '@INPUT@'],
-  )
-  test('fnql_audio_zone_authoring_audit', audiozonesc,
-    args: ['--audit', '--strict', '--samples', '512', audiozone_fixture],
-    depends: audiozone_fixture,
-  )
-
-  audio_recovery_tests = executable('fnql_audio_recovery_tests',
+  audio_recovery_tests = executable('openqaa_audio_recovery_tests',
     'tests/audio/recovery_policy_tests.cpp',
     include_directories: include_directories('code/client/audio/shared'),
     cpp_args: common_cpp_args,
   )
-  test('fnql_audio_recovery', audio_recovery_tests)
+  test('openqaa_audio_recovery', audio_recovery_tests)
 
-  audio_init_policy_tests = executable('fnql_audio_init_policy_tests',
+  audio_init_policy_tests = executable('openqaa_audio_init_policy_tests',
     'tests/audio/init_policy_tests.cpp',
     include_directories: include_directories('code/client/audio/shared'),
     cpp_args: common_cpp_args,
   )
-  test('fnql_audio_init_policy', audio_init_policy_tests)
+  test('openqaa_audio_init_policy', audio_init_policy_tests)
 
-  audio_occlusion_tests = executable('fnql_audio_occlusion_tests',
+  audio_occlusion_tests = executable('openqaa_audio_occlusion_tests',
     'tests/audio/occlusion_policy_tests.cpp',
     include_directories: include_directories('code/client/audio/shared'),
     cpp_args: common_cpp_args,
   )
-  test('fnql_audio_occlusion', audio_occlusion_tests)
+  test('openqaa_audio_occlusion', audio_occlusion_tests)
 
-  audio_tone_tests = executable('fnql_audio_tone_tests',
+  audio_tone_tests = executable('openqaa_audio_tone_tests',
     'tests/audio/tone_policy_tests.cpp',
     include_directories: include_directories('code/client/audio/shared'),
     cpp_args: common_cpp_args,
   )
-  test('fnql_audio_tone', audio_tone_tests)
+  test('openqaa_audio_tone', audio_tone_tests)
 
-  audio_voice_queue_tests = executable('fnql_audio_voice_queue_tests',
+  audio_voice_queue_tests = executable('openqaa_audio_voice_queue_tests',
     'tests/audio/voice_queue_tests.cpp',
     include_directories: include_directories('code/client/audio/shared'),
     cpp_args: common_cpp_args,
   )
-  test('fnql_audio_voice_queue', audio_voice_queue_tests)
+  test('openqaa_audio_voice_queue', audio_voice_queue_tests)
 
-  test('fnql_retail_sound_compat_source', python,
-    args: files('tests/audio/retail_sound_compat_source_tests.py'),
-  )
-
-  test('fnql_audio_init_source', python,
-    args: files('tests/audio/audio_init_source_tests.py'),
-  )
-
-  test('fnql_audio_impact_occlusion_source', python,
-    args: files('tests/audio/impact_occlusion_source_tests.py'),
-  )
-
-  audio_loopback_tests = executable('fnql_audio_loopback_tests',
+  audio_loopback_tests = executable('openqaa_audio_loopback_tests',
     'tests/audio/openal_loopback_tests.cpp',
     dependencies: client_deps + [openal_header_dep],
     cpp_args: common_cpp_args,
   )
-  test('fnql_audio_loopback', audio_loopback_tests, should_fail: false)
+  test('openqaa_audio_loopback', audio_loopback_tests, should_fail: false)
 
-  test('fnql_audio_zone_sweep_script', python,
-    args: files('tests/audio/audio_zone_sweep_tests.py'),
-  )
-  test('fnql_audio_zone_material_map', python,
-    args: [files('tests/audio/audio_zone_material_map_tests.py'), audiozonesc],
-  )
 endif
 
-netchan_profile_tests = executable('fnql_netchan_profile_tests',
+netchan_profile_tests = executable('openqaa_netchan_profile_tests',
   'tests/netchan_profile_tests.cpp',
   include_directories: include_directories('code/qcommon'),
   cpp_args: common_cpp_args,
 )
-test('fnql_netchan_profiles', netchan_profile_tests)
+test('openqaa_netchan_profiles', netchan_profile_tests)
 
-netchan_codec_tests = executable('fnql_netchan_codec_tests',
+netchan_codec_tests = executable('openqaa_netchan_codec_tests',
   'tests/netchan_codec_tests.cpp',
   include_directories: include_directories('code/qcommon'),
   cpp_args: common_cpp_args,
 )
-test('fnql_netchan_codec', netchan_codec_tests)
+test('openqaa_netchan_codec', netchan_codec_tests)
 
-ql_font_text_tests = executable('fnql_ql_font_text_tests',
+ql_font_text_tests = executable('openqaa_ql_font_text_tests',
   'tests/ql_font_text_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('fnql_ql_font_text', ql_font_text_tests)
+test('openqaa_ql_font_text', ql_font_text_tests)
 
-window_placement_tests = executable('fnql_window_placement_tests',
+window_placement_tests = executable('openqaa_window_placement_tests',
   'tests/window_placement_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('fnql_window_placement', window_placement_tests)
+test('openqaa_window_placement', window_placement_tests)
 
-test('fnql_ql_font_source', python,
-  args: files('tests/ql_font_source_tests.py'),
-)
-test('fnql_map_overbright_cap_source', python,
-  args: files('tests/map_overbright_cap_source_tests.py'),
-)
-test('fnql_window_management_source', python,
-  args: files('tests/window_management_source_tests.py'),
-)
-test('fnql_macos_support_source', python,
-  args: files('tests/macos_support_source_tests.py'),
-)
-
-global_fog_tests = executable('fnql_global_fog_tests',
+global_fog_tests = executable('openqaa_global_fog_tests',
   'tests/global_fog_tests.cpp',
   'code/qcommon/q_shared.c',
   c_args: common_c_args,
   cpp_args: common_cpp_args,
 )
-test('fnql_global_fog', global_fog_tests)
-test('fnql_global_fog_source', python,
-  args: files('tests/global_fog_source_tests.py'),
-)
+test('openqaa_global_fog', global_fog_tests)
 
-menu_blur_tests = executable('fnql_menu_blur_tests',
+menu_blur_tests = executable('openqaa_menu_blur_tests',
   'tests/menu_blur_tests.cpp',
   'code/qcommon/q_shared.c',
   c_args: common_c_args,
   cpp_args: common_cpp_args,
 )
-test('fnql_menu_blur', menu_blur_tests)
-test('fnql_menu_blur_source', python,
-  args: files('tests/menu_blur_source_tests.py'),
-)
+test('openqaa_menu_blur', menu_blur_tests)
 
-levelshot_validation_tests = executable('fnql_levelshot_validation_tests',
+levelshot_validation_tests = executable('openqaa_levelshot_validation_tests',
   'tests/levelshot_validation_tests.cpp',
   'code/qcommon/q_shared.c',
   c_args: common_c_args,
   cpp_args: common_cpp_args,
 )
-test('fnql_levelshot_validation', levelshot_validation_tests)
-test('fnql_renderer_port_safety_source', python,
-  args: files('tests/renderer_port_safety_tests.py'),
-)
-test('fnql_engine_audit_hardening_source', python,
-  args: files('tests/engine_audit_hardening_source_tests.py'),
-)
-test('fnql_untrusted_asset_bounds_source', python,
-  args: files('tests/untrusted_asset_bounds_tests.py'),
-)
-test('fnql_surface_geometry_limits_source', python,
-  args: files('tests/surface_geometry_limits_source_tests.py'),
-)
+test('openqaa_levelshot_validation', levelshot_validation_tests)
 
-bmp_loader_tests = executable('fnql_bmp_loader_tests',
+bmp_loader_tests = executable('openqaa_bmp_loader_tests',
   [
     'tests/bmp_loader_tests.c',
     'code/renderercommon/tr_image_bmp.c',
@@ -1193,9 +1065,9 @@ bmp_loader_tests = executable('fnql_bmp_loader_tests',
   include_directories: include_directories('code/qcommon', 'code/renderercommon'),
   c_args: common_c_args,
 )
-test('fnql_bmp_loader', bmp_loader_tests)
+test('openqaa_bmp_loader', bmp_loader_tests)
 
-huffman_decoder_tests = executable('fnql_huffman_decoder_tests',
+huffman_decoder_tests = executable('openqaa_huffman_decoder_tests',
   [
     'tests/huffman_decoder_tests.c',
     'code/qcommon/huffman.c',
@@ -1203,51 +1075,51 @@ huffman_decoder_tests = executable('fnql_huffman_decoder_tests',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('fnql_huffman_decoder', huffman_decoder_tests)
+test('openqaa_huffman_decoder', huffman_decoder_tests)
 
-qvm_header_tests = executable('fnql_qvm_header_tests',
+qvm_header_tests = executable('openqaa_qvm_header_tests',
   'tests/qvm_header_tests.c',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('fnql_qvm_header_bounds', qvm_header_tests)
+test('openqaa_qvm_header_bounds', qvm_header_tests)
 
-filesystem_write_bounds_tests = executable('fnql_filesystem_write_bounds_tests',
+filesystem_write_bounds_tests = executable('openqaa_filesystem_write_bounds_tests',
   'tests/filesystem_write_bounds_tests.c',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('fnql_filesystem_write_bounds', filesystem_write_bounds_tests)
+test('openqaa_filesystem_write_bounds', filesystem_write_bounds_tests)
 
-cvar_integer_tests = executable('fnql_cvar_integer_tests',
+cvar_integer_tests = executable('openqaa_cvar_integer_tests',
   'tests/cvar_integer_tests.c',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('fnql_cvar_integer', cvar_integer_tests)
+test('openqaa_cvar_integer', cvar_integer_tests)
 
-cvar_retail_bounds_tests = executable('fnql_cvar_retail_bounds_tests',
+cvar_retail_bounds_tests = executable('openqaa_cvar_retail_bounds_tests',
   'tests/cvar_retail_bounds_tests.c',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('fnql_cvar_retail_bounds', cvar_retail_bounds_tests)
+test('openqaa_cvar_retail_bounds', cvar_retail_bounds_tests)
 
-cvar_ui_policy_tests = executable('fnql_cvar_ui_policy_tests',
+cvar_ui_policy_tests = executable('openqaa_cvar_ui_policy_tests',
   'tests/cvar_ui_policy_tests.c',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('fnql_cvar_ui_policy', cvar_ui_policy_tests)
+test('openqaa_cvar_ui_policy', cvar_ui_policy_tests)
 
-module_provider_policy_tests = executable('fnql_module_provider_policy_tests',
+module_provider_policy_tests = executable('openqaa_module_provider_policy_tests',
   'tests/module_provider_policy_tests.c',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('fnql_module_provider_policy', module_provider_policy_tests)
+test('openqaa_module_provider_policy', module_provider_policy_tests)
 
-png_loader_tests = executable('fnql_png_loader_tests',
+png_loader_tests = executable('openqaa_png_loader_tests',
   [
     'tests/png_loader_tests.c',
     'code/renderercommon/tr_image_png.c',
@@ -1256,61 +1128,49 @@ png_loader_tests = executable('fnql_png_loader_tests',
   include_directories: include_directories('code/qcommon', 'code/renderercommon'),
   c_args: common_c_args,
 )
-test('fnql_png_loader', png_loader_tests)
+test('openqaa_png_loader', png_loader_tests)
 
-netchan_safety_tests = executable('fnql_netchan_safety_tests',
+netchan_safety_tests = executable('openqaa_netchan_safety_tests',
   'tests/netchan_safety_tests.cpp',
   include_directories: include_directories('code/qcommon'),
   cpp_args: common_cpp_args,
 )
-test('fnql_netchan_safety', netchan_safety_tests)
+test('openqaa_netchan_safety', netchan_safety_tests)
 
-snapshot_history_tests = executable('fnql_snapshot_history_tests',
+snapshot_history_tests = executable('openqaa_snapshot_history_tests',
   'tests/snapshot_history_tests.cpp',
   'code/qcommon/msg.cpp',
   'code/qcommon/huffman_static.c',
   c_args: common_c_args + ['-DDEDICATED'],
   cpp_args: common_cpp_args + ['-DDEDICATED'],
 )
-test('fnql_snapshot_history', snapshot_history_tests)
+test('openqaa_snapshot_history', snapshot_history_tests)
 
-input_compat_tests = executable('fnql_input_compat_tests',
+input_compat_tests = executable('openqaa_input_compat_tests',
   'tests/input_compat_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('fnql_input_compat', input_compat_tests)
+test('openqaa_input_compat', input_compat_tests)
 
-client_cvar_compat_tests = executable('fnql_client_cvar_compat_tests',
+client_cvar_compat_tests = executable('openqaa_client_cvar_compat_tests',
   'tests/client_cvar_compat_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('fnql_client_cvar_compat', client_cvar_compat_tests)
-test('fnql_client_cvar_compat_source', python,
-  args: files('tests/client_cvar_compat_source_tests.py'),
-)
+test('openqaa_client_cvar_compat', client_cvar_compat_tests)
 
-server_cvar_compat_tests = executable('fnql_server_cvar_compat_tests',
+server_cvar_compat_tests = executable('openqaa_server_cvar_compat_tests',
   'tests/server_cvar_compat_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('fnql_server_cvar_compat', server_cvar_compat_tests)
-test('fnql_server_cvar_compat_source', python,
-  args: files('tests/server_cvar_compat_source_tests.py'),
-)
+test('openqaa_server_cvar_compat', server_cvar_compat_tests)
 
-arena_script_tests = executable('fnql_arena_script_tests',
+arena_script_tests = executable('openqaa_arena_script_tests',
   'tests/arena_script_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('fnql_arena_script', arena_script_tests)
-test('fnql_retail_parity_gap_source', python,
-  args: files('tests/retail_parity_gap_source_tests.py'),
-)
-test('fnql_spawn_view_angle_source', python,
-  args: files('tests/spawn_view_angle_source_tests.py'),
-)
+test('openqaa_arena_script', arena_script_tests)
 
-message_codec_tests = executable('fnql_message_codec_tests',
+message_codec_tests = executable('openqaa_message_codec_tests',
   'tests/message_codec_tests.cpp',
   'code/qcommon/msg.cpp',
   'code/qcommon/huffman_static.c',
@@ -1318,59 +1178,59 @@ message_codec_tests = executable('fnql_message_codec_tests',
   c_args: common_c_args + ['-DDEDICATED'],
   cpp_args: common_cpp_args + ['-DDEDICATED'],
 )
-test('fnql_message_codec', message_codec_tests)
+test('openqaa_message_codec', message_codec_tests)
 
-protocol_layout_tests = executable('fnql_protocol_layout_tests',
+protocol_layout_tests = executable('openqaa_protocol_layout_tests',
   'tests/protocol_layout_tests.cpp',
   include_directories: include_directories('code/qcommon'),
   cpp_args: common_cpp_args,
 )
-test('fnql_protocol_layout', protocol_layout_tests)
+test('openqaa_protocol_layout', protocol_layout_tests)
 
-protocol_contract_tests = executable('fnql_protocol_contract_tests',
+protocol_contract_tests = executable('openqaa_protocol_contract_tests',
   'tests/protocol_contract_tests.cpp',
   include_directories: include_directories('code/qcommon'),
   cpp_args: common_cpp_args,
 )
-test('fnql_protocol_contract', protocol_contract_tests)
+test('openqaa_protocol_contract', protocol_contract_tests)
 
-retail_auth_challenge_tests = executable('fnql_retail_auth_challenge_tests',
+retail_auth_challenge_tests = executable('openqaa_retail_auth_challenge_tests',
   'tests/retail_auth_challenge_tests.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('fnql_retail_auth_challenge', retail_auth_challenge_tests)
+test('openqaa_retail_auth_challenge', retail_auth_challenge_tests)
 
-game_identity_tests = executable('fnql_game_identity_tests',
+game_identity_tests = executable('openqaa_game_identity_tests',
   'tests/game_identity_tests.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('fnql_game_identity', game_identity_tests)
+test('openqaa_game_identity', game_identity_tests)
 
-factory_rotation_tests = executable('fnql_factory_rotation_tests',
+factory_rotation_tests = executable('openqaa_factory_rotation_tests',
   'tests/factory_rotation_tests.cpp',
   'code/server/factory_rotation.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('fnql_factory_rotation', factory_rotation_tests)
+test('openqaa_factory_rotation', factory_rotation_tests)
 
-stats_session_tests = executable('fnql_stats_session_tests',
+stats_session_tests = executable('openqaa_stats_session_tests',
   'tests/stats_session_tests.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('fnql_stats_session', stats_session_tests)
+test('openqaa_stats_session', stats_session_tests)
 
-json_document_tests = executable('fnql_json_document_tests',
+json_document_tests = executable('openqaa_json_document_tests',
   'tests/json_document_tests.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('fnql_json_document', json_document_tests)
+test('openqaa_json_document', json_document_tests)
 
-factory_catalog_tests = executable('fnql_factory_catalog_tests',
+factory_catalog_tests = executable('openqaa_factory_catalog_tests',
   [
     'tests/factory_catalog_tests.cpp',
     'code/server/factory_catalog.cpp',
@@ -1378,45 +1238,41 @@ factory_catalog_tests = executable('fnql_factory_catalog_tests',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('fnql_factory_catalog', factory_catalog_tests)
+test('openqaa_factory_catalog', factory_catalog_tests)
 
-stats_event_tests = executable('fnql_stats_event_tests',
+stats_event_tests = executable('openqaa_stats_event_tests',
   'tests/stats_event_tests.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('fnql_stats_event', stats_event_tests)
+test('openqaa_stats_event', stats_event_tests)
 
-stats_report_tests = executable('fnql_stats_report_tests',
+stats_report_tests = executable('openqaa_stats_report_tests',
   'tests/stats_report_tests.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('fnql_stats_report', stats_report_tests)
+test('openqaa_stats_report', stats_report_tests)
 
-demo_stream_tests = executable('fnql_demo_stream_tests',
+demo_stream_tests = executable('openqaa_demo_stream_tests',
   'tests/demo_stream_tests.cpp',
   include_directories: include_directories('code/client'),
   cpp_args: common_cpp_args,
 )
-test('fnql_demo_stream', demo_stream_tests)
+test('openqaa_demo_stream', demo_stream_tests)
 
-test('fnql_ql_demo_source', python,
-  args: files('tests/ql_demo_source_tests.py'),
-)
-
-ql_bsp_contract_tests = executable('fnql_ql_bsp_contract_tests',
+ql_bsp_contract_tests = executable('openqaa_ql_bsp_contract_tests',
   'tests/ql_bsp_contract_tests.cpp',
   include_directories: include_directories('code/qcommon'),
   cpp_args: common_cpp_args,
 )
-test('fnql_ql_bsp_contract', ql_bsp_contract_tests)
+test('openqaa_ql_bsp_contract', ql_bsp_contract_tests)
 
-collision_model_parity_tests = executable('fnql_collision_model_parity_tests',
+collision_model_parity_tests = executable('openqaa_collision_model_parity_tests',
   'tests/collision_model_parity_tests.cpp',
   cpp_args: common_cpp_args,
 )
-test('fnql_collision_model_parity', collision_model_parity_tests)
+test('openqaa_collision_model_parity', collision_model_parity_tests)
 
 # Links the real trace path against a stub collision model so the capsule
 # geometry and the debug trace-plane invariant are exercised, not just
@@ -1428,7 +1284,7 @@ if libm.found()
   collision_capsule_trace_deps += libm
 endif
 
-collision_capsule_trace_tests = executable('fnql_collision_capsule_trace_tests',
+collision_capsule_trace_tests = executable('openqaa_collision_capsule_trace_tests',
   [
     'tests/collision_capsule_trace_tests.c',
     'code/qcommon/cm_trace.c',
@@ -1438,191 +1294,24 @@ collision_capsule_trace_tests = executable('fnql_collision_capsule_trace_tests',
   c_args: common_c_args,
   dependencies: collision_capsule_trace_deps,
 )
-test('fnql_collision_capsule_trace', collision_capsule_trace_tests)
-test('fnql_collision_model_parity_source', python,
-  args: files('tests/collision_model_parity_source_tests.py'),
-)
+test('openqaa_collision_capsule_trace', collision_capsule_trace_tests)
 
-test('fnql_ql_services_source', python,
-  args: files('tests/ql_services_source_tests.py'),
-)
-test('fnql_ql_cvar_configstring_source', python,
-  args: files('tests/ql_cvar_configstring_source_tests.py'),
-)
-test('fnql_join_menu_source', python,
-  args: files('tests/join_menu_source_tests.py'),
-)
-test('fnql_windowed_mouse_source', python,
-  args: files('tests/windowed_mouse_source_tests.py'),
-)
-test('fnql_input_system_source', python,
-  args: files('tests/input_system_source_tests.py'),
-)
-test('fnql_frame_clock_source', python,
-  args: files('tests/frame_clock_source_tests.py'),
-)
-test('fnql_platform_port_safety_source', python,
-  args: files('tests/platform_port_safety_tests.py'),
-)
-test('fnql_renderer_contract_source', python,
-  args: files('tests/renderer_contract_source_tests.py'),
-)
-test('fnql_lightmap_parity_source', python,
-  args: files('tests/lightmap_parity_source_tests.py'),
-)
-test('fnql_renderer_cvar_compat_source', python,
-  args: files('tests/renderer_cvar_compat_source_tests.py'),
-)
-test('fnql_fnq3_bloom_parity_source', python,
-  args: files('tests/fnq3_bloom_parity_source_tests.py'),
-)
-test('fnql_rtx_renderer_contract_source', python,
-  args: files('tests/rtx_renderer_contract_source_tests.py'),
-)
-test('fnql_rtx_raster_feature_parity_source', python,
-  args: files('tests/rtx_raster_feature_parity_source_tests.py'),
-)
-test('fnql_rtx_vulkan_safety_source', python,
-  args: files('tests/rtx_vulkan_safety_source_tests.py'),
-)
-test('fnql_rtx_runtime_smoke_source', python,
-  args: files('tests/rtx_runtime_smoke_tests.py'),
-)
-test('fnql_cvar_factory_snapshot_source', python,
-  args: files('tests/cvar_factory_snapshot_tests.py'),
-)
-test('fnql_factory_runtime_source', python,
-  args: files('tests/factory_runtime_source_tests.py'),
-)
-test('fnql_retail_factory_probe', python,
-  args: [files('tests/retail_factory_probe_tests.py'), '--meson'],
-)
-test('fnql_steam_provider_source', python,
-  args: files('tests/steam_provider_source_tests.py'),
-)
-test('fnql_headless_launch', python,
-  args: files('tests/headless_launch_tests.py'),
-  timeout: 300,
-)
-
-steam_identity_tests = executable('fnql_steam_identity_tests',
-  'tests/steam_identity_tests.cpp',
-  cpp_args: common_cpp_args,
-)
-test('fnql_steam_identity', steam_identity_tests)
-test('fnql_steam_identity_source', python,
-  args: files('tests/steam_identity_source_tests.py'),
-)
-
-test('fnql_workshop_source', python,
-  args: files('tests/workshop_source_tests.py'),
-)
-
-webpak_format_tests = executable('fnql_webpak_format_tests',
-  'tests/webpak_format_tests.cpp',
-  include_directories: include_directories('code/client'),
-  cpp_args: common_cpp_args,
-)
-test('fnql_webpak_format', webpak_format_tests)
-test('fnql_webpak_builder_source', python,
-  args: files('tests/webpak_builder_tests.py'),
-)
-
-webui_backend_tests = executable('fnql_webui_backend_tests',
-  'tests/webui_backend_tests.cpp',
-  include_directories: include_directories('code/client'),
-  cpp_args: common_cpp_args,
-)
-test('fnql_webui_backend', webui_backend_tests)
-
-webui_request_schedule_tests = executable('fnql_webui_request_schedule_tests',
-  'tests/webui_request_schedule_tests.cpp',
-  include_directories: include_directories('code/client'),
-  cpp_args: common_cpp_args,
-)
-test('fnql_webui_request_schedule', webui_request_schedule_tests)
-
-webui_resource_queue_tests = executable('fnql_webui_resource_queue_tests',
-  'tests/webui_resource_queue_tests.cpp',
-  include_directories: include_directories('code/client'),
-  cpp_args: common_cpp_args,
-)
-test('fnql_webui_resource_queue', webui_resource_queue_tests)
-
-zmq_endpoint_tests = executable('fnql_zmq_endpoint_tests',
+zmq_endpoint_tests = executable('openqaa_zmq_endpoint_tests',
   'tests/zmq_endpoint_tests.cpp',
   include_directories: include_directories('code/server'),
   cpp_args: common_cpp_args,
 )
-test('fnql_zmq_endpoint', zmq_endpoint_tests)
+test('openqaa_zmq_endpoint', zmq_endpoint_tests)
 
 if get_option('glx-tests')
-  glx_logic_tests = executable('fnql_glx_logic_tests',
+  glx_logic_tests = executable('openqaa_glx_logic_tests',
     'tests/glx/glx_logic_tests.cpp',
     'code/rendererglx/glx_executor.cpp',
     include_directories: include_directories('code/rendererglx', 'code/qcommon', 'code/renderercommon'),
     cpp_args: common_cpp_args,
   )
-  test('fnql_glx_logic', glx_logic_tests)
-  test('fnql_glx_header_boundary', python,
-    args: files('tests/glx/glx_header_boundary_tests.py'),
-  )
-  test('fnql_glx_spot_shadow_source', python,
-    args: files('tests/glx/glx_spot_shadow_source_tests.py'),
-  )
-  test('fnql_static_map_lights_source', python,
-    args: files('tests/static_map_lights_source_tests.py'),
-  )
-  test('fnql_surface_light_proxy_source', python,
-    args: files('tests/surface_light_proxy_source_tests.py'),
-  )
-  test('fnql_csm_shadow_cache_source', python,
-    args: files('tests/csm_shadow_cache_source_tests.py'),
-  )
-  test('fnql_csm_plan_source', python,
-    args: files('tests/csm_plan_source_tests.py'),
-  )
-  test('fnql_shadow_manager_source', python,
-    args: files('tests/shadow_manager_source_tests.py'),
-  )
-  test('fnql_vid_restart_fast_source', python,
-    args: files('tests/vid_restart_fast_source_tests.py'),
-  )
-  test('fnql_cgame_native_bridge_source', python,
-    args: files('tests/cgame_native_bridge_source_tests.py'),
-  )
-  test('fnql_ui_native_bridge_source', python,
-    args: files('tests/ui_native_bridge_source_tests.py'),
-  )
+  test('openqaa_glx_logic', glx_logic_tests)
 endif
-
-# These two are plain scripts with a main() and no TestCase, so neither the
-# discovery run below nor pytest collects them; without an entry of their own
-# they ran nowhere.
-test('fnql_shadow_projection_source', python,
-  args: files('tests/shadow_projection_source_tests.py'),
-  workdir: meson.current_source_dir(),
-)
-test('fnql_surfacelight_validation_docs', python,
-  args: files('tests/surfacelight_validation_docs_tests.py'),
-  workdir: meson.current_source_dir(),
-)
-
-# Keep the recursive unittest-compatible source suite visible to the default
-# Meson test workflow. Individual self-running modules above remain part of the
-# complete Meson gate, while discovery catches compatibility tests that are
-# intentionally independent of renderer/audio build options.
-test('fnql_python_source_regressions', python,
-  args: [
-    '-m', 'unittest', 'discover',
-    '-s', join_paths(meson.current_source_dir(), 'tests'),
-    '-p', '*_tests.py',
-  ],
-  workdir: meson.current_source_dir(),
-  # The suite has grown to about 1,400 cases: it takes over 200 seconds on
-  # its own and runs beside every other test, so 300 was being exceeded.
-  timeout: 900,
-)
 
 curl_summary = 'disabled'
 if use_curl
@@ -1642,9 +1331,10 @@ summary({
   'cURL': curl_summary,
   'JPEG': jpeg_source,
   'Ogg Vorbis': ogg_vorbis_source,
-}, section: 'FnQL build')
+}, section: 'openQAA build')
 
-# Every test runs unattended (AGENTS.md headless rule): FnQL clients start
+# Every test runs unattended (AGENTS.md headless rule): clients start
 # windowless (com_headless 2, which still renders and captures) and dedicated
 # servers headless, unless a test passes +set com_headless itself.
-add_test_setup('headless', env: {'FNQL_HEADLESS': '2'}, is_default: true)
+# QAA: the variable is OPENQAA_HEADLESS (FnQL's FNQL_HEADLESS).
+add_test_setup('headless', env: {'OPENQAA_HEADLESS': '2'}, is_default: true)

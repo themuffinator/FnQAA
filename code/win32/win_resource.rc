@@ -8,7 +8,8 @@
 // Generated from the TEXTINCLUDE 2 resource.
 //
 #include <winresrc.h>
-#include "../../version/fnql_version.h"
+// QAA: openQAA version metadata and icon (the icon is still FnQL's).
+#include "../../version/openqaa_version.h"
 
 /////////////////////////////////////////////////////////////////////////////
 #undef APSTUDIO_READONLY_SYMBOLS
@@ -55,9 +56,9 @@ END
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
 #ifndef __MINGW32__
-IDI_ICON1               ICON    DISCARDABLE     "fnql.ico"
+IDI_ICON1               ICON    DISCARDABLE     "openqaa.ico"
 #else
-IDI_ICON1               ICON    DISCARDABLE     "code/win32/fnql.ico"
+IDI_ICON1               ICON    DISCARDABLE     "code/win32/openqaa.ico"
 #endif
 
 
@@ -68,7 +69,7 @@ IDI_ICON1               ICON    DISCARDABLE     "code/win32/fnql.ico"
 
 STRINGTABLE DISCARDABLE 
 BEGIN
-    IDS_STRING1             FNQL_PROJECT_NAME
+    IDS_STRING1             OPENQAA_PROJECT_NAME
 END
 
 /////////////////////////////////////////////////////////////////////////////
@@ -77,8 +78,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION FNQL_WINDOWS_FILE_VERSION
- PRODUCTVERSION FNQL_WINDOWS_PRODUCT_VERSION
+ FILEVERSION OPENQAA_WINDOWS_FILE_VERSION
+ PRODUCTVERSION OPENQAA_WINDOWS_PRODUCT_VERSION
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -93,10 +94,10 @@ BEGIN
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "FileDescription", FNQL_PROJECT_NAME " engine" "\0"
-            VALUE "FileVersion", FNQL_VERSION_STRING "\0"
-            VALUE "ProductName", FNQL_PROJECT_NAME "\0"
-            VALUE "ProductVersion", FNQL_VERSION_STRING "\0"
+            VALUE "FileDescription", OPENQAA_PROJECT_NAME " engine" "\0"
+            VALUE "FileVersion", OPENQAA_VERSION_STRING "\0"
+            VALUE "ProductName", OPENQAA_PROJECT_NAME "\0"
+            VALUE "ProductVersion", OPENQAA_VERSION_STRING "\0"
         END
     END
     BLOCK "VarFileInfo"

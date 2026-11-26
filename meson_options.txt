@@ -1,7 +1,7 @@
 option('build-client',
   type: 'boolean',
   value: true,
-  description: 'Build the unified FnQL client executable')
+  description: 'Build the unified openQAA client executable')
 
 option('build-server',
   type: 'boolean',
@@ -74,4 +74,4 @@ option('glx-tests',
 option('strict-warnings',
   type: 'boolean',
   value: false,
-  description: 'Treat warnings in FnQL-owned targets as build errors')
+  description: 'Treat warnings in openQAA-owned targets as build errors')

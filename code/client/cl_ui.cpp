@@ -2052,11 +2052,15 @@ void CL_InitUI( void ) {
 			fs_reordered = qfalse;
 			FS_PureServerSetLoadedPaks( "", "" );
 			uivm = VM_CreateNative( VM_UI, CL_UISystemCalls, UI_DllSyscall, interpret, ql_ui_imports, UI_QL_API_VERSION );
-			if ( !uivm ) {
-				Com_Error( ERR_FATAL, CL_UI_CREATE_FAILURE );
-			}
-		} else {
-			Com_Error( ERR_FATAL, CL_UI_CREATE_FAILURE );
+		}
+		// QAA: Quake Arena Arcade ships no ui module (docs/PLAN.md): its
+		// menus are Scaleform GFx movies run by default.xex (milestone M6).
+		// The client runs without one instead of failing (FnQL's
+		// CL_UI_CREATE_FAILURE); every UI call site already checks uivm.
+		if ( !uivm ) {
+			Com_Printf( S_COLOR_YELLOW "No ui module: Quake Arena Arcade's menus are not implemented yet; "
+				"the client runs with the console only.\n" );
+			return;
 		}
 	}
 
