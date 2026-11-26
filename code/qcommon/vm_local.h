@@ -189,6 +189,7 @@ struct vm_s {
 	void		*dllImports;
 	int			dllApiVersion;
 	void (*destroy)(vm_t* self);
+	vm_t *(*restart)(vm_t *self);	// QAA: a hosted module restarts itself (VM_CreateHosted)
 
 	// native module provenance: "retail" unless the module identified itself
 	// through FnQL_GetModuleInfo (see qcommon/fnql_module.h)

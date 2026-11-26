@@ -267,6 +267,7 @@ qaa_src = [
 ]
 
 qcommon_src = qaa_src + [
+  'code/qaa/qaa_guest_host.cpp',
   'code/qaa/qaa_null_services.cpp',
   'code/qcommon/cm_load.c',
   'code/qcommon/cm_patch.c',
@@ -394,6 +395,7 @@ renderer_common_src = [
   'code/renderercommon/tr_font.c',
   'code/renderercommon/tr_font_stash.c',
   'code/renderercommon/tr_image_bmp.c',
+  'code/renderercommon/tr_image_dds.c',
   'code/renderercommon/tr_image_jpg.c',
   'code/renderercommon/tr_image_pcx.c',
   'code/renderercommon/tr_image_png.c',

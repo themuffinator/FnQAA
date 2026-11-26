@@ -1,0 +1,39 @@
+; Exports of the shared guest runtime (qaa_guest_runtime), the C API in
+; include/qaa_guest.h, for engines that load it at run time.
+EXPORTS
+	qaa_guest_abort
+	qaa_guest_alloc
+	qaa_guest_base
+	qaa_guest_call
+	qaa_guest_create
+	qaa_guest_destroy
+	qaa_guest_free
+	qaa_guest_is_mapped
+	qaa_guest_last_error
+	qaa_guest_load16
+	qaa_guest_load32
+	qaa_guest_load64
+	qaa_guest_load8
+	qaa_guest_loadd
+	qaa_guest_loadf
+	qaa_guest_read
+	qaa_guest_set_executable_header
+	qaa_guest_store16
+	qaa_guest_store32
+	qaa_guest_store64
+	qaa_guest_store8
+	qaa_guest_stored
+	qaa_guest_storef
+	qaa_guest_strnlen
+	qaa_guest_translate
+	qaa_guest_write
+	qaa_module_base
+	qaa_module_dll_entry
+	qaa_module_export
+	qaa_module_guest
+	qaa_module_host_function
+	qaa_module_load
+	qaa_module_name
+	qaa_module_size
+	qaa_module_unload
+	qaa_module_vm_main

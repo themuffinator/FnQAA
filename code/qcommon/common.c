@@ -316,6 +316,18 @@ void NORETURN FORMAT_PRINTF(2, 3) QDECL Com_Error( errorParm_t code, const char 
 	static qboolean	calledSysError = qfalse;
 	int			currentTime;
 
+	// QAA: an error raised while QAA's recompiled game code is running first
+	// unwinds the guest, then is raised again once back in the engine
+	// (code/qaa/qaa_guest_host.cpp). Unwinding with longjmp across the guest
+	// runtime's frames would leave it inconsistent.
+	if ( QAA_Host_InGuest() ) {
+		char qaaMessage[MAXPRINTMSG];
+		va_start( argptr, fmt );
+		Q_vsnprintf( qaaMessage, sizeof( qaaMessage ), fmt, argptr );
+		va_end( argptr );
+		QAA_Host_ComErrorHook( code, qaaMessage );
+	}
+
 #if defined(_WIN32) && defined(_DEBUG)
 	if ( code != ERR_DISCONNECT && code != ERR_NEED_CD ) {
 		if ( !Com_IsWindowless() && com_noErrorInterrupt && !com_noErrorInterrupt->integer ) {

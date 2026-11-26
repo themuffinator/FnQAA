@@ -8,13 +8,11 @@ own game code, its `qagameXe.dll` and `cgameXe.dll` modules, is statically
 recompiled from your package into native code on your machine. No game data
 or game code is included in this repository.
 
-> **Status: M3.** The FnQL engine builds as `openqaa` and `openqaa-ded`,
-> mounts the game's data straight from your XBLA package without extracting
-> anything, and boots from the game's own `default.cfg`. QAA's retail
-> `qagame` and `cgame` modules recompile from your package into native
-> libraries, and both run their initialisation in a headless test harness.
-> The engine does not host them yet (M4, M5), and the menus (M6) are still
-> to come, so the game does not play yet. See [the plan](docs/PLAN.md).
+> **Status: M4 and M5 under way.** The engine mounts your XBLA package in
+> place and runs Quake Arena Arcade's own game code, recompiled from your
+> package: a local game on `q3dm6` plays and renders, headless. Bots, the
+> Scaleform HUD and menus (M6) and sound are still to come, so the game is
+> not yet playable as on the Xbox. See [the plan](docs/PLAN.md).
 
 ## Build
 
@@ -68,7 +66,9 @@ python tools/recomp/build.py --package <package>
 
 This decodes `qagameXe.dll` and `cgameXe.dll` from your package, recompiles
 them with a patched [XenonRecomp](https://github.com/hedge-dev/XenonRecomp)
-and builds native libraries under `build/recomp/` (never committed).
+and builds native libraries under `build/recomp/` (never committed). The
+engine finds them there (or set `qaa_modulePath`) and runs them in place of
+a game module; `+set qaa_game 0` turns that off.
 [docs/RECOMP.md](docs/RECOMP.md) has the requirements, the tests and the
 guest runtime's design.
 

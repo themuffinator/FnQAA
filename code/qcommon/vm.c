@@ -1891,6 +1891,10 @@ This allows a server to do a map_restart without changing memory allocation
 vm_t *VM_Restart( vm_t *vm ) {
 	vmHeader_t	*header;
 
+	if ( vm->restart ) {	// QAA: hosted modules restart themselves
+		return vm->restart( vm );
+	}
+
 	// DLL's can't be restarted in place
 	if ( vm->dllHandle ) {
 		syscall_t		systemCall;
@@ -2658,6 +2662,35 @@ If image ends in .qvm it will be interpreted, otherwise
 it will attempt to load as a system dll
 ================
 */
+/*
+================
+VM_CreateHosted
+
+QAA: a module the engine hosts itself. VM_Call reaches entry with the
+command and up to 15 int32 arguments, as for a native module's vmMain.
+================
+*/
+vm_t *VM_CreateHosted( vmIndex_t index, vmMainFunc_t entry, void (*destroy)( vm_t *self ), vm_t *(*restart)( vm_t *self ) ) {
+	vm_t *vm;
+
+	if ( (unsigned)index >= VM_COUNT || !entry ) {
+		Com_Error( ERR_FATAL, "VM_CreateHosted: bad parms" );
+	}
+	vm = &vmTable[ index ];
+	if ( vm->name ) {
+		VM_Free( vm );
+	}
+	vm->name = vmName[ index ];
+	vm->index = index;
+	vm->entryPoint = entry;
+	vm->destroy = destroy;
+	vm->restart = restart;
+	vm->privateFlag = CVAR_PRIVATE;
+	Q_strncpyz( vm->providerName, "qaa-recompiled", sizeof( vm->providerName ) );
+	return vm;
+}
+
+
 vm_t *VM_Create( vmIndex_t index, syscall_t systemCalls, dllSyscall_t dllSyscalls, vmInterpret_t interpret ) {
 	return VM_CreateNative( index, systemCalls, dllSyscalls, interpret, NULL, 0 );
 }

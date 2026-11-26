@@ -542,6 +542,15 @@ qboolean SV_FactoryExists( const char *factoryName ) {
 	return factoryCatalog.FindFirst( factoryName ) ? qtrue : qfalse;
 }
 
+// QAA: Quake Arena Arcade ships no factories (scripts/factories.txt is a
+// Quake Live file), and its map command is Quake III's: "map <name>".
+qboolean SV_FactoryCatalogEmpty( void ) {
+	if ( !factoryRuntimeInitialized ) {
+		SV_FactoryInit();
+	}
+	return factoryCatalog.Definitions().empty() ? qtrue : qfalse;
+}
+
 qboolean SV_FactoryHasActive( void ) {
 	if ( !factoryRuntimeInitialized ) {
 		SV_FactoryInit();

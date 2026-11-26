@@ -1174,7 +1174,8 @@ static const imageExtToLoaderMap_t imageLoaders[] =
 	{ "jpeg", R_LoadJPG },
 	{ "pcx",  R_LoadPCX },
 	{ "bmp",  R_LoadBMP },
-	{ "wal",  R_LoadWAL }
+	{ "wal",  R_LoadWAL },
+	{ "dds",  R_LoadDDS }	// QAA: last, so a .tga or .jpg name falls back to QAA's .dds
 };
 
 static const int numImageLoaders = ARRAY_LEN( imageLoaders );

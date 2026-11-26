@@ -444,6 +444,7 @@ void SV_MapPoolReload_f( void );
 void SV_StartRandomMap_f( void );
 qboolean SV_FactoryExists( const char *factoryName );
 qboolean SV_FactoryHasActive( void );
+qboolean SV_FactoryCatalogEmpty( void );	// QAA: no factories, Quake III's map command
 void SV_FactoryActiveTags( char *buffer, int bufferSize );
 qboolean SV_FactoryPrepareMap( const char *mapName, const char *factoryName,
 	qboolean factoryArgumentPresent, qboolean developerMap );

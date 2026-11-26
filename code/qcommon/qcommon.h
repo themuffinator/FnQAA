@@ -470,6 +470,18 @@ void	VM_Init( void );
 void	VM_MigrateArchivedProviders( void );	// after the configs execute, before command-line +set
 vm_t	*VM_Create( vmIndex_t index, syscall_t systemCalls, dllSyscall_t dllSyscalls, vmInterpret_t interpret );
 vm_t	*VM_CreateNative( vmIndex_t index, syscall_t systemCalls, dllSyscall_t dllSyscalls, vmInterpret_t interpret, void *dllImports, int dllApiVersion );
+// QAA: a module the engine hosts itself (QAA's recompiled qagame and cgame): VM_Call goes to entry,
+// VM_Free to destroy and VM_Restart to restart.
+// QAA: the guest runtime's error hook (code/qaa/qaa_guest_host.cpp)
+#ifdef __cplusplus
+extern "C" {
+#endif
+int QAA_Host_InGuest( void );
+void QAA_Host_ComErrorHook( int code, const char *message );
+#ifdef __cplusplus
+}
+#endif
+vm_t	*VM_CreateHosted( vmIndex_t index, vmMainFunc_t entry, void (*destroy)( vm_t *self ), vm_t *(*restart)( vm_t *self ) );
 qboolean VM_HasPinnedNativeModule( vmIndex_t index );
 qboolean VM_PureNativeCandidate( vmIndex_t index );
 void	VM_SetPureClientModulePaks( const char *checksums );

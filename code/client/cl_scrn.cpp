@@ -1158,7 +1158,7 @@ static void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 
 	// if the menu is going to cover the entire screen, we
 	// don't need to render anything under it
-	if ( uivm && ( !uiFullscreen || drawConnectScreen ) ) {
+	if ( ( uivm || cgvm || cls.state == CA_ACTIVE ) && ( !uiFullscreen || drawConnectScreen ) ) {	// QAA: also without a ui module
 		switch( cls.state ) {
 		default:
 			Com_Error( ERR_FATAL, "SCR_DrawScreenField: bad cls.state" );
@@ -1169,7 +1169,7 @@ static void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 		case CA_DISCONNECTED:
 			// Do not reset an existing native or browser menu every frame: doing
 			// so restarts its background music on every key event.
-			if ( !uiMenuVisible && !( Key_GetCatcher() & KEYCATCH_UI )
+			if ( uivm && !uiMenuVisible && !( Key_GetCatcher() & KEYCATCH_UI )	// QAA: uivm may be absent
 				&& !browserOverlayRequested ) {
 				S_StopAllSounds();
 				VM_Call( uivm, 1, UI_SET_ACTIVE_MENU, UIMENU_MAIN );
@@ -1181,8 +1181,10 @@ static void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 			// connecting clients will only show the connection dialog
 			SCR_DrawRetailConnectBackdrop();
 			// refresh to update the time
-			VM_Call( uivm, 1, UI_REFRESH, cls.realtime );
-			VM_Call( uivm, 1, UI_DRAW_CONNECT_SCREEN, qfalse );
+			if ( uivm ) {	// QAA: uivm may be absent
+				VM_Call( uivm, 1, UI_REFRESH, cls.realtime );
+				VM_Call( uivm, 1, UI_DRAW_CONNECT_SCREEN, qfalse );
+			}
 			break;
 		case CA_LOADING:
 		case CA_PRIMED:
@@ -1193,8 +1195,10 @@ static void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 			// also draw the connection information, so it doesn't
 			// flash away too briefly on local or lan games
 			// refresh to update the time
-			VM_Call( uivm, 1, UI_REFRESH, cls.realtime );
-			VM_Call( uivm, 1, UI_DRAW_CONNECT_SCREEN, qtrue );
+			if ( uivm ) {	// QAA: uivm may be absent
+				VM_Call( uivm, 1, UI_REFRESH, cls.realtime );
+				VM_Call( uivm, 1, UI_DRAW_CONNECT_SCREEN, qtrue );
+			}
 			break;
 		case CA_ACTIVE:
 			// always supply STEREO_CENTER as vieworg offset is now done by the engine.
@@ -1284,7 +1288,9 @@ void SCR_UpdateScreen( void ) {
 
 	// If there is no VM, there are also no rendering commands issued. Stop the renderer in
 	// that case.
-	if ( uivm )
+	// QAA: Quake Arena Arcade has no ui module (its menus are Scaleform, M6),
+	// so the cgame and the console still draw without one.
+	if ( uivm || cls.rendererStarted )
 	{
 		// XXX
 		int in_anaglyphMode = Cvar_VariableIntegerValue("r_anaglyphMode");

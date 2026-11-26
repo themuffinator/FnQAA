@@ -1576,6 +1576,10 @@ static int FloatAsInt( float f ) {
 }
 
 
+// QAA: QAA's recompiled cgame (cl_qaa_cgame.inc, included at the end)
+static vm_t *QAA_CL_LoadCGameVM( void );
+static bool QAA_CL_UseRecompiledCgame( void );
+
 static void *VM_ArgPtr( intptr_t intValue ) {
 
 	if ( !intValue || cgvm == nullptr )
@@ -2743,6 +2747,11 @@ that path is allowed, while preserving explicit bytecode/compiled fallback.
 static vm_t *CL_LoadCGameVM( vmInterpret_t interpret ) {
 	vm_t	*vm;
 
+	// QAA: Quake Arena Arcade's own cgame, recompiled, unless qaa_game is 0
+	if ( ( vm = QAA_CL_LoadCGameVM() ) != nullptr ) {
+		return vm;
+	}
+
 	if ( !CL_InitCGameImports() ) {
 		Com_Printf( S_COLOR_RED "Native cgame import table validation failed.\n" );
 		return nullptr;
@@ -2780,6 +2789,11 @@ void CL_RegisterCGameCvars( void ) {
 	vmInterpret_t	interpret;
 
 	if ( cgvm || ( com_dedicated && com_dedicated->integer ) ) {
+		return;
+	}
+	// QAA: early cvar registration is a Quake Live native-module export;
+	// QAA's cgame registers its cvars in CG_INIT
+	if ( QAA_CL_UseRecompiledCgame() ) {
 		return;
 	}
 
@@ -3201,3 +3215,7 @@ void CL_SetCGameTime( void ) {
 		}
 	}
 }
+
+
+// QAA: hosting QAA's recompiled cgame
+#include "cl_qaa_cgame.inc"

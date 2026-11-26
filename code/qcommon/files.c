@@ -6516,6 +6516,8 @@ void FS_Shutdown( qboolean closemfp )
 	Cmd_RemoveCommand( "which" );
 	Cmd_RemoveCommand( "lsof" );
 	Cmd_RemoveCommand( "fs_restart" );
+	Cmd_RemoveCommand( "qaa_bpkread" );	// QAA
+	Cmd_RemoveCommand( "qaa_info" );	// QAA
 }
 
 

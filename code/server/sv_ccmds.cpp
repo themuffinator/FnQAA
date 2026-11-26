@@ -167,6 +167,9 @@ static void SV_Map_f( void ) {
 
 	cmd = Cmd_Argv(0);
 	singlePlayerCommand = Q_stricmpn( cmd, "sp", 2 ) == 0;
+	// QAA: without factories (Quake Arena Arcade has none) map and devmap take
+	// just the map name, as in Quake III and in QAA's own engine
+	const bool quake3MapCommand = !singlePlayerCommand && SV_FactoryCatalogEmpty();
 	map = Cmd_Argv(1);
 	if ( !map || !*map ) {
 		if ( singlePlayerCommand ) {
@@ -179,7 +182,7 @@ static void SV_Map_f( void ) {
 	// Retail enforces the factory argument threshold before touching the BSP.
 	// An explicitly present empty argv[2] still passes this preflight and is
 	// subsequently treated as an invalid exact factory when no selection exists.
-	if ( !singlePlayerCommand && Cmd_Argc() < 3 && !SV_FactoryHasActive() ) {
+	if ( !singlePlayerCommand && !quake3MapCommand && Cmd_Argc() < 3 && !SV_FactoryHasActive() ) {
 		SV_FactoryPrintMapUsage( cmd );
 		return;
 	}
@@ -237,7 +240,7 @@ static void SV_Map_f( void ) {
 	// Retail QL's map command owns factory selection.  Keep the inherited
 	// single-player aliases intact, but require/reuse a factory for map and
 	// devmap before any level state is torn down.
-	if ( !singlePlayerCommand &&
+	if ( !singlePlayerCommand && !quake3MapCommand &&
 		!SV_FactoryPrepareMap( map, Cmd_Argv( 2 ), SV_QBool( Cmd_Argc() >= 3 ),
 			SV_QBool( cheat ) ) ) {
 		return;

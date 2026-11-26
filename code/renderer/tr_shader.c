@@ -4177,6 +4177,7 @@ static void ScanAndLoadShaderFiles( void )
 	int shaderTextHashTableSizes[MAX_SHADERTEXT_HASH], hash, size;
 
 	long sum = 0;
+	qboolean qaaShaderList = qfalse;	// QAA
 
 	// scan for legacy shader files
 	shaderFiles = ri.FS_ListFiles( "scripts", ".shader", &numShaderFiles );
@@ -4187,6 +4188,20 @@ static void ScanAndLoadShaderFiles( void )
 	} else {
 		shaderxFiles = NULL;
 		numShaderxFiles = 0;
+	}
+
+	// QAA: Quake Arena Arcade's renderer loads one script by name,
+	// scripts/master.shader (default.xex string 0x820CB3E8); its pak0.bpk
+	// cannot be listed, so the scan above finds nothing there
+	if ( ( !shaderFiles || !numShaderFiles ) && ri.FS_ReadFile( "scripts/master.shader", NULL ) > 0 ) {
+		static char qaaMasterShader[] = "master.shader";
+		static char *qaaShaderFiles[] = { qaaMasterShader, NULL };
+		if ( shaderFiles ) {
+			ri.FS_FreeFileList( shaderFiles );
+		}
+		shaderFiles = qaaShaderFiles;
+		numShaderFiles = 1;
+		qaaShaderList = qtrue;
 	}
 
 	if ( (!shaderFiles || !numShaderFiles) && (!shaderxFiles || !numShaderxFiles) ) {
@@ -4237,7 +4252,7 @@ static void ScanAndLoadShaderFiles( void )
 	// free up memory
 	if ( shaderxFiles )
 		ri.FS_FreeFileList( shaderxFiles );
-	if ( shaderFiles )
+	if ( shaderFiles && !qaaShaderList )	// QAA: not the static master.shader list
 		ri.FS_FreeFileList( shaderFiles );
 
 	//COM_Compress( s_shaderText );

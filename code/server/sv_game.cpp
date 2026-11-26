@@ -125,6 +125,11 @@ const char *SelectServerEntityString()
 
 } // namespace
 
+// QAA: QAA's recompiled qagame (sv_qaa_game.inc, included at the end)
+static void QAA_SV_RefreshEntity( int num );
+static void QAA_SV_RefreshClient( int num );
+static vm_t *QAA_SV_LoadGameModule( void );
+
 // these functions must be used instead of pointer arithmetic, because
 // the game allocates gentities with private information after the server shared part
 int	SV_NumForGentity( sharedEntity_t *ent ) {
@@ -139,6 +144,7 @@ int	SV_NumForGentity( sharedEntity_t *ent ) {
 sharedEntity_t *SV_GentityNum( int num ) {
 	sharedEntity_t *ent;
 
+	QAA_SV_RefreshEntity( num );	// QAA: the host copy follows the guest entity
 	ent = reinterpret_cast<sharedEntity_t *>( reinterpret_cast<byte *>( sv.gentities ) + sv.gentitySize * num );
 
 	return ent;
@@ -148,6 +154,7 @@ sharedEntity_t *SV_GentityNum( int num ) {
 playerState_t *SV_GameClientNum( int num ) {
 	playerState_t	*ps;
 
+	QAA_SV_RefreshClient( num );	// QAA: the host copy follows the guest player state
 	ps = reinterpret_cast<playerState_t *>( reinterpret_cast<byte *>( sv.gameClients ) + sv.gameClientSize * num );
 
 	return ps;
@@ -2741,6 +2748,11 @@ SV_LoadGameModule
 =============
 */
 static vm_t *SV_LoadGameModule( vmInterpret_t interpret ) {
+	// QAA: Quake Arena Arcade's own qagame, recompiled, unless qaa_game is 0
+	if ( vm_t *qaaVm = QAA_SV_LoadGameModule() ) {
+		return qaaVm;
+	}
+
 	SV_InitGameImports();
 
 	return VM_CreateNative( VM_GAME, SV_GameSystemCalls, SV_DllSyscall, interpret,
@@ -2855,3 +2867,7 @@ qboolean SV_GameCommand( void ) {
 
 	return SV_QBool( VM_Call( gvm, 0, GAME_CONSOLE_COMMAND ) != 0 );
 }
+
+
+// QAA: hosting QAA's recompiled qagame
+#include "sv_qaa_game.inc"

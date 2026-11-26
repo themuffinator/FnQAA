@@ -96,14 +96,32 @@ run has raised one.
 function tables and the shared structure layouts are recovered from
 `default.xex` and both modules ([ABI.md](ABI.md), `data/abi/`).
 
-**M4 Server game.** Host the recompiled qagame in the engine: the trap
-bridge and engine function table from ABI.md, with structure translation,
-and the guest runtime's file calls backed by the engine filesystem. Gates: a
-headless `devmap` loads a QAA map and takes a screenshot (M2's gate), and a
-headless server runs a map with bots for N frames, deterministically.
+**M4 Server game** (in progress). The engine hosts the recompiled qagame
+(`code/server/sv_qaa_game.inc`): QAA's vmMain numbering, its game traps
+with structure translation (`code/qaa/qaa_structs.h`), its engine function
+table, host copies of entities and player states that follow guest memory,
+and the guest runtime loaded as a shared library
+(`code/qaa/qaa_guest_host.cpp`). Engine errors raised inside guest code
+unwind the guest first. `map` and `devmap` take Quake III's arguments when
+there are no factories, as QAA's engine does. Done: a headless dedicated
+server runs `q3dm6` with QAA's game code. Open: bots (the botlib traps
+200-581 need their structures bridged; until then `BOTLIB_SETUP` fails and
+the game runs without bots), and the engine's Quake Live cvar defaults
+(`fraglimit`, `timelimit`) that override QAA's.
 
-**M5 Client game.** The cgame trap table and bridge. Gate: a headless
-client renders a match with QAA's HUD.
+**M5 Client game** (in progress). The engine hosts the recompiled cgame
+(`code/client/cl_qaa_cgame.inc`): QAA's trap numbering converted into
+FnQL's dispatcher, snapshot, game state, glconfig, refEntity and font
+translation, and the cgame engine table. The renderer reads QAA's DDS
+textures (`code/renderercommon/tr_image_dds.c`) and loads
+`scripts/master.shader` by name, as QAA's renderer does; the client draws
+without a ui module. Done: a headless client plays `q3dm6` and takes a
+screenshot of the world, items and view weapon. Open: the HUD is
+Scaleform (`ui/hud.gfx`), so it arrives with M6; sound is untested; the
+DrawStretchPic y-flip QAA's engine applies is to be checked once 2D draws;
+`S_AddRealLoopingSound` stands in for QAA's own looping-sound call. PC
+deviation: the cgame's model-loading thread is off
+(`cg_asyncModelLoading 0`), because FnQL's renderer is single-threaded.
 
 **M6 Menus.** QAA's Scaleform front end. Preferred path: recompile the
 SFUI and GFx player code from `default.xex` with the same pipeline and give

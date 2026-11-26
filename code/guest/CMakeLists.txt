@@ -29,6 +29,28 @@ if(NOT WIN32)
 	target_link_libraries(qaa_guest PUBLIC ${CMAKE_DL_LIBS} pthread)
 endif()
 
+# The same runtime as a shared library, for engines built with another
+# compiler (the engine builds with MSVC; XenonRecomp's headers need clang).
+# The engine loads it at run time and binds the C API of qaa_guest.h by name.
+add_library(qaa_guest_runtime SHARED
+	src/guest.cpp
+	src/kernel.cpp
+	$<$<BOOL:${WIN32}>:${QAA_GUEST_DIR}/qaa_guest.def>
+)
+target_include_directories(qaa_guest_runtime
+	PUBLIC
+		${QAA_GUEST_DIR}/include
+	PRIVATE
+		${QAA_GUEST_DIR}/src
+		${QAA_XENONRECOMP_SRC}/XenonUtils
+		${QAA_XENONRECOMP_SRC}/thirdparty/simde
+)
+target_compile_features(qaa_guest_runtime PUBLIC cxx_std_20)
+target_compile_definitions(qaa_guest_runtime PRIVATE _CRT_SECURE_NO_WARNINGS)
+if(NOT WIN32)
+	target_link_libraries(qaa_guest_runtime PUBLIC ${CMAKE_DL_LIBS} pthread)
+endif()
+
 # Compile options every guest-code translation unit needs.
 function(qaa_guest_code_options target)
 	if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -44,6 +66,7 @@ function(qaa_guest_code_options target)
 	endif()
 endfunction()
 qaa_guest_code_options(qaa_guest)
+qaa_guest_code_options(qaa_guest_runtime)
 
 # A hand-written module in the recompiler's output style: no retail data.
 add_library(qaa_synthetic_module SHARED tests/synthetic/synthetic_module.cpp)
