@@ -43,10 +43,8 @@ void S_UpdateBackgroundTrack( void );
 void S_RawSamples (int samples, int rate, int width, int channels,
 					const byte *data, float volume);
 
-// Queues one decoded remote-speaker packet without sharing the cinematic/raw
-// stream. The explicit rate keeps the fallback mixer correct when s_khz does
-// not match Steam's requested decode rate.
-void S_AddVoiceSamples( int clientNum, int samples, int rate, const short *data );
+// QAA: PC deviation. QAA has no Steam voice chat; FnQL's remote-voice
+// playback (S_AddVoiceSamples, s_voiceVolume, s_voiceStep) is removed.
 
 // stop all sounds and the background track
 void S_StopAllSounds( void );

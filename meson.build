@@ -256,8 +256,8 @@ include_dirs = include_directories(
   'code',
 )
 
-# QAA: Steam and the Workshop are replaced by a null backend (QAA has no
-# Steam); the QAA package readers live in code/qaa.
+# QAA: FnQL's Steam integration and Workshop are removed (QAA has no Steam);
+# the QAA package readers live in code/qaa.
 qaa_src = [
   'code/qaa/qaa_bpk.c',
   'code/qaa/qaa_bpk_archive.c',
@@ -268,7 +268,6 @@ qaa_src = [
 
 qcommon_src = qaa_src + [
   'code/qaa/qaa_guest_host.cpp',
-  'code/qaa/qaa_null_services.cpp',
   'code/qcommon/cm_load.c',
   'code/qcommon/cm_patch.c',
   'code/qcommon/cm_polylib.c',
@@ -326,7 +325,6 @@ server_src = [
   'code/server/sv_lockstep.cpp',
   'code/server/sv_main.cpp',
   'code/server/sv_net_chan.cpp',
-  'code/server/sv_platform.cpp',
 	'code/server/sv_factory.cpp',
   'code/server/sv_snapshot.cpp',
   'code/server/sv_world.cpp',
@@ -342,7 +340,6 @@ client_src = [
   'code/client/cl_jpeg.cpp',
   'code/client/cl_keys.cpp',
   'code/client/cl_main.cpp',
-  'code/client/cl_workshop.cpp',
   'code/client/cl_net_chan.cpp',
   'code/client/cl_parse.cpp',
   'code/client/cl_scrn.cpp',
@@ -1004,13 +1001,6 @@ if get_option('audio-tests')
   )
   test('openqaa_audio_tone', audio_tone_tests)
 
-  audio_voice_queue_tests = executable('openqaa_audio_voice_queue_tests',
-    'tests/audio/voice_queue_tests.cpp',
-    include_directories: include_directories('code/client/audio/shared'),
-    cpp_args: common_cpp_args,
-  )
-  test('openqaa_audio_voice_queue', audio_voice_queue_tests)
-
   audio_loopback_tests = executable('openqaa_audio_loopback_tests',
     'tests/audio/openal_loopback_tests.cpp',
     dependencies: client_deps + [openal_header_dep],
@@ -1225,7 +1215,7 @@ test('openqaa_protocol_contract', protocol_contract_tests)
 
 retail_auth_challenge_tests = executable('openqaa_retail_auth_challenge_tests',
   'tests/retail_auth_challenge_tests.cpp',
-  include_directories: include_directories('code/server'),
+  include_directories: include_directories('code/client'),
   cpp_args: common_cpp_args,
 )
 test('openqaa_retail_auth_challenge', retail_auth_challenge_tests)
@@ -1244,13 +1234,6 @@ factory_rotation_tests = executable('openqaa_factory_rotation_tests',
   cpp_args: common_cpp_args,
 )
 test('openqaa_factory_rotation', factory_rotation_tests)
-
-stats_session_tests = executable('openqaa_stats_session_tests',
-  'tests/stats_session_tests.cpp',
-  include_directories: include_directories('code/server'),
-  cpp_args: common_cpp_args,
-)
-test('openqaa_stats_session', stats_session_tests)
 
 json_document_tests = executable('openqaa_json_document_tests',
   'tests/json_document_tests.cpp',

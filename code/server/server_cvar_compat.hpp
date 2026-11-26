@@ -14,19 +14,12 @@ version.
 #define FNQL_SERVER_CVAR_COMPAT_HPP
 
 #include <cstdint>
-#include <iterator>
 #include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
 
 namespace fnql::server::cvars {
-
-[[nodiscard]] constexpr bool IsAsciiWhitespace( char character ) noexcept
-{
-	return character == ' ' || character == '\t' || character == '\n'
-		|| character == '\r' || character == '\f' || character == '\v';
-}
 
 /*
 Retail sv_serverType ("0", archived; the Start Match page labels the values
@@ -180,100 +173,7 @@ cannot escape its configured game directory on any supported platform.
 	return path;
 }
 
-/*
-Retail Steam game-server identity (quakelive_steam.exe 0.1.0.739). Observed:
-- SteamGameServer_Init receives the build string "1069" (0x466fc1);
-- SetProduct("Quake Live") and SetModDir("baseq3") (0x467090, 0x4670a0);
-- SetGameDescription is the long name of g_gametype from the table at
-  0x560e50, or "Unknown Gametype" beyond it (0x46650b);
-- SetPasswordProtected follows g_needpass, the flag qagame raises when a join
-  password is set, not the private-slot password (0x4662a7).
-The Steam server browser shows the description in its Game column.
-*/
-inline constexpr char kRetailSteamServerVersion[] = "1069";
-inline constexpr char kRetailSteamServerProduct[] = "Quake Live";
-
-[[nodiscard]] constexpr std::string_view SteamGameDescription(
-	int gametype ) noexcept
-{
-	constexpr std::string_view names[] = {
-		"Free For All", "Duel", "Race", "Team Deathmatch", "Clan Arena",
-		"Capture the Flag", "One Flag CTF", "Overload", "Harvester",
-		"Freeze Tag", "Domination", "Attack and Defend", "Red Rover"
-	};
-	return gametype >= 0 && gametype < static_cast<int>( std::size( names ) )
-		? names[gametype] : std::string_view( "Unknown Gametype" );
-}
-
-struct SteamTagInputs {
-	int gametype = 0;
-	bool cheats = false;
-	bool instagib = false;
-	float gravity = 800.0f;
-	bool vampiric = false;
-	bool infected = false;
-	bool quadhog = false;
-	std::string_view fnqlKeywords;
-	std::string_view retailTags;
-	std::string_view factoryTags;
-};
-
-[[nodiscard]] inline std::string BuildSteamGameTags(
-	const SteamTagInputs& inputs, std::size_t maximumBytes )
-{
-	static constexpr std::string_view gametypeTags[] = {
-		"ffa", "duel", "race", "tdm", "clanarena", "ctf", "oneflag",
-		"overload", "harvester", "freezetag", "domination", "a&d",
-		"redrover"
-	};
-	std::string tags;
-	if ( maximumBytes == 0 ) {
-		return tags;
-	}
-
-	const auto append = [&]( std::string_view value ) {
-		std::size_t start = 0;
-		while ( start < value.size() ) {
-			const std::size_t comma = value.find( ',', start );
-			const std::size_t end = comma == std::string_view::npos
-				? value.size() : comma;
-			std::string_view tag = value.substr( start, end - start );
-			while ( !tag.empty() && IsAsciiWhitespace( tag.front() ) ) {
-				tag.remove_prefix( 1 );
-			}
-			while ( !tag.empty() && IsAsciiWhitespace( tag.back() ) ) {
-				tag.remove_suffix( 1 );
-			}
-			if ( !tag.empty() ) {
-				const std::size_t separator = tags.empty() ? 0u : 1u;
-				const std::size_t available = maximumBytes - 1u - tags.size();
-				if ( available > separator ) {
-					if ( separator ) tags.push_back( ',' );
-					tags.append( tag.substr( 0, available - separator ) );
-				}
-			}
-			if ( comma == std::string_view::npos ) break;
-			start = comma + 1;
-		}
-	};
-
-	if ( inputs.gametype >= 0 && static_cast<std::size_t>( inputs.gametype )
-		< std::size( gametypeTags ) ) {
-		append( gametypeTags[inputs.gametype] );
-	}
-	if ( inputs.cheats ) append( "cheats" );
-	if ( inputs.instagib ) append( "instagib" );
-	if ( inputs.gravity < 800.0f ) append( "lowgrav" );
-	else if ( inputs.gravity > 800.0f ) append( "highgrav" );
-	if ( inputs.vampiric ) append( "vampiric" );
-	if ( inputs.gametype == 12 && inputs.infected ) append( "infected" );
-	if ( inputs.gametype == 0 && inputs.quadhog ) append( "quadhog" );
-	append( inputs.fnqlKeywords );
-	append( inputs.retailTags );
-	// Retail order: sv_tags, then the active factory's tags (0x466744).
-	append( inputs.factoryTags );
-	return tags;
-}
+// QAA: retail's Steam game-server identity and tags are removed (no Steam)
 
 } // namespace fnql::server::cvars
 

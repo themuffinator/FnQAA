@@ -37,7 +37,6 @@ extern "C" {
 
 #include "../../client_cpp.h"
 #include "../shared/AudioInitPolicy.h"
-#include "../shared/AudioVoiceQueue.h"
 
 #include <algorithm>
 #include <array>
@@ -160,107 +159,16 @@ int			s_rawend;
 portable_samplepair_t	s_rawsamples[MAX_RAW_SAMPLES];
 }
 
+// QAA: PC deviation. QAA has no Steam voice chat; FnQL's remote-voice lanes
+// are removed.
 namespace {
-
-struct LegacyVoiceLane {
-	fnql_audio_voice::LaneActivity activity;
-	int startSample = 0;
-	int endSample = 0;
-	std::array<short, fnql_audio_voice::kLaneSampleCapacity> samples{};
-};
-
-static std::array<LegacyVoiceLane, fnql_audio_voice::kMaxLanes> s_voiceLanes;
-
-static void ResetVoiceLanes() {
-	s_voiceLanes.fill( LegacyVoiceLane() );
-}
 
 static int MixPreStepSamples() {
 	const float preStep = ( s_mixPreStep != nullptr ) ? s_mixPreStep->value : 0.0f;
 	return static_cast<int>( preStep * static_cast<float>( dma.speed ) );
 }
 
-static void S_Base_AddVoiceSamples( int clientNum, int samples, int rate, const short *data ) {
-	if ( !s_soundStarted || s_soundMuted || dma.speed <= 0 || data == nullptr || samples <= 0 || rate <= 0 ) {
-		return;
-	}
-
-	std::array<fnql_audio_voice::LaneActivity, fnql_audio_voice::kMaxLanes> activity;
-	for ( size_t i = 0; i < s_voiceLanes.size(); ++i ) {
-		s_voiceLanes[i].activity.queued = s_voiceLanes[i].endSample > s_voiceLanes[i].startSample;
-		activity[i] = s_voiceLanes[i].activity;
-	}
-
-	const int now = Sys_Milliseconds();
-	const int laneIndex = fnql_audio_voice::SelectLane( activity.data(), static_cast<int>( activity.size() ), clientNum, now );
-	if ( laneIndex < 0 ) {
-		Com_DPrintf( "S_AddVoiceSamples: all remote-voice lanes are busy; dropping client %i packet\n", clientNum );
-		return;
-	}
-
-	LegacyVoiceLane &lane = s_voiceLanes[static_cast<size_t>( laneIndex )];
-	if ( lane.activity.clientNum != clientNum ) {
-		lane = LegacyVoiceLane();
-	}
-	if ( lane.startSample < s_paintedtime ) {
-		lane.startSample = ( std::min )( s_paintedtime, lane.endSample );
-	}
-
-	if ( lane.endSample <= lane.startSample ) {
-		const int voiceStepSamples = static_cast<int>(
-			( ( s_voiceStep != nullptr ) ? s_voiceStep->value : 0.0f ) * static_cast<float>( dma.speed ) );
-		lane.startSample = ( std::max )( s_paintedtime, s_soundtime ) + MixPreStepSamples() + voiceStepSamples;
-		lane.endSample = lane.startSample;
-	}
-
-	const int queuedSamples = ( std::max )( 0, lane.endSample - lane.startSample );
-	const int room = fnql_audio_voice::kLaneSampleCapacity - ( std::min )( queuedSamples, fnql_audio_voice::kLaneSampleCapacity );
-	if ( room <= 0 ) {
-		Com_DPrintf( "S_AddVoiceSamples: remote-voice lane %i is full; dropping client %i packet\n", laneIndex, clientNum );
-		return;
-	}
-
-	std::array<short, fnql_audio_voice::kLaneSampleCapacity> converted{};
-	const int convertedSamples = fnql_audio_voice::ResampleMonoPCM16(
-		data, samples, rate, converted.data(), room, dma.speed );
-	for ( int i = 0; i < convertedSamples; ++i ) {
-		lane.samples[static_cast<size_t>( lane.endSample ) & ( fnql_audio_voice::kLaneSampleCapacity - 1 )] = converted[static_cast<size_t>( i )];
-		++lane.endSample;
-	}
-
-	lane.activity.clientNum = clientNum;
-	lane.activity.queued = lane.endSample > lane.startSample;
-	lane.activity.lastPacketMs = now;
-	if ( convertedSamples < fnql_audio_voice::ResampledFrameCount( samples, rate, dma.speed ) ) {
-		Com_DPrintf( "S_AddVoiceSamples: remote-voice lane %i overflowed; truncated client %i packet\n", laneIndex, clientNum );
-	}
-}
-
 } // namespace
-
-extern "C" void S_PaintVoiceSamples( int starttime, int endtime, portable_samplepair_t *paintSamples ) {
-	if ( paintSamples == nullptr || endtime <= starttime ) {
-		return;
-	}
-
-	const float voiceVolume = ( s_voiceVolume != nullptr ) ? s_voiceVolume->value : 1.0f;
-	const int voiceScale = static_cast<int>( ( std::max )( 0.0f, ( std::min )( voiceVolume, 2.0f ) ) * 256.0f );
-	for ( LegacyVoiceLane &lane : s_voiceLanes ) {
-		if ( lane.startSample < starttime ) {
-			lane.startSample = ( std::min )( starttime, lane.endSample );
-		}
-		const int voiceStart = ( std::max )( starttime, lane.startSample );
-		const int voiceEnd = ( std::min )( endtime, lane.endSample );
-		for ( int sampleTime = voiceStart; sampleTime < voiceEnd; ++sampleTime ) {
-			const int sample = lane.samples[static_cast<size_t>( sampleTime ) & ( fnql_audio_voice::kLaneSampleCapacity - 1 )];
-			portable_samplepair_t &output = paintSamples[sampleTime - starttime];
-			output.left += sample * voiceScale;
-			output.right += sample * voiceScale;
-		}
-		lane.startSample = ( std::max )( lane.startSample, voiceEnd );
-		lane.activity.queued = lane.endSample > lane.startSample;
-	}
-}
 
 
 // ====================================================================
@@ -294,15 +202,6 @@ static void S_Base_SoundInfo( void ) {
 		} else {
 			Com_Printf("No background file.\n" );
 		}
-		int activeVoiceLanes = 0;
-		for ( const LegacyVoiceLane &lane : s_voiceLanes ) {
-			if ( lane.endSample > lane.startSample ) {
-				++activeVoiceLanes;
-			}
-		}
-		Com_Printf( "Remote voice lanes: %i allocated, %i active\n",
-			fnql_audio_voice::kMaxLanes, activeVoiceLanes );
-
 	}
 	Com_Printf("----------------------\n" );
 }
@@ -822,7 +721,6 @@ static void S_Base_ClearSoundBuffer( void ) {
 	S_ChannelSetup();
 
 	s_rawend = 0;
-	ResetVoiceLanes();
 
 	if (dma.samplebits == 8)
 		clear = 0x80;
@@ -1789,7 +1687,6 @@ extern "C" qboolean S_Base_Init( soundInterface_t *si ) {
 	si->StopBackgroundTrack = S_Base_StopBackgroundTrack;
 	si->UpdateBackgroundTrack = S_Base_UpdateBackgroundTrack;
 	si->RawSamples = S_Base_RawSamples;
-	si->AddVoiceSamples = S_Base_AddVoiceSamples;
 	si->StopAllSounds = S_Base_StopAllSounds;
 	si->ClearLoopingSoundsFrame = S_Base_ClearLoopingSoundsFrame;
 	si->ClearLoopingSounds = S_Base_ClearLoopingSounds;

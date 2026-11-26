@@ -42,8 +42,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define BASEGAME				"baseq3"
 #define BASEDEMO				"demoq3"
 #define BASETA					"missionpack"
-#define STEAMPATH_NAME			"Quake Live"
-#define STEAMPATH_APPID			"282440"
 
 #define MAX_TEAMNAME            32
 #define MAX_MASTER_SERVERS      5	// number of supported master servers

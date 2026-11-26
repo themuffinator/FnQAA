@@ -1325,18 +1325,6 @@ static void SV_PrintRepeatedChar( char value, int count ) {
 	}
 }
 
-static unsigned long long SV_StatusClientSteamId( int clientNum ) {
-	unsigned int low = 0;
-	unsigned int high = 0;
-
-	if ( !SV_ClientSteamId( clientNum, &low, &high ) ) {
-		return 0ULL;
-	}
-
-	return ( static_cast<unsigned long long>( high ) << 32 ) | static_cast<unsigned long long>( low );
-}
-
-
 /*
 ================
 SV_StatusRetail
@@ -1349,9 +1337,11 @@ qport, rate and SteamID.
 ================
 */
 static void SV_StatusRetail( void ) {
+	// QAA: PC deviation, retail's trailing steamid column is dropped: there
+	// is no Steam identity to show
 	Com_Printf( "map: %s\n", sv_mapname->string );
-	Com_Printf( "num score ping name            lastmsg address               qport rate  steamid\n" );
-	Com_Printf( "--- ----- ---- --------------- ------- --------------------- ----- ----- -----------------\n" );
+	Com_Printf( "num score ping name            lastmsg address               qport rate\n" );
+	Com_Printf( "--- ----- ---- --------------- ------- --------------------- ----- -----\n" );
 
 	for ( SV_ClientSlot slot : SV_ClientSlots() ) {
 		const client_t *cl = &slot.client;
@@ -1389,7 +1379,6 @@ static void SV_StatusRetail( void ) {
 
 		Com_Printf( "%5i", cl->netchan.qport );
 		Com_Printf( " %5i", cl->rate );
-		Com_Printf( " %llu", SV_StatusClientSteamId( slot.index ) );
 		Com_Printf( "\n" );
 	}
 
@@ -1409,7 +1398,6 @@ static void SV_Status_f( void ) {
 	const char *s;
 	int max_namelength;
 	int max_addrlength;
-	unsigned long long steamIdValue;
 	std::array<char, MAX_CLIENTS * MAX_NAME_LENGTH> names{};
 	std::array<char, MAX_CLIENTS * 48> addrs{};
 	std::array<const char *, MAX_CLIENTS> np{};
@@ -1472,13 +1460,13 @@ static void SV_Status_f( void ) {
 	SV_PrintRepeatedChar( ' ', max_namelength - 4 );
 	Com_Printf( " address" );
 	SV_PrintRepeatedChar( ' ', max_addrlength - 7 );
-	Com_Printf( " rate steamid\n" );
+	Com_Printf( " rate\n" );	// QAA: PC deviation, no steamid column (no Steam)
 
 	Com_Printf( "-- ----- ---- " );
 	SV_PrintRepeatedChar( '-', max_namelength );
 	Com_Printf( " " );
 	SV_PrintRepeatedChar( '-', max_addrlength );
-	Com_Printf( " ----- -----------------\n" );
+	Com_Printf( " -----\n" );
 #endif
 
 	for ( SV_ClientSlot slot : SV_ClientSlots() )
@@ -1514,8 +1502,7 @@ static void SV_Status_f( void ) {
 		SV_PrintRepeatedChar( ' ', l );
 
 		// rate
-		steamIdValue = SV_StatusClientSteamId( slot.index );
-		Com_Printf( " %5i %llu\n", cl->rate, steamIdValue );
+		Com_Printf( " %5i\n", cl->rate );
 	}
 
 	Com_Printf( "\n" );
@@ -1754,65 +1741,6 @@ static void SV_CompleteMapName( const char *args, int argNum ) {
 	}
 }
 
-typedef qboolean ( *workshopAction_t )( uint64_t itemId );
-
-static qboolean SV_ParseWorkshopItemId( const char *text, uint64_t *itemId ) {
-	uint64_t value = 0;
-	const uint64_t maxValue = ~static_cast<uint64_t>( 0 );
-
-	if ( itemId ) {
-		*itemId = 0;
-	}
-	if ( !text || !text[0] || !itemId ) {
-		return qfalse;
-	}
-
-	for ( const char *cursor = text; *cursor; ++cursor ) {
-		if ( *cursor < '0' || *cursor > '9' ) {
-			return qfalse;
-		}
-		const uint64_t digit = static_cast<uint64_t>( *cursor - '0' );
-		if ( value > ( maxValue - digit ) / 10u ) {
-			return qfalse;
-		}
-		value = value * 10u + digit;
-	}
-
-	if ( !value ) {
-		return qfalse;
-	}
-	*itemId = value;
-	return qtrue;
-}
-
-static void SV_RunWorkshopCommand( const char *commandName,
-	const char *actionName, workshopAction_t action ) {
-	uint64_t itemId = 0;
-	if ( Cmd_Argc() != 2 || !SV_ParseWorkshopItemId( Cmd_Argv( 1 ), &itemId ) ) {
-		Com_Printf( "usage: %s <workshop item id>\n", commandName );
-		return;
-	}
-	if ( !action( itemId ) ) {
-		Com_Printf( S_COLOR_YELLOW "Unable to %s Workshop item %llu.\n",
-			actionName, static_cast<unsigned long long>( itemId ) );
-	}
-}
-
-static void SV_SteamDownloadUGC_f( void ) {
-	SV_RunWorkshopCommand( "steam_downloadugc", "download",
-		Com_WorkshopDownloadItem );
-}
-
-static void SV_SteamSubscribeUGC_f( void ) {
-	SV_RunWorkshopCommand( "steam_subscribeugc", "subscribe to",
-		Com_WorkshopSubscribeItem );
-}
-
-static void SV_SteamUnsubscribeUGC_f( void ) {
-	SV_RunWorkshopCommand( "steam_unsubscribeugc", "unsubscribe from",
-		Com_WorkshopUnsubscribeItem );
-}
-
 struct operatorCommand_t {
 	const char *name;
 	xcommand_t function;
@@ -1863,11 +1791,6 @@ void SV_AddOperatorCommands( void ) {
 		{ "filter", SV_AddFilter_f },
 		{ "filtercmd", SV_AddFilterCmd_f },
 	}};
-	static constexpr std::array<operatorCommand_t, 3> workshopCommands = {{
-		{ "steam_downloadugc", SV_SteamDownloadUGC_f },
-		{ "steam_subscribeugc", SV_SteamSubscribeUGC_f },
-		{ "steam_unsubscribeugc", SV_SteamUnsubscribeUGC_f },
-	}};
 	static constexpr std::array<operatorCommand_t, 1> mapCommands = {{
 		{ "map", SV_Map_f },
 	}};
@@ -1904,7 +1827,7 @@ void SV_AddOperatorCommands( void ) {
 #endif
 
 	SV_AddCommandSet( commands );
-	SV_AddCommandSet( workshopCommands );
+	// QAA: PC deviation, no steam_*ugc Workshop commands (QAA has no Steam)
 #ifndef STANDALONE
 #ifdef USE_BANS
 	if(!Cvar_VariableIntegerValue("com_standalone"))

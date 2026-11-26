@@ -507,15 +507,6 @@ void CL_StopRecord_f( void );
 
 void CL_InitDownloads( void );
 void CL_NextDownload( void );
-qboolean CL_GetWorkshopDownloadInfo( unsigned int itemIdLow, unsigned int itemIdHigh, unsigned long long *outDownloaded, unsigned long long *outTotal );
-int CL_ParseRequiredWorkshopItems( const char *text, unsigned long long *items, int capacity );
-void CL_Workshop_Init( void );
-void CL_Workshop_Shutdown( void );
-void CL_Workshop_Reset( void );
-qboolean CL_WorkshopDownloadsActive( void );
-qboolean CL_Workshop_BeginRequiredDownloads( const char *requiredItems );
-void CL_Workshop_Frame( void );
-void CL_ResumeDownloadsAfterWorkshop( void );
 
 void CL_GetPing( int n, char *buf, int buflen, int *pingtime );
 void CL_GetPingInfo( int n, char *buf, int buflen );
@@ -532,18 +523,6 @@ int CL_DemoRecordMessageMode( void );
 
 int CL_GetRequestedMode( qboolean fullscreen );
 qboolean CL_GetModeInfo( int *width, int *height, float *windowAspect, int mode, const char *modeFS, int dw, int dh, qboolean fullscreen );
-qboolean CL_CopyClientIdentity( int clientNum, cgameClientIdentity_t *identity );
-qboolean CL_GetClientSteamId( int clientNum, unsigned int *steamIdLow, unsigned int *steamIdHigh );
-qboolean CL_IsSteamIdentityMuted( unsigned int identityLow, unsigned int identityHigh );
-qboolean CL_ToggleSteamIdentityMute( unsigned int identityLow, unsigned int identityHigh );
-qboolean CL_IsVoiceSenderMuted( int clientNum );
-void CL_SetClientSpeakingState( int clientNum, qboolean speaking );
-void CL_SetLocalSpeakingState( qboolean speaking );
-
-void CL_RefreshSteamIdentity( void );
-void CL_EnforceSteamIdentity( void );
-const char *CL_SteamIdentityName( void );
-qboolean CL_SteamIdentityNameLocked( void );
 
 
 //
@@ -559,9 +538,6 @@ typedef enum {
 } clInputCommandSource_t;
 int CL_ValidateInputCommandSource( void );
 void CL_ClearKeyCommandInputState( void );
-void CL_ClearGeneratedVoiceInputState( void );
-void CL_ResetVoiceInputState( void );
-void CL_RemoveVoiceInputSource( int sourceKey );
 void CL_SetRetailClientMessageViewangleDeltaFlag( void );
 void CL_SetRetailClientMessageCGameImportGuardFlag( void );
 void CL_SetRetailClientMessageRendererNodeCount( int nodeCount );
@@ -706,30 +682,6 @@ qboolean CL_LauncherRequestData( const char *virtualPath, void **outBuffer, int 
 //
 // cl_webui.cpp
 //
-void CL_RefreshOnlineServicesBridgeState( void );
-qboolean CL_IsSubscribedApp( int appId );
-qhandle_t CL_GetAvatarImageHandle( unsigned int identityLow, unsigned int identityHigh );
-void CL_ClearAvatarImageHandles( void );
-void CL_Steam_AvatarFrame( void );
-qboolean CL_Steam_OpenOverlayUrl( const char *url );
-qhandle_t CL_Steam_RegisterShader( const char *url );
-qboolean CL_Steam_RequestServers( int requestMode );
-qboolean CL_Steam_RequestServerDetails( unsigned int serverIp, unsigned short serverPort );
-qboolean CL_Steam_RefreshServerList( void );
-qboolean CL_Steam_CreateLobby( void );
-qboolean CL_Steam_LeaveLobby( void );
-qboolean CL_Steam_JoinLobby( const char *lobbyId );
-qboolean CL_Steam_SetLobbyServer( unsigned int serverIp, unsigned short serverPort );
-qboolean CL_Steam_ShowInviteOverlay( void );
-qboolean CL_Steam_Invite( const char *steamId );
-qboolean CL_Steam_SayLobby( const char *message );
-qboolean CL_Steam_RequestAllUGC( int filter );
-qboolean CL_Steam_RequestUserStats( const char *steamId );
-qboolean CL_Steam_ActivateOverlayToUser( const char *dialog, const char *steamId );
-qboolean CL_Steam_GetItemDownloadInfo( unsigned int itemIdLow, unsigned int itemIdHigh, unsigned long long *outDownloaded, unsigned long long *outTotal );
-void CL_Steam_OnRichPresenceJoinRequested( const char *command );
-void CL_Steam_OnGameServerChangeRequested( const char *server, const char *password );
-void CL_SteamP2PFrame( void );
 void QLWebHost_RegisterCommands( void );
 void QLWebHost_UnregisterCommands( void );
 void CL_WebHost_Init( void );
@@ -803,7 +755,7 @@ void CL_AdvertisementBridge_GetLabelList1Entry( int index, char *buffer, int buf
 int CL_AdvertisementBridge_GetLabelList2Count( void );
 void CL_AdvertisementBridge_GetLabelList2Entry( int index, char *buffer, int bufferSize );
 qboolean CL_Awesomium_RequestResource( const char *virtualPath, void **outBuffer, int *outLength );
-qboolean CL_Awesomium_Startup( const char *runtimePath, const char *basePath, const char *retailPath, const char *playerName, unsigned int appId, unsigned int steamIdLow, unsigned int steamIdHigh, int width, int height, const char *initialConfigJson, const char *initialMapJson, const char *initialFactoryJson, const char *initialFriendJson );
+qboolean CL_Awesomium_Startup( const char *runtimePath, const char *basePath, const char *retailPath, const char *playerName, int width, int height, const char *initialConfigJson, const char *initialMapJson, const char *initialFactoryJson, const char *initialFriendJson );
 qboolean CL_Awesomium_OpenURL( const char *url );
 void CL_Awesomium_Update( void );
 qboolean CL_Awesomium_Resize( int width, int height );

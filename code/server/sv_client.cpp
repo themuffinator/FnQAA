@@ -24,58 +24,19 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "server.h"
 #include "../qcommon/protocol_contract.hpp"
 #include "../qcommon/netchan_safety.hpp"
-#include "../platform/fnql_steam.h"
-#include "retail_auth_challenge.hpp"
 #include "server_cvar_compat.hpp"
-#include "stats_contract.hpp"
 #include "stats_event.hpp"
 #include "stats_report.hpp"
-#include "stats_session.hpp"
 #include "game_identity.hpp"
 #include "json_document.hpp"
 
 #include <array>
 #include <cstdint>
-#include <limits>
 
 namespace {
 
-constexpr std::size_t PendingRetailAuthCapacity = 256;
-fnql::server::auth::AuthCache<PendingRetailAuthCapacity> pendingRetailAuth;
-std::array<fnql::server::stats::Session, MAX_CLIENTS> clientStatsSessions;
+// QAA: PC deviation, the Steam auth-ticket cache and stat sessions are gone
 fnql::server::stats::ReportAccumulator statsReports;
-
-fnql::server::auth::AddressKey SV_AuthAddressKey( const netadr_t *address ) {
-	fnql::server::auth::AddressKey key{};
-	if ( !address ) {
-		return key;
-	}
-
-	auto append = [&key]( std::uint8_t value ) {
-		if ( key.used < key.bytes.size() ) {
-			key.bytes[key.used++] = value;
-		}
-	};
-	append( static_cast<std::uint8_t>( address->type ) );
-	append( static_cast<std::uint8_t>( address->port ) );
-	append( static_cast<std::uint8_t>( address->port >> 8u ) );
-	if ( address->type == NA_IP ) {
-		for ( std::uint8_t value : address->ipv._4 ) {
-			append( value );
-		}
-	}
-#ifdef USE_IPV6
-	else if ( address->type == NA_IP6 || address->type == NA_MULTICAST6 ) {
-		for ( std::uint8_t value : address->ipv._6 ) {
-			append( value );
-		}
-		for ( unsigned int shift = 0; shift < 32; shift += 8 ) {
-			append( static_cast<std::uint8_t>( address->scope_id >> shift ) );
-		}
-	}
-#endif
-	return key;
-}
 
 } // namespace
 
@@ -165,7 +126,6 @@ SV_InitChallenger
 */
 void SV_InitChallenger( void )
 {
-	pendingRetailAuth.Clear();
 	statsReports.Reset();
 	Com_MD5Init();
 }
@@ -196,7 +156,7 @@ as well as IPv6 connections, since there is no way to use the
 v4-only auth server for these new types of connections.
 =================
 */
-void SV_GetChallenge( const netadr_t *from, const msg_t *msg ) {
+void SV_GetChallenge( const netadr_t *from ) {
 	int		challenge;
 	int		clientChallenge;
 
@@ -227,34 +187,8 @@ void SV_GetChallenge( const netadr_t *from, const msg_t *msg ) {
 	// Create a unique challenge for this client without storing state on the server
 	challenge = SV_CreateChallenge( svs.time >> TS_SHIFT, from );
 
-	const fnql::server::auth::ParsedChallenge retail =
-		fnql::server::auth::ParseChallengePayload(
-			msg ? reinterpret_cast<const std::uint8_t *>( msg->data ) : nullptr,
-			msg && msg->cursize > 0 ? static_cast<std::size_t>( msg->cursize ) : 0u );
-	if ( retail.kind == fnql::server::auth::ChallengePayloadKind::MalformedRetail ) {
-		Com_DPrintf( "SV_GetChallenge: malformed retail auth payload from %s\n",
-			NET_AdrToString( from ) );
-		return;
-	}
-	if ( retail.kind == fnql::server::auth::ChallengePayloadKind::Retail ) {
-		if ( !pendingRetailAuth.Store( SV_AuthAddressKey( from ), challenge,
-			retail.steamId, retail.ticket, retail.ticketBytes,
-			static_cast<std::uint32_t>( Sys_Milliseconds() ) ) ) {
-			Com_DPrintf( "SV_GetChallenge: could not retain retail auth payload from %s\n",
-				NET_AdrToString( from ) );
-			return;
-		}
-		if ( retail.fnqlExtension ) {
-			NET_OutOfBandPrint( NS_SERVER, from, "challengeResponse %i %i %i %s",
-				challenge, static_cast<std::int32_t>( retail.clientChallenge ),
-				com_protocol->integer,
-				fnql::protocol::FnqlHandshakeMarker.data() );
-		} else {
-			NET_OutOfBandPrint( NS_SERVER, from, "challengeResponse %i", challenge );
-		}
-		return;
-	}
-
+	// QAA: PC deviation, no Steam: a retail Quake Live binary SteamID/ticket
+	// request is tokenized like any text one and its ticket is ignored
 	if ( Cmd_Argc() < 2 ) {
 		// legacy client query, don't send unneeded information
 		NET_OutOfBandPrint( NS_SERVER, from, "challengeResponse %i", challenge );
@@ -926,87 +860,7 @@ void SV_RecordDemoMessage( client_t *client, const msg_t *msg )
 
 /*
 ==================
-SV_ClientSteamIdFromUserinfo
-
-Returns a decimal SteamID supplied by the connecting client, preferring the
-retail QL key name while keeping the older shorthand as a compatibility source.
-==================
-*/
-static const char *SV_ClientSteamIdFromUserinfo( const char *userinfo ) {
-	const char *steamId;
-
-	steamId = Info_ValueForKey( userinfo, "steamid" );
-	if ( steamId[0] ) {
-		return steamId;
-	}
-
-	return Info_ValueForKey( userinfo, "steam" );
-}
-
-
-/*
-==================
-SV_ParseClientSteamIdString
-==================
-*/
-static qboolean SV_ParseClientSteamIdString( const char *steamId,
-		std::uint64_t *outValue ) {
-	int length;
-	std::uint64_t value = 0;
-	if ( outValue ) {
-		*outValue = 0;
-	}
-
-	if ( !steamId || !steamId[0] ) {
-		return qfalse;
-	}
-
-	for ( length = 0; steamId[length]; ++length ) {
-		std::uint64_t digit;
-
-		if ( steamId[length] < '0' || steamId[length] > '9' ) {
-			return qfalse;
-		}
-		digit = static_cast<std::uint64_t>( steamId[length] - '0' );
-		if ( value > ( ( std::numeric_limits<std::uint64_t>::max )() - digit ) / 10u ) {
-			return qfalse;
-		}
-		value = value * 10u + digit;
-	}
-
-	if ( value == 0 || length <= 0 || length >= SV_PLATFORM_STEAM_ID_SIZE ) {
-		return qfalse;
-	}
-	if ( outValue ) {
-		*outValue = value;
-	}
-	return qtrue;
-}
-
-
-/*
-==================
-SV_CaptureClientSteamId
-==================
-*/
-static void SV_CaptureClientSteamId( client_t *client, const char *userinfo ) {
-	const char *steamId;
-	std::uint64_t value = 0;
-
-	client->platformSteamId[0] = '\0';
-	client->platformSteamIdValue = 0;
-
-	steamId = SV_ClientSteamIdFromUserinfo( userinfo );
-	if ( SV_ParseClientSteamIdString( steamId, &value ) ) {
-		Q_strncpyz( client->platformSteamId, steamId, SV_ArraySize( client->platformSteamId ) );
-		client->platformSteamIdValue = value;
-	}
-}
-
-
-/*
-==================
-SV_NextAnonymousSteamId
+SV_NextGameIdentity
 
 Seeded once per process: from random bytes, so an anonymous id saved into the
 game's access list by one server run is not handed to someone else by the
@@ -1014,7 +868,7 @@ next; or, under sv_lockstep (one scripted session per process), from a
 constant, so repeated runs record identical ids.
 ==================
 */
-static std::uint64_t SV_NextAnonymousSteamId( void ) {
+static std::uint64_t SV_NextGameIdentity( void ) {
 	static fnql::server::identity::AnonymousIdAllocator allocator;
 
 	if ( !allocator.Seeded() ) {
@@ -1032,410 +886,39 @@ static std::uint64_t SV_NextAnonymousSteamId( void ) {
 ==================
 SV_AssignClientGameIdentity
 
-Decides, once per connection, the SteamID the game module will see for this
-slot.  A bot (NA_BOT, assigned only by the server) gets none.  A connection
-that established its own SteamID keeps it.  Every other human gets an
-anonymous id that no other connection shares, so the game cannot store an
-access entry for one Steam-less player that also matches the rest.
+Decides, once per connection, the id a Quake Live game module will see for
+this slot (import slot 200, game_identity.hpp).  A bot (NA_BOT, assigned only
+by the server) gets none; every human gets an id no other connection shares.
+QAA: PC deviation, no identity comes from Steam or from userinfo.
 ==================
 */
 void SV_AssignClientGameIdentity( client_t *client ) {
-	namespace identity = fnql::server::identity;
-
-	client->gameAnonymousSteamId = 0;
-	const bool serverBot = client->netchan.remoteAddress.type == NA_BOT;
-	const std::uint64_t connectionId = identity::UsableConnectionId(
-		client->platformSteamIdFromConnection != qfalse, client->platformSteamIdValue );
-	if ( identity::NeedsAnonymousId( serverBot, connectionId ) ) {
-		client->gameAnonymousSteamId = SV_NextAnonymousSteamId();
-	}
+	client->gameIdentity = client->netchan.remoteAddress.type == NA_BOT
+		? 0 : SV_NextGameIdentity();
 }
 
 
 /*
 ==================
-SV_ClientGameSteamId
+SV_ClientGameIdentity
 ==================
 */
-uint64_t SV_ClientGameSteamId( int clientNum ) {
-	namespace identity = fnql::server::identity;
-
+uint64_t SV_ClientGameIdentity( int clientNum ) {
 	if ( !SV_IsClientIndex( clientNum ) ) {
 		return 0;
 	}
 	const client_t &client = SV_ClientForIndex( clientNum );
-	return identity::GameSteamId( client.netchan.remoteAddress.type == NA_BOT,
-		identity::UsableConnectionId( client.platformSteamIdFromConnection != qfalse,
-			client.platformSteamIdValue ),
-		client.gameAnonymousSteamId );
+	return fnql::server::identity::GameId(
+		client.netchan.remoteAddress.type == NA_BOT, client.gameIdentity );
 }
 
-
-/*
-==================
-SV_MirrorClientSteamIdToUserinfo
-==================
-*/
-static void SV_MirrorClientSteamIdToUserinfo( const client_t *client, char *userinfo, int userinfoSize ) {
-	std::array<char, MAX_INFO_STRING> mirrored{};
-
-	if ( !client->platformSteamId[0] ) {
-		return;
-	}
-
-	Q_strncpyz( mirrored.data(), userinfo, SV_ArraySize( mirrored ) );
-	if ( Info_SetValueForKey_s( mirrored.data(), userinfoSize, "steam", client->platformSteamId ) &&
-		Info_SetValueForKey_s( mirrored.data(), userinfoSize, "steamid", client->platformSteamId ) ) {
-		Q_strncpyz( userinfo, mirrored.data(), userinfoSize );
-	}
-}
-
-
-/*
-==================
-SV_VerifyClientSteamAuth
-==================
-*/
-qboolean SV_VerifyClientSteamAuth( int clientNum ) {
-	if ( !SV_IsClientIndex( clientNum ) ) {
-		Com_DPrintf( "Server auth validate client %d via %s [%s]: invalid client slot\n",
-			clientNum, SV_GetPlatformAuthProviderLabel(), SV_GetPlatformAuthPolicyLabel() );
-		return qfalse;
-	}
-
-	const client_t &client = SV_ClientForIndex( clientNum );
-	if ( client.state == CS_FREE || client.state == CS_ZOMBIE ) {
-		Com_DPrintf( "Server auth validate client %d via %s [%s]: inactive client slot\n",
-			clientNum, SV_GetPlatformAuthProviderLabel(), SV_GetPlatformAuthPolicyLabel() );
-		return qfalse;
-	}
-
-	if ( SV_PlatformServiceAvailable( SV_PLATFORM_CAPABILITY_AUTH ) ) {
-		return client.platformAuthSession && client.platformAuthValidated
-			? qtrue : qfalse;
-	}
-
-	Com_DPrintf( "Server auth validate client %d via %s [%s]: compatibility-unverified\n",
-		clientNum, SV_GetPlatformAuthProviderLabel(), SV_GetPlatformAuthPolicyLabel() );
-	return qtrue;
-}
-
-static void SV_LogSteamStatsLifecycle( const char *stage, const char *detail ) {
-	Com_DPrintf( "Server stats %s via %s [%s]: %s\n",
-		stage ? stage : "update",
-		SV_GetServerStatsProviderLabel(),
-		SV_GetServerStatsPolicyLabel(),
+// QAA: PC deviation, no Steam stats or achievements; what is left publishes
+// the game's match reports and player events over ZMQ (sv_zmq.cpp)
+static void SV_LogStatsLifecycle( const char *stage, const char *detail ) {
+	Com_DPrintf( "Server stats %s: %s\n", stage ? stage : "update",
 		detail ? detail : "no detail" );
 }
 
-static bool SV_SerializeStatsJson( const void *value,
-		std::array<char, fnql::server::json::MaximumDocumentBytes + 1> &document,
-		std::uint32_t &documentBytes ) {
-	document.fill( '\0' );
-	documentBytes = 0;
-	if ( !value || FNQL_Steam_SerializeRetailJson( value, document.data(),
-		static_cast<std::uint32_t>( document.size() ), &documentBytes ) !=
-		FNQL_STEAM_RESULT_OK || documentBytes == 0 ||
-		documentBytes > fnql::server::json::MaximumDocumentBytes ||
-		document[documentBytes] != '\0' ||
-		!fnql::server::json::DocumentIsValid(
-			std::string_view( document.data(), documentBytes ) ) ) {
-		document.fill( '\0' );
-		documentBytes = 0;
-		return false;
-	}
-	return true;
-}
-
-static int SV_FindStatsClientByIdentity( std::uint64_t identity ) {
-	if ( identity == 0 || !svs.clients ) {
-		return -1;
-	}
-	for ( int clientNum = 0; clientNum < sv.maxclients; ++clientNum ) {
-		const client_t &client = svs.clients[clientNum];
-		if ( client.platformSteamIdValue == identity && client.state != CS_FREE &&
-			client.state != CS_ZOMBIE && client.netchan.remoteAddress.type != NA_BOT ) {
-			return clientNum;
-		}
-	}
-	return -1;
-}
-
-static fnql::server::stats::Session *SV_ClientStatsSession( int clientNum,
-		const char *stage ) {
-	if ( !SV_IsClientIndex( clientNum ) ) {
-		SV_LogSteamStatsLifecycle( stage, "invalid client slot" );
-		return nullptr;
-	}
-	client_t &client = SV_ClientForIndex( clientNum );
-	if ( client.state == CS_FREE || client.state == CS_ZOMBIE ||
-		client.netchan.remoteAddress.type == NA_BOT ) {
-		SV_LogSteamStatsLifecycle( stage, "inactive or bot client slot" );
-		return nullptr;
-	}
-
-	fnql::server::stats::Session &session = clientStatsSessions[clientNum];
-	session.Begin( client.platformSteamIdValue );
-	if ( client.platformAuthSession && client.platformAuthValidated &&
-		client.platformAuthTicketSession &&
-		client.platformSteamIdValue != 0 &&
-		!session.RequestIssued() &&
-		( FNQL_Steam_Capabilities() &
-			( FNQL_STEAM_CAP_STATS | FNQL_STEAM_CAP_GAME_SERVER_STATS ) ) ) {
-		const fnqlSteamResult_t result =
-			FNQL_Steam_RequestUserStats( client.platformSteamIdValue );
-		if ( result == FNQL_STEAM_RESULT_OK || result == FNQL_STEAM_RESULT_PENDING ) {
-			session.MarkRequestIssued();
-		}
-	}
-	return &session;
-}
-
-static bool SV_StatsProviderReady( const client_t &client ) {
-	return client.platformAuthSession && client.platformAuthValidated &&
-		client.platformAuthTicketSession &&
-		client.platformSteamIdValue != 0 &&
-		FNQL_Steam_Available( FNQL_STEAM_CAP_GAME_SERVER_STATS );
-}
-
-static bool SV_ShouldUnlockSteamAchievement() {
-	std::array<char, MAX_STRING_CHARS> gameState{};
-	Cvar_VariableStringBuffer( "g_gameState", gameState.data(),
-		static_cast<int>( gameState.size() ) );
-	return !gameState[0] || !Q_stricmp( gameState.data(), "IN_PROGRESS" ) ||
-		Cvar_VariableIntegerValue( "g_training" ) != 0 ||
-		Cvar_VariableIntegerValue( "practiceflags" ) != 0;
-}
-
-static void SV_LoadStatsField( const client_t &client,
-		fnql::server::stats::Session &session, int statIndex ) {
-	if ( !SV_StatsProviderReady( client ) || session.FieldLoaded( statIndex ) ||
-		statIndex < 0 || static_cast<std::size_t>( statIndex ) >=
-			fnql::server::stats::FieldNames.size() ) {
-		return;
-	}
-	std::int32_t value = 0;
-	if ( FNQL_Steam_GetUserStatI32( client.platformSteamIdValue,
-		fnql::server::stats::FieldNames[statIndex].data(), &value ) ==
-		FNQL_STEAM_RESULT_OK ) {
-		(void)session.LoadField( statIndex, value );
-	}
-}
-
-static void SV_LoadStatsAchievement( const client_t &client,
-		fnql::server::stats::Session &session, int achievementId ) {
-	if ( !SV_StatsProviderReady( client ) ||
-		session.AchievementLoaded( achievementId ) || achievementId < 0 ||
-		static_cast<std::size_t>( achievementId ) >=
-			fnql::server::stats::AchievementNames.size() ) {
-		return;
-	}
-	qboolean unlocked = qfalse;
-	if ( FNQL_Steam_GetUserAchievement( client.platformSteamIdValue,
-		fnql::server::stats::AchievementNames[achievementId].data(), &unlocked ) ==
-		FNQL_STEAM_RESULT_OK ) {
-		(void)session.LoadAchievement( achievementId, unlocked != qfalse );
-	}
-}
-
-static void SV_AddEventStatsField( int clientNum,
-		fnql::server::stats::Session &session, int statIndex, int delta ) {
-	if ( delta == 0 ) {
-		return;
-	}
-	SV_LoadStatsField( SV_ClientForIndex( clientNum ), session, statIndex );
-	if ( !session.AddField( statIndex, delta ) ) {
-		SV_LogSteamStatsLifecycle( "event-process", "invalid mapped retail stat index" );
-	}
-}
-
-static void SV_UnlockEventAchievement( int clientNum,
-		fnql::server::stats::Session &session, int achievementId ) {
-	if ( !SV_ShouldUnlockSteamAchievement() ) {
-		return;
-	}
-	SV_LoadStatsAchievement( SV_ClientForIndex( clientNum ), session, achievementId );
-	if ( !session.HasAchievement( achievementId ) ) {
-		(void)session.UnlockAchievement( achievementId );
-	}
-}
-
-static void SV_FlushClientStats( int clientNum ) {
-	if ( clientNum < 0 || clientNum >= MAX_CLIENTS || !svs.clients ) {
-		return;
-	}
-	client_t &client = svs.clients[clientNum];
-	fnql::server::stats::Session &session = clientStatsSessions[clientNum];
-	if ( !session.Active() || session.StorePending() ||
-		!SV_StatsProviderReady( client ) ) {
-		return;
-	}
-
-	std::array<bool, fnql::server::stats::FieldCount> storedFields{};
-	std::array<bool, fnql::server::stats::AchievementCount> storedAchievements{};
-	bool changed = false;
-	for ( std::size_t index = 0; index < fnql::server::stats::FieldCount; ++index ) {
-		if ( !session.FieldDirty( static_cast<int>( index ) ) ) {
-			continue;
-		}
-		SV_LoadStatsField( client, session, static_cast<int>( index ) );
-		if ( !session.FieldLoaded( static_cast<int>( index ) ) ) {
-			continue;
-		}
-		if ( FNQL_Steam_SetUserStatI32( client.platformSteamIdValue,
-			fnql::server::stats::FieldNames[index].data(),
-			session.Field( static_cast<int>( index ) ) ) == FNQL_STEAM_RESULT_OK ) {
-			storedFields[index] = true;
-			changed = true;
-		}
-	}
-	for ( std::size_t index = 0; index < fnql::server::stats::AchievementCount; ++index ) {
-		if ( !session.AchievementDirty( static_cast<int>( index ) ) ) {
-			continue;
-		}
-		if ( FNQL_Steam_SetUserAchievement( client.platformSteamIdValue,
-			fnql::server::stats::AchievementNames[index].data() ) ==
-			FNQL_STEAM_RESULT_OK ) {
-			storedAchievements[index] = true;
-			changed = true;
-		}
-	}
-	if ( !changed ) {
-		return;
-	}
-	const fnqlSteamResult_t storeResult =
-		FNQL_Steam_StoreUserStats( client.platformSteamIdValue );
-	// Retain the submitted generation until USER_STATS_STORED reports the final
-	// asynchronous outcome; newer changes remain dirty independently.
-	if ( storeResult != FNQL_STEAM_RESULT_OK ) {
-		if ( storeResult == FNQL_STEAM_RESULT_PENDING ) {
-			session.BeginStorePending( storedFields, storedAchievements );
-		}
-		return;
-	}
-	for ( std::size_t index = 0; index < storedFields.size(); ++index ) {
-		if ( storedFields[index] ) {
-			session.MarkFieldStored( static_cast<int>( index ) );
-		}
-	}
-	for ( std::size_t index = 0; index < storedAchievements.size(); ++index ) {
-		if ( storedAchievements[index] ) {
-			session.MarkAchievementStored( static_cast<int>( index ) );
-		}
-	}
-}
-
-void SV_FlushAllSteamStats( void ) {
-	for ( int clientNum = 0; clientNum < sv.maxclients; ++clientNum ) {
-		SV_FlushClientStats( clientNum );
-	}
-}
-
-void SV_HandleSteamProviderEvent( unsigned int type, int result,
-		uint64_t subjectId ) {
-	if ( subjectId == 0 || !svs.clients ) {
-		return;
-	}
-
-	for ( int clientNum = 0; clientNum < sv.maxclients; ++clientNum ) {
-		client_t &client = svs.clients[clientNum];
-		if ( client.platformSteamIdValue != subjectId ||
-			client.state == CS_FREE || client.state == CS_ZOMBIE ) {
-			continue;
-		}
-		if ( type == FNQL_STEAM_EVENT_AUTH_RESULT && client.platformAuthTicketSession ) {
-			if ( result == FNQL_STEAM_RESULT_OK ) {
-				if ( !client.platformAuthValidated ) {
-					client.platformAuthValidated = qtrue;
-					Com_DPrintf( "Platform authentication validated client %d.\n", clientNum );
-				}
-			} else if ( result != FNQL_STEAM_RESULT_PENDING ) {
-				Com_Printf( S_COLOR_YELLOW
-					"Platform authentication rejected client %d (result %d).\n",
-					clientNum, result );
-				SV_DropClient( &client, "Platform authentication failed" );
-			}
-		} else if ( type == FNQL_STEAM_EVENT_USER_STATS_RECEIVED ) {
-			if ( result == FNQL_STEAM_RESULT_OK ) {
-				SV_FlushClientStats( clientNum );
-			} else if ( result != FNQL_STEAM_RESULT_PENDING ) {
-				// Permit a later game request or flush to retry a transient failure.
-				clientStatsSessions[clientNum].ClearRequestIssued();
-			}
-		} else if ( type == FNQL_STEAM_EVENT_USER_STATS_STORED ) {
-			clientStatsSessions[clientNum].CompletePendingStore(
-				result == FNQL_STEAM_RESULT_OK );
-		}
-	}
-}
-
-
-/*
-==================
-SV_SteamStats_AddFieldValue
-==================
-*/
-void SV_SteamStats_AddFieldValue( int clientNum, int statIndex, int delta ) {
-	if ( delta == 0 ) {
-		return;
-	}
-	fnql::server::stats::Session *session =
-		SV_ClientStatsSession( clientNum, "field-delta" );
-	if ( session ) {
-		SV_LoadStatsField( SV_ClientForIndex( clientNum ), *session, statIndex );
-	}
-	if ( session && !session->AddField( statIndex, delta ) ) {
-		SV_LogSteamStatsLifecycle( "field-delta", "invalid retail stat index" );
-	}
-}
-
-
-/*
-==================
-SV_SteamStats_UnlockAchievement
-==================
-*/
-void SV_SteamStats_UnlockAchievement( int clientNum, int achievementId ) {
-	if ( achievementId < 0 || static_cast<std::size_t>( achievementId ) >=
-		fnql::server::stats::AchievementCount ) {
-		SV_LogSteamStatsLifecycle( "achievement-unlock", "invalid retail achievement index" );
-		return;
-	}
-	if ( !SV_ShouldUnlockSteamAchievement() ) {
-		SV_LogSteamStatsLifecycle( "achievement-unlock", "blocked by gameplay gate" );
-		return;
-	}
-	fnql::server::stats::Session *session =
-		SV_ClientStatsSession( clientNum, "achievement-unlock" );
-	if ( session ) {
-		SV_LoadStatsAchievement( SV_ClientForIndex( clientNum ), *session, achievementId );
-	}
-	if ( session && !session->UnlockAchievement( achievementId ) ) {
-		SV_LogSteamStatsLifecycle( "achievement-unlock", "invalid retail achievement index" );
-	}
-}
-
-
-/*
-==================
-SV_SteamStats_HasAchievement
-==================
-*/
-qboolean SV_SteamStats_HasAchievement( int clientNum, int achievementId ) {
-	fnql::server::stats::Session *session =
-		SV_ClientStatsSession( clientNum, "achievement-query" );
-	if ( session ) {
-		SV_LoadStatsAchievement( SV_ClientForIndex( clientNum ), *session, achievementId );
-	}
-	return session && session->HasAchievement( achievementId ) ? qtrue : qfalse;
-}
-
-
-/*
-==================
-SV_SteamStats_ProcessMatchReport
-==================
-*/
 /*
 ==================
 SV_CopyModuleStatsJson
@@ -1488,7 +971,7 @@ static void SV_PublishMatchReportDocument(
 	if ( merged ) {
 		Zmq_SubmitMatchSummaryJson( summary.data() );
 	}
-	SV_LogSteamStatsLifecycle( "match-report",
+	SV_LogStatsLifecycle( "match-report",
 		merged ? "published report and eligible PLYR_STATS/PLYR_EVENTS summary"
 			: summaryAllowed ? "published report; bounded summary merge failed"
 				: "published report; training or aborted summary suppressed" );
@@ -1496,36 +979,36 @@ static void SV_PublishMatchReportDocument(
 
 /*
 ==================
-SV_SteamStats_ProcessMatchReportJson
+SV_Stats_ProcessMatchReportJson
 ==================
 */
-void SV_SteamStats_ProcessMatchReportJson( const char *json ) {
+void SV_Stats_ProcessMatchReportJson( const char *json ) {
 	std::array<char, fnql::server::json::MaximumDocumentBytes + 1> document{};
 	std::uint32_t documentBytes = 0;
-	SV_FlushAllSteamStats();
 	if ( SV_CopyModuleStatsJson( json, document, documentBytes ) ) {
 		SV_PublishMatchReportDocument( document, documentBytes, nullptr, 0 );
 	} else {
-		SV_LogSteamStatsLifecycle( "match-report",
+		SV_LogStatsLifecycle( "match-report",
 			"refused a missing, oversized or malformed module JSON document" );
 	}
 	statsReports.Reset();
 }
 
-const void *SV_SteamStats_ProcessMatchReport( const void *report, char *buffer, int bufferSize ) {
-	std::array<char, fnql::server::json::MaximumDocumentBytes + 1> document{};
-	std::uint32_t documentBytes = 0;
-	SV_FlushAllSteamStats();
-	if ( SV_SerializeStatsJson( report, document, documentBytes ) ) {
-		SV_PublishMatchReportDocument( document, documentBytes, buffer, bufferSize );
-	} else {
-		if ( buffer && bufferSize > 0 ) {
-			buffer[0] = '\0';
-		}
-		Zmq_SubmitMatchReport( report );
-		SV_LogSteamStatsLifecycle( "match-report",
-			"retail JSON adapter unavailable; published a null payload envelope" );
+/*
+==================
+SV_Stats_ProcessMatchReport
+
+A Quake Live module's report is a JsonCpp object.  QAA: PC deviation, only the
+Steam provider could serialize one, so the report goes out as a null payload.
+==================
+*/
+const void *SV_Stats_ProcessMatchReport( const void *report, char *buffer, int bufferSize ) {
+	if ( buffer && bufferSize > 0 ) {
+		buffer[0] = '\0';
 	}
+	Zmq_SubmitMatchReport( report );
+	SV_LogStatsLifecycle( "match-report",
+		"no retail JSON adapter; published a null payload envelope" );
 	statsReports.Reset();
 	return report;
 }
@@ -1533,42 +1016,35 @@ const void *SV_SteamStats_ProcessMatchReport( const void *report, char *buffer, 
 
 /*
 ==================
-SV_SteamStats_ProcessEvent
+SV_Stats_ProcessEvent
+
+As above, a Quake Live module's event payload cannot be serialized.
 ==================
 */
-static void SV_ProcessEventDocument( std::uint64_t identity, const char *eventName,
+static void SV_ProcessEventDocument( const char *eventName,
 		const std::array<char, fnql::server::json::MaximumDocumentBytes + 1> &document,
 		std::uint32_t documentBytes );
 
-void SV_SteamStats_ProcessEvent( unsigned int steamIdLow, unsigned int steamIdHigh,
+void SV_Stats_ProcessEvent( unsigned int idLow, unsigned int idHigh,
 		const void *clientStats, const char *eventName, const void *payload ) {
-	std::array<char, fnql::server::json::MaximumDocumentBytes + 1> document{};
-	std::uint32_t documentBytes = 0;
-	const std::uint64_t identity =
-		( static_cast<std::uint64_t>( steamIdHigh ) << 32u ) | steamIdLow;
 	if ( !eventName || !eventName[0] ) {
 		return;
 	}
-	if ( !SV_SerializeStatsJson( payload, document, documentBytes ) ) {
-		Zmq_ReportPlayerEvent( steamIdLow, steamIdHigh, clientStats, eventName, payload );
-		SV_LogSteamStatsLifecycle( "event-process",
-			"retail JSON adapter unavailable; event side effects safely deferred" );
-		return;
-	}
-	SV_ProcessEventDocument( identity, eventName, document, documentBytes );
+	Zmq_ReportPlayerEvent( idLow, idHigh, clientStats, eventName, payload );
+	SV_LogStatsLifecycle( "event-process", "no retail JSON adapter" );
 }
 
 
 /*
 ==================
-SV_SteamStats_ProcessEventJson
+SV_Stats_ProcessEventJson
 
 The same event, from a source-built game module that delivers JSON text.  A
 refused document publishes nothing: there is no opaque payload to fall back
 to, and an empty envelope would misreport the event.
 ==================
 */
-void SV_SteamStats_ProcessEventJson( unsigned int steamIdLow, unsigned int steamIdHigh,
+void SV_Stats_ProcessEventJson( unsigned int idLow, unsigned int idHigh,
 		const char *eventName, const char *json ) {
 	std::array<char, fnql::server::json::MaximumDocumentBytes + 1> document{};
 	std::uint32_t documentBytes = 0;
@@ -1580,18 +1056,18 @@ void SV_SteamStats_ProcessEventJson( unsigned int steamIdLow, unsigned int steam
 	for ( ; eventName[nameLength] != '\0'; ++nameLength ) {
 		const char c = eventName[nameLength];
 		if ( nameLength >= 64 || !( ( c >= 'A' && c <= 'Z' ) || ( c >= '0' && c <= '9' ) || c == '_' ) ) {
-			SV_LogSteamStatsLifecycle( "event-process", "refused a malformed module event name" );
+			SV_LogStatsLifecycle( "event-process", "refused a malformed module event name" );
 			return;
 		}
 	}
 	if ( !SV_CopyModuleStatsJson( json, document, documentBytes ) ) {
-		SV_LogSteamStatsLifecycle( "event-process",
+		SV_LogStatsLifecycle( "event-process",
 			"refused a missing, oversized or malformed module JSON document" );
 		return;
 	}
-	SV_ProcessEventDocument(
-		( static_cast<std::uint64_t>( steamIdHigh ) << 32u ) | steamIdLow,
-		eventName, document, documentBytes );
+	(void)idLow;
+	(void)idHigh;
+	SV_ProcessEventDocument( eventName, document, documentBytes );
 }
 
 
@@ -1599,10 +1075,11 @@ void SV_SteamStats_ProcessEventJson( unsigned int steamIdLow, unsigned int steam
 ==================
 SV_ProcessEventDocument
 
-Publication and the Steam stat side effects of one validated event document.
+Publication of one validated event document, and the PLAYER_STATS and
+PLAYER_DEATH caches the match summary merges.
 ==================
 */
-static void SV_ProcessEventDocument( std::uint64_t identity, const char *eventName,
+static void SV_ProcessEventDocument( const char *eventName,
 		const std::array<char, fnql::server::json::MaximumDocumentBytes + 1> &document,
 		std::uint32_t documentBytes ) {
 	Zmq_ReportPlayerEventJson( eventName, document.data() );
@@ -1618,60 +1095,15 @@ static void SV_ProcessEventDocument( std::uint64_t identity, const char *eventNa
 	if ( event.kind == PlayerEventKind::Stats ) {
 		if ( !statsReports.CachePlayerStats(
 			std::string_view( document.data(), documentBytes ) ) ) {
-			SV_LogSteamStatsLifecycle( "event-process", "PLAYER_STATS summary cache full" );
+			SV_LogStatsLifecycle( "event-process", "PLAYER_STATS summary cache full" );
 		}
 	} else if ( event.kind == PlayerEventKind::Death && !race ) {
 		if ( !statsReports.CachePlayerDeath(
 			std::string_view( document.data(), documentBytes ) ) ) {
-			SV_LogSteamStatsLifecycle( "event-process", "PLAYER_DEATH summary cache full" );
+			SV_LogStatsLifecycle( "event-process", "PLAYER_DEATH summary cache full" );
 		}
 	}
-	const int clientNum = SV_FindStatsClientByIdentity( identity );
-	if ( clientNum < 0 ) {
-		SV_LogSteamStatsLifecycle( "event-process", "no live session for event identity" );
-		return;
-	}
-	fnql::server::stats::Session *session =
-		SV_ClientStatsSession( clientNum, "event-process" );
-	if ( !session ) {
-		return;
-	}
-
-	if ( event.kind == PlayerEventKind::Stats ) {
-		SV_AddEventStatsField( clientNum, *session, 0x51, event.wins );
-		SV_AddEventStatsField( clientNum, *session, 0x52, event.losses );
-		SV_AddEventStatsField( clientNum, *session, 0x53, 1 );
-		if ( event.wins > 0 && !Q_stricmp( Cvar_VariableString( "mapname" ), "qztraining" ) &&
-			Cvar_VariableIntegerValue( "g_training" ) > 0 ) {
-			SV_UnlockEventAchievement( clientNum, *session, 9 );
-		}
-		if ( Cvar_VariableIntegerValue( "g_gametype" ) == 5 && event.score == 666 ) {
-			SV_UnlockEventAchievement( clientNum, *session, 0x0e );
-		}
-	} else if ( event.kind == PlayerEventKind::Kill && !race ) {
-		SV_AddEventStatsField( clientNum, *session, 0x56, 1 );
-		if ( event.mappedStat > 0 ) {
-			SV_AddEventStatsField( clientNum, *session, event.mappedStat, 1 );
-		}
-		if ( event.speed > 500.0 ) {
-			SV_UnlockEventAchievement( clientNum, *session, 1 );
-		}
-	} else if ( event.kind == PlayerEventKind::Death && !race ) {
-		SV_AddEventStatsField( clientNum, *session, 0x57, 1 );
-		if ( event.mappedStat > 0 ) {
-			SV_AddEventStatsField( clientNum, *session, event.mappedStat, 1 );
-		}
-	} else if ( event.kind == PlayerEventKind::Medal && event.mappedStat >= 0 ) {
-		SV_AddEventStatsField( clientNum, *session, event.mappedStat, 1 );
-		SV_LoadStatsField( SV_ClientForIndex( clientNum ), *session, 0x4a );
-		SV_LoadStatsField( SV_ClientForIndex( clientNum ), *session, 0x4b );
-		SV_LoadStatsField( SV_ClientForIndex( clientNum ), *session, 0x4c );
-		if ( static_cast<std::int64_t>( session->Field( 0x4a ) ) +
-			session->Field( 0x4b ) + session->Field( 0x4c ) >= 1000 ) {
-			SV_UnlockEventAchievement( clientNum, *session, 0x2e );
-		}
-	}
-	SV_FlushClientStats( clientNum );
+	// QAA: PC deviation, no Steam stat or achievement side effects
 }
 
 
@@ -1700,14 +1132,6 @@ void SV_DirectConnect( const netadr_t *from ) {
 	const char	*ip, *info, *v;
 	bool		compat;
 	bool		longstr;
-	bool		localLoopback;
-	std::uint64_t retailSteamId = 0;
-	bool		platformAuthSession = false;
-	bool		platformAuthTicketSession = false;
-	bool		platformAuthValidated = false;
-	// set once a reconnecting client's live slot has been torn down, so a
-	// refusal after that point releases the slot instead of leaving it active
-	bool		reconnectTornDown = false;
 
 	Com_DPrintf( "SVC_DirectConnect()\n" );
 
@@ -1866,12 +1290,11 @@ void SV_DirectConnect( const netadr_t *from ) {
 
 	// A protocol-91 client resends `connect` every few seconds until it sees
 	// connectResponse. When that reply was lost, the slot it asked for is
-	// already accepted and its Steam ticket already consumed, so treating the
-	// resend as a new connection tore the slot down and then refused it for
-	// lack of a ticket, and the client stayed on the connecting screen. Retail
-	// keeps the ticket with the challenge and re-accepts (quakelive_steam.exe
-	// 0x4e0b53-0x4e0c97). A resend with the same challenge for a slot that has
-	// not left CS_CONNECTED is answered with connectResponse and nothing else.
+	// already accepted, and treating the resend as a new connection would tear
+	// it down. Retail re-accepts (quakelive_steam.exe 0x4e0b53-0x4e0c97). A
+	// resend with the same challenge for a slot that has not left CS_CONNECTED
+	// is answered with connectResponse and nothing else.
+	// QAA: the Steam ticket retail keeps with the challenge is gone.
 	if ( cl_proto == QL_RETAIL_PROTOCOL_VERSION ) {
 		for ( client_t &client : SV_Clients() ) {
 			if ( client.state != CS_CONNECTED || client.challenge != challenge
@@ -1930,7 +1353,6 @@ void SV_DirectConnect( const netadr_t *from ) {
 
 				// don't leak memory or file handles due to e.g. downloads in progress
 				SV_FreeClient( newcl );
-				reconnectTornDown = true;
 			}
 
 			goto gotnewcl;
@@ -2004,77 +1426,7 @@ void SV_DirectConnect( const netadr_t *from ) {
 	}
 
 gotnewcl:
-	localLoopback = from && from->type == NA_LOOPBACK;
-
-	// FnQL clients send their retail-shaped ticket in the challenge request for
-	// both remote and loopback connections.  Keep the ticket bound to the
-	// challenge in both cases. For the in-process loopback transport, retail
-	// qagame needs an authenticated provisional slot before it will accept the
-	// client, but Steam can legitimately decline to mint a GameServer ticket for
-	// the same running client. A signed-in provider identity is sufficient for
-	// that non-networked path. This does not relax the external policy: remote
-	// protocol-91 clients still need a matching ticket whenever the provider
-	// exposes authentication.
-	if ( cl_proto == QL_RETAIL_PROTOCOL_VERSION ) {
-		fnql::server::auth::AuthRecord auth{};
-		const bool hasRetailAuth = pendingRetailAuth.Consume(
-			SV_AuthAddressKey( from ), challenge,
-			static_cast<std::uint32_t>( Sys_Milliseconds() ), auth );
-		const bool providerAvailable =
-			SV_PlatformServiceAvailable( SV_PLATFORM_CAPABILITY_AUTH ) != qfalse;
-
-		if ( localLoopback && providerAvailable ) {
-			fnqlSteamStatus_t localStatus{};
-			localStatus.size = sizeof( localStatus );
-			if ( !FNQL_Steam_GetStatus( &localStatus ) || !localStatus.local_steam_id ) {
-				fnql::server::auth::SecureErase( &auth, sizeof( auth ) );
-				NET_OutOfBandPrint( NS_SERVER, from,
-					"print\nA signed-in Steam identity is required for local play.\n" );
-				if ( reconnectTornDown ) {
-					*newcl = {};
-				}
-				return;
-			}
-			retailSteamId = localStatus.local_steam_id;
-			platformAuthSession = true;
-			platformAuthValidated = true;
-			Com_DPrintf( "Accepted local loopback Steam identity %llu without a GameServer ticket.\n",
-				static_cast<unsigned long long>( retailSteamId ) );
-		} else {
-			if ( providerAvailable && !hasRetailAuth ) {
-				NET_OutOfBandPrint( NS_SERVER, from,
-					"print\nA valid platform authentication ticket is required.\n" );
-				// The game was already told this client left and its
-				// resources are released; the slot must not stay active
-				// for a connection that is being refused.
-				if ( reconnectTornDown ) {
-					*newcl = {};
-				}
-				return;
-			}
-			if ( hasRetailAuth ) {
-				retailSteamId = auth.steamId;
-				if ( providerAvailable ) {
-					const fnqlSteamResult_t result = FNQL_Steam_BeginAuthSession(
-						auth.ticket.data(), static_cast<std::uint32_t>( auth.ticketBytes ),
-						auth.steamId );
-					if ( result != FNQL_STEAM_RESULT_OK && result != FNQL_STEAM_RESULT_PENDING ) {
-						fnql::server::auth::SecureErase( &auth, sizeof( auth ) );
-						NET_OutOfBandPrint( NS_SERVER, from,
-							"print\nPlatform authentication rejected the connection.\n" );
-						if ( reconnectTornDown ) {
-							*newcl = {};
-						}
-						return;
-					}
-					platformAuthSession = true;
-					platformAuthTicketSession = true;
-					platformAuthValidated = result == FNQL_STEAM_RESULT_OK;
-				}
-			}
-		}
-		fnql::server::auth::SecureErase( &auth, sizeof( auth ) );
-	}
+	// QAA: PC deviation, no Steam auth session or ticket check
 
 	// build a new connection
 	// accept the new client
@@ -2082,7 +1434,6 @@ gotnewcl:
 	// we got a newcl, so reset the reliableSequence and reliableAcknowledge
 	*newcl = {};
 	clientNum = SV_ClientIndex( newcl );
-	clientStatsSessions[clientNum].Reset();
 #if 0 // skip this until CS_PRIMED
 	//ent = SV_GentityNum( clientNum );
 	//newcl->gentity = ent;
@@ -2099,19 +1450,7 @@ gotnewcl:
 	// init the netchan queue
 	newcl->netchan_end_queue = &newcl->netchan_start_queue;
 
-	SV_CaptureClientSteamId( newcl, userinfo.data() );
-	if ( retailSteamId != 0 ) {
-		newcl->platformSteamIdValue = retailSteamId;
-		newcl->platformSteamIdFromConnection = qtrue;
-		newcl->platformAuthSession = platformAuthSession ? qtrue : qfalse;
-		newcl->platformAuthTicketSession = platformAuthTicketSession ? qtrue : qfalse;
-		newcl->platformAuthValidated = platformAuthValidated ? qtrue : qfalse;
-		newcl->platformAuthStartedTime = static_cast<std::uint32_t>( svs.time );
-		Com_sprintf( newcl->platformSteamId, SV_ArraySize( newcl->platformSteamId ),
-			"%llu", static_cast<unsigned long long>( retailSteamId ) );
-	}
 	SV_AssignClientGameIdentity( newcl );
-	SV_MirrorClientSteamIdToUserinfo( newcl, userinfo.data(), SV_ArraySize( userinfo ) );
 
 	// save the userinfo
 	Q_strncpyz( newcl->userinfo, userinfo.data(), SV_ArraySize(newcl->userinfo) );
@@ -2193,20 +1532,7 @@ Destructor for data allocated in a client structure
 */
 void SV_FreeClient(client_t *client)
 {
-	if ( client && svs.clients ) {
-		const int clientNum = SV_ClientIndex( client );
-		if ( clientNum >= 0 && clientNum < MAX_CLIENTS ) {
-			SV_FlushClientStats( clientNum );
-			clientStatsSessions[clientNum].Reset();
-		}
-	}
-	if ( client->platformAuthTicketSession && client->platformSteamIdValue != 0 ) {
-		SV_SteamP2PCloseClient( client->platformSteamIdValue );
-		FNQL_Steam_EndAuthSession( client->platformSteamIdValue );
-	}
-	client->platformAuthTicketSession = qfalse;
-	client->platformAuthSession = qfalse;
-	client->platformAuthValidated = qfalse;
+	// QAA: PC deviation, no Steam stat flush or auth session to end
 	SV_StopDemoRecord( client, qfalse );
 	SV_Netchan_FreeQueue(client);
 	SV_CloseDownload(client);
@@ -2264,15 +1590,7 @@ void SV_DropClient( client_t *drop, const char *reason ) {
 
 	// nuke user info
 	SV_SetUserinfo( SV_ClientIndex( drop ), "" );
-	drop->platformSteamId[0] = '\0';
-	// A bot that later takes this slot is not zeroed the way a connecting
-	// player is, and would be published to Steam under the departed player's
-	// SteamID.  A bot's own anonymous id is kept so the next bot reuses it.
-	if ( !isBot ) {
-		drop->platformSteamIdValue = 0;
-	}
-	drop->platformSteamIdFromConnection = qfalse;
-	drop->gameAnonymousSteamId = 0;
+	drop->gameIdentity = 0;
 
 	drop->justConnected = qfalse;
 
@@ -3246,8 +2564,6 @@ void SV_UserinfoChanged( client_t *cl, qboolean updateUserinfo, qboolean runFilt
 
 	if ( !updateUserinfo )
 		return;
-
-	SV_MirrorClientSteamIdToUserinfo( cl, cl->userinfo, SV_ArraySize( cl->userinfo ) );
 
 	// name for C code
 	val = Info_ValueForKey( cl->userinfo, "name" );

@@ -37,7 +37,7 @@ static void TestRetailSettingsWritable(void) {
 
 /* Engine secrets, identity and startup state stay out of the UI's reach. */
 static void TestEngineStateRefused(void) {
-	/* fs_basepath, fs_homepath, fs_steampath */
+	/* fs_basepath, fs_homepath */
 	CHECK(!Cvar_UIWriteAllowed(CVAR_INIT | CVAR_PROTECTED | CVAR_PRIVATE));
 	CHECK(!Cvar_UIWriteAllowed(CVAR_PRIVATE));
 	/* version, sys_cpustring, cl_guid */

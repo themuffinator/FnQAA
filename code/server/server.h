@@ -157,8 +157,6 @@ struct leakyBucket_s {
 	leakyBucket_t *prev, *next;
 };
 
-#define SV_PLATFORM_STEAM_ID_SIZE	32
-
 typedef enum {
 	GSA_INIT = 0,	// gamestate never sent with current sv.serverId
 	GSA_SENT_ONCE,	// gamestate sent once, client can reply with any (messageAcknowledge - gamestateMessageNum) >= 0 and correct serverId
@@ -183,14 +181,9 @@ typedef struct client_s {
 	char			lastClientCommandString[MAX_STRING_CHARS];
 	sharedEntity_t	*gentity;			// SV_GentityNum(clientnum)
 	char			name[MAX_NAME_LENGTH];			// extracted from userinfo, high bits masked
-	char			platformSteamId[SV_PLATFORM_STEAM_ID_SIZE];	// server-owned QL SteamID
-	uint64_t		platformSteamIdValue;				// parsed provider identity
-	qboolean		platformSteamIdFromConnection;		// platformSteamIdValue came from the connect ticket or the local provider, not userinfo
-	uint64_t		gameAnonymousSteamId;				// this connection's own anonymous id for the game (game_identity.hpp), 0 if it has a connection identity
-	qboolean		platformAuthSession;				// connection identity has passed the server auth gate
-	qboolean		platformAuthTicketSession;			// provider BeginAuthSession succeeded; EndAuthSession is required
-	qboolean		platformAuthValidated;			// provider delivered a successful auth result
-	uint32_t		platformAuthStartedTime;			// wrap-safe timeout origin for pending auth
+	// QAA: PC deviation, no Steam identity or auth session; a QL qagame keys
+	// its access list by this per-connection id instead (game_identity.hpp)
+	uint64_t		gameIdentity;						// import slot 200 answer, 0 for a bot or a free slot
 
 	gameStateAck_t	gamestateAck;
 	qboolean		downloading;		// set at "download", reset at gamestate retransmission
@@ -321,7 +314,6 @@ extern	cvar_t	*sv_clientTLD;
 
 extern	cvar_t	*sv_privateClients;
 extern	cvar_t	*sv_hostname;
-extern	cvar_t	*sv_tags;
 extern	cvar_t	*sv_masterAdvertise;
 extern	cvar_t	*sv_master[MAX_MASTER_SERVERS];
 extern	cvar_t	*sv_reconnectlimit;
@@ -354,28 +346,10 @@ extern	cvar_t	*sv_quitOnExitLevel;
 extern	cvar_t	*sv_altEntDir;
 extern	cvar_t	*sv_dumpEntities;
 extern	cvar_t	*sv_cylinderScale;
-extern	cvar_t	*sv_vac;
 extern	cvar_t	*sv_showloss;
 
 extern	cvar_t *sv_levelTimeReset;
 extern	cvar_t *sv_filter;
-
-typedef enum svPlatformCapability_e {
-	SV_PLATFORM_CAPABILITY_ONLINE,
-	SV_PLATFORM_CAPABILITY_AUTH,
-	SV_PLATFORM_CAPABILITY_STEAM_GAME_SERVER,
-	SV_PLATFORM_CAPABILITY_WORKSHOP,
-	SV_PLATFORM_CAPABILITY_STATS,
-	SV_PLATFORM_CAPABILITY_COUNT
-} svPlatformCapability_t;
-
-typedef struct svPlatformServiceStatus_s {
-	const char	*key;
-	const char	*provider;
-	const char	*policy;
-	qboolean	available;
-	unsigned int	appId;
-} svPlatformServiceStatus_t;
 
 #ifdef USE_BANS
 extern	cvar_t	*sv_banFile;
@@ -445,7 +419,6 @@ void SV_StartRandomMap_f( void );
 qboolean SV_FactoryExists( const char *factoryName );
 qboolean SV_FactoryHasActive( void );
 qboolean SV_FactoryCatalogEmpty( void );	// QAA: no factories, Quake III's map command
-void SV_FactoryActiveTags( char *buffer, int bufferSize );
 qboolean SV_FactoryPrepareMap( const char *mapName, const char *factoryName,
 	qboolean factoryArgumentPresent, qboolean developerMap );
 void SV_FactoryPrintMapUsage( const char *commandName );
@@ -461,7 +434,7 @@ void SV_FactoryRefreshMountedContent( void );
 //
 // sv_client.cpp
 //
-void SV_GetChallenge( const netadr_t *from, const msg_t *msg );
+void SV_GetChallenge( const netadr_t *from );
 void SV_InitChallenger( void );
 
 void SV_DirectConnect( const netadr_t *from );
@@ -519,48 +492,21 @@ svEntity_t	*SV_SvEntityForGentity( sharedEntity_t *gEnt );
 sharedEntity_t *SV_GEntityForSvEntity( svEntity_t *svEnt );
 void		SV_InitGameProgs ( void );
 void		SV_RegisterGameCvars( void );
-const svPlatformServiceStatus_t *SV_GetPlatformServiceStatus( svPlatformCapability_t capability );
-qboolean	SV_PlatformServiceAvailable( svPlatformCapability_t capability );
-const char	*SV_GetPlatformAuthProviderLabel( void );
-const char	*SV_GetPlatformAuthPolicyLabel( void );
-const char	*SV_GetSteamServerProviderLabel( void );
-const char	*SV_GetSteamServerPolicyLabel( void );
-const char	*SV_GetWorkshopProviderLabel( void );
-const char	*SV_GetWorkshopPolicyLabel( void );
-const char	*SV_GetServerStatsProviderLabel( void );
-const char	*SV_GetServerStatsPolicyLabel( void );
-void		SV_RefreshPlatformServiceCvars( void );
-void		SV_RegisterSteamEventSink( void );
-void		SV_PublishWorkshopReferences( void );
 void		SV_PublishFnQLClientPaks( void );
 qboolean	SV_AcceptsFnQLClientPak( int pureChecksum );
-void		SV_SteamGameServerStart( const char *mapName );
 int			SV_ClientMessageLimit( const client_t *client );
 qboolean	SV_SinglePlayerIgnoresRemote( void );
-void		SV_SteamGameServerStop( void );
-void		SV_SteamPublishServerInfo( void );
-void		SV_SteamP2PFrame( void );
-void		SV_SteamP2PCloseClient( uint64_t steamId );
-void		SV_SteamHandleIncomingPacket( const netadr_t *from, const msg_t *msg );
 void		SV_GameRefreshRankingsPolicyCvars( void );
 void		SV_ShutdownGameProgs ( void );
 void		SV_RestartGameProgs( void );
-qboolean	SV_ClientSteamId( int clientNum, unsigned int *steamIdLow, unsigned int *steamIdHigh );
 void		SV_AssignClientGameIdentity( client_t *client );	// once per connection, before GAME_CLIENT_CONNECT
-uint64_t	SV_ClientGameSteamId( int clientNum );				// the SteamID the game module sees (import slot 200)
-qboolean	SV_VerifyClientSteamAuth( int clientNum );
-void		SV_SteamStats_AddFieldValue( int clientNum, int statIndex, int delta );
-void		SV_SteamStats_UnlockAchievement( int clientNum, int achievementId );
-qboolean	SV_SteamStats_HasAchievement( int clientNum, int achievementId );
-const void	*SV_SteamStats_ProcessMatchReport( const void *report, char *buffer, int bufferSize );
-void		SV_SteamStats_ProcessEvent( unsigned int steamIdLow, unsigned int steamIdHigh,
+uint64_t	SV_ClientGameIdentity( int clientNum );				// what QL import slot 200 answers
+const void	*SV_Stats_ProcessMatchReport( const void *report, char *buffer, int bufferSize );
+void		SV_Stats_ProcessEvent( unsigned int idLow, unsigned int idHigh,
 				const void *clientStats, const char *eventName, const void *payload );
-void		SV_SteamStats_ProcessMatchReportJson( const char *json );
-void		SV_SteamStats_ProcessEventJson( unsigned int steamIdLow, unsigned int steamIdHigh,
+void		SV_Stats_ProcessMatchReportJson( const char *json );
+void		SV_Stats_ProcessEventJson( unsigned int idLow, unsigned int idHigh,
 				const char *eventName, const char *json );
-void		SV_FlushAllSteamStats( void );
-void		SV_HandleSteamProviderEvent( unsigned int type, int result,
-				uint64_t subjectId );
 // Retail Quake Live qagame query exports (native structured ABI only). Each
 // answers its documented neutral value when the loaded module lacks the slot.
 qboolean	SV_GameQueryExportsAvailable( void );

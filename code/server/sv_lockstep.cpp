@@ -1065,8 +1065,8 @@ void ConnectScriptedClient( std::size_t scriptIndex ) {
 	scripted.owned = true;
 	session.slotOwner[static_cast<std::size_t>( clientNum )] = static_cast<int>( scriptIndex );
 
-	// a scripted client has no Steam ticket, so like any Steam-less player it
-	// gets its own anonymous id (sv_lockstep seeds those ids with a constant)
+	// like any human, a scripted client gets its own id (sv_lockstep seeds
+	// those ids with a constant).  QAA: no Steam, so no ticket identity.
 	SV_AssignClientGameIdentity( cl );
 	SV_UserinfoChanged( cl, qtrue, qfalse );
 

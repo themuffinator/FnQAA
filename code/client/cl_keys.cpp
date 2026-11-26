@@ -1196,7 +1196,7 @@ void Key_ClearStates( void )
 	// Release commands above carry the old per-source generation. Invalidate
 	// them only after every logical key has queued its release, then clear the
 	// engine-owned state synchronously so wait or command-buffer pressure
-	// cannot leave movement, mouselook, buttons, or generated voice held.
+	// cannot leave movement, mouselook or buttons held.
 	CL_ClearKeyCommandInputState();
 }
 

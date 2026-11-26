@@ -46,7 +46,6 @@ cvar_t	*sv_clientTLD;
 
 cvar_t	*sv_privateClients;		// number of clients reserved for password
 cvar_t	*sv_hostname;
-cvar_t	*sv_tags;
 cvar_t	*sv_masterAdvertise;
 cvar_t	*sv_master[MAX_MASTER_SERVERS];		// master server ip address
 cvar_t	*sv_reconnectlimit;		// minimum seconds between connect messages
@@ -79,7 +78,6 @@ cvar_t	*sv_quitOnExitLevel;
 cvar_t	*sv_altEntDir;
 cvar_t	*sv_dumpEntities;
 cvar_t	*sv_cylinderScale;
-cvar_t	*sv_vac;
 cvar_t	*sv_showloss;
 
 cvar_t *sv_levelTimeReset;
@@ -1085,7 +1083,7 @@ static void SV_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 	}
 
 	if ( !Q_stricmp( c, "getchallenge" ) ) {
-		SV_GetChallenge( from, msg );
+		SV_GetChallenge( from );	// QAA: no Steam ticket in the packet to read
 		return;
 	}
 
@@ -1131,7 +1129,7 @@ void SV_PacketEvent( const netadr_t *from, msg_t *msg ) {
 		return;
 	}
 
-	SV_SteamHandleIncomingPacket( from, msg );
+	// QAA: PC deviation, no Steam GameServer packet handling
 
 	if ( msg->cursize < 6 ) // too short for anything
 		return;
@@ -1314,11 +1312,7 @@ static void SV_CheckTimeouts( void ) {
 		if ( client.state == CS_FREE ) {
 			continue;
 		}
-		if ( client.platformAuthSession && !client.platformAuthValidated &&
-			static_cast<uint32_t>( svs.time ) - client.platformAuthStartedTime > 10000u ) {
-			SV_DropClient( &client, "Platform authentication timed out" );
-			continue;
-		}
+		// QAA: PC deviation, no pending Steam authentication to time out
 		// message times may be wrong across a changelevel
 		if ( client.lastPacketTime - svs.time > 0 ) {
 			client.lastPacketTime = svs.time;
@@ -1545,8 +1539,7 @@ void SV_Frame( int msec, int realMsec ) {
 		return;
 	}
 
-	svs.time += realMsec;
-	SV_SteamP2PFrame();
+	svs.time += realMsec;	// QAA: no Steam P2P or GameServer frame
 
 	// allow pause if only the local client is connected
 	if ( SV_CheckPaused() ) {
@@ -1630,7 +1623,7 @@ void SV_Frame( int msec, int realMsec ) {
 
 	// update infostrings if anything has been changed
 	if ( cvar_modifiedFlags & CVAR_SERVERINFO ) {
-		SV_SteamPublishServerInfo();
+		// QAA: no Steam server rules to republish
 		SV_SetConfigstring( CS_SERVERINFO, Cvar_InfoString( CVAR_SERVERINFO, nullptr ) );
 		cvar_modifiedFlags &= ~CVAR_SERVERINFO;
 	}

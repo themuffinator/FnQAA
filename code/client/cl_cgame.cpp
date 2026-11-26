@@ -2139,8 +2139,6 @@ typedef void (QDECL *ql_import_f)( void );
 
 static ql_import_f ql_cgame_imports[CGAME_NATIVE_IMPORT_COUNT];
 static vec4_t ql_cgame_currentColor = { 1.0f, 1.0f, 1.0f, 1.0f };
-static std::array<uint64_t, MAX_CLIENTS> ql_cgame_mutedIdentitySet;
-static int ql_cgame_mutedIdentityCount;
 
 template<typename T>
 static intptr_t CG_ImportArgValue( T value ) {
@@ -2226,49 +2224,6 @@ int CL_GetCGamePhysicsTime( void ) {
 
 	const int physicsTime = VM_Call( cgvm, 0, CG_GET_PHYSICS_TIME );
 	return physicsTime > 0 ? physicsTime : 0;
-}
-
-static uint64_t QL_CG_CombineIdentityWords( unsigned int identityLow, unsigned int identityHigh ) {
-	return ( static_cast<uint64_t>( identityHigh ) << 32 ) | static_cast<uint64_t>( identityLow );
-}
-
-static int QL_CG_FindMutedIdentityIndex( uint64_t identity ) {
-	for ( int i = 0; i < ql_cgame_mutedIdentityCount; ++i ) {
-		if ( ql_cgame_mutedIdentitySet[i] == identity ) {
-			return i;
-		}
-	}
-
-	return -1;
-}
-
-qboolean CL_IsSteamIdentityMuted( unsigned int identityLow, unsigned int identityHigh ) {
-	const uint64_t identity = QL_CG_CombineIdentityWords( identityLow, identityHigh );
-	return ( identity && QL_CG_FindMutedIdentityIndex( identity ) >= 0 ) ? qtrue : qfalse;
-}
-
-qboolean CL_ToggleSteamIdentityMute( unsigned int identityLow, unsigned int identityHigh ) {
-	const uint64_t identity = QL_CG_CombineIdentityWords( identityLow, identityHigh );
-	if ( !identity ) {
-		return qfalse;
-	}
-
-	const int index = QL_CG_FindMutedIdentityIndex( identity );
-	if ( index >= 0 ) {
-		--ql_cgame_mutedIdentityCount;
-		ql_cgame_mutedIdentitySet[index] = ql_cgame_mutedIdentitySet[ql_cgame_mutedIdentityCount];
-		ql_cgame_mutedIdentitySet[ql_cgame_mutedIdentityCount] = 0;
-		CL_WebHost_InvalidateFriendSnapshot();
-		return qfalse;
-	}
-
-	if ( ql_cgame_mutedIdentityCount >= static_cast<int>( ql_cgame_mutedIdentitySet.size() ) ) {
-		return qfalse;
-	}
-
-	ql_cgame_mutedIdentitySet[ql_cgame_mutedIdentityCount++] = identity;
-	CL_WebHost_InvalidateFriendSnapshot();
-	return qtrue;
 }
 
 static uint64_t QL_CG_PackFloatBits64( float lo, float hi ) {
@@ -2457,20 +2412,23 @@ static uint64_t QDECL QL_CG_trap_MeasureText( const char *text, const char *end,
 	return QL_CG_PackFloatBits64( width, height );
 }
 
-static int QDECL QL_CG_trap_IsClientMuted( unsigned int identityLow, unsigned int identityHigh ) {
-	return CL_IsSteamIdentityMuted( identityLow, identityHigh ) ? 1 : 0;
+// QAA: PC deviation. QAA has no Steam. These slots took a SteamID or a Steam
+// app id; they keep their positions and give the no-Steam answer: nobody is
+// muted, the mute toggle fails, no app is subscribed and there is no avatar.
+static int QDECL QL_CG_trap_IsClientMuted( unsigned int /*identityLow*/, unsigned int /*identityHigh*/ ) {
+	return 0;
 }
 
-static int QDECL QL_CG_trap_ToggleClientMute( unsigned int identityLow, unsigned int identityHigh ) {
-	return CL_ToggleSteamIdentityMute( identityLow, identityHigh ) ? 1 : 0;
+static int QDECL QL_CG_trap_ToggleClientMute( unsigned int /*identityLow*/, unsigned int /*identityHigh*/ ) {
+	return 0;
 }
 
-static int QDECL QL_CG_trap_IsSubscribedApp( int appId ) {
-	return CL_IsSubscribedApp( appId ) ? 1 : 0;
+static int QDECL QL_CG_trap_IsSubscribedApp( int /*appId*/ ) {
+	return 0;
 }
 
-static qhandle_t QDECL QL_CG_trap_GetAvatarImageHandle( unsigned int identityLow, unsigned int identityHigh ) {
-	return CL_GetAvatarImageHandle( identityLow, identityHigh );
+static qhandle_t QDECL QL_CG_trap_GetAvatarImageHandle( unsigned int /*identityLow*/, unsigned int /*identityHigh*/ ) {
+	return 0;
 }
 
 /*

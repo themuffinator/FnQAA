@@ -297,7 +297,6 @@ static void FS_QAA_MountPackage( void ) {
 	pak->index = fs_packCount;
 	pak->referenced = 0;
 	pak->exclude = qfalse;
-	pak->workshopItemId = 0;
 	fs_packCount++;
 	fs_qaaMounted++;
 
@@ -315,13 +314,13 @@ static void FS_QAA_MountPackage( void ) {
 =================
 FS_QAA_CheckPackage
 
-Replaces FnQL's Quake Live / Quake III base pak check (FS_CheckIdPaks).
+Replaces FnQL's retail Quake Live / Quake III install check (FS_CheckIdPaks,
+removed): openQAA requires only that a QAA package is mounted.
 =================
 */
 static void FS_QAA_CheckPackage( void ) {
 	const searchpath_t *search;
 
-	(void)FS_CheckIdPaks;	// FnQL's check, kept in files.c but not called
 	for ( search = fs_searchpaths; search; search = search->next ) {
 		if ( search->pack && search->pack->format == PACK_FORMAT_BPK ) {
 			return;

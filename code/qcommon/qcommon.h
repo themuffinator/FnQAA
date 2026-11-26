@@ -808,7 +808,7 @@ typedef enum {
 #define	MAX_FOUND_FILES		0x5000
 
 // Retail Quake Live keeps its automatically managed client configuration at
-// the Steam-user profile root, split between hardware/local and replicated
+// the user profile root, split between hardware/local and replicated
 // state.  Q3CONFIG_CFG remains a read-only migration fallback for existing
 // FnQ3/FnQL profiles; new automatic writes use the QL names below.
 #define QL_CONFIG_HARDWARE_FILE "qzconfig.cfg"
@@ -853,18 +853,6 @@ qboolean FS_ProfileFileExists( const char *file );
 
 char   *FS_BuildOSPath( const char *base, const char *game, const char *qpath );
 
-/* Provider-neutral Steam Workshop install registry. */
-typedef enum fsWorkshopRegisterResult_e {
-	FS_WORKSHOP_REGISTER_REJECTED = -1,
-	FS_WORKSHOP_REGISTER_UNCHANGED = 0,
-	FS_WORKSHOP_REGISTER_CHANGED = 1
-} fsWorkshopRegisterResult_t;
-
-void FS_BeginWorkshopUpdate( void );
-fsWorkshopRegisterResult_t FS_RegisterWorkshopInstall( uint64_t itemId, const char *installFolder, qboolean subscribed );
-qboolean FS_EndWorkshopUpdate( void );
-void FS_CancelWorkshopUpdate( void );
-const char *FS_ReferencedWorkshopItems( void );
 
 qboolean FS_CompareZipChecksum( const char *zipfile );
 int		FS_GetZipChecksum( const char *zipfile );
@@ -1283,16 +1271,6 @@ void Com_Init( char *commandLine );
 void Com_FrameInit( void );
 void Com_Frame( qboolean noDelay );
 
-// Retail Workshop lifecycle and operator actions.  The implementation adapts
-// the optional Steam provider to the provider-neutral filesystem registry.
-void Com_WorkshopInit( void );
-void Com_WorkshopProviderChanged( void );
-void Com_WorkshopShutdown( void );
-void Com_WorkshopFrame( void );
-void Com_WorkshopClaimConnectionDownloads( void );
-qboolean Com_WorkshopDownloadItem( uint64_t itemId );
-qboolean Com_WorkshopSubscribeItem( uint64_t itemId );
-qboolean Com_WorkshopUnsubscribeItem( uint64_t itemId );
 
 /*
 ==============================================================
@@ -1387,9 +1365,7 @@ qboolean CL_GameSwitch( void );
 //
 void SV_Init( void );
 void SV_FactoryRefreshMountedContent( void );
-void SV_RefreshPlatformServiceCvars( void );
 void SV_RegisterGameCvars( void );
-void SV_SteamGameServerStart( const char *mapName );
 void SV_Shutdown( const char *finalmsg );
 qboolean SV_ShouldErrorExit( errorParm_t code );
 void SV_Frame( int msec, int realMsec );
@@ -1518,10 +1494,6 @@ qboolean Sys_ResetReadOnlyAttribute( const char *ospath );
 const char *Sys_Pwd( void );
 const char *Sys_DefaultBasePath( void );
 const char *Sys_DefaultHomePath( void );
-const char *Sys_SteamPath( void );
-#ifdef _WIN32
-const char *Sys_QuakeLiveProfilePath( const char *installPath );
-#endif
 
 #if defined(__APPLE__) || defined(__linux__)
 char    *Sys_DefaultAppPath( void );

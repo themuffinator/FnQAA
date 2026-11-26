@@ -202,21 +202,6 @@ or configs will never get loaded from disk!
 
 */
 
-// every time a new demo pk3 file is built, this checksum must be updated.
-// the easiest way to get it is to just run the game and see what it spits out
-#define	DEMO_PAK0_CHECKSUM	2985612116u
-static const unsigned pak_checksums[] = {
-	1566731103u,
-	298122907u,
-	412165236u,
-	2991495316u,
-	1197932710u,
-	4087071573u,
-	3709064859u,
-	908855077u,
-	977125798u
-};
-
 // if this is defined, the executable positively won't work with any paks other
 // than the demo pak, even if productid is present.  This is only used for our
 // last demo release to prevent the mac and linux users from using the demo
@@ -241,11 +226,6 @@ static const unsigned pak_checksums[] = {
 #define FNQL_ROOT_ARCHIVE_MAX_PATHS		8
 #define FNQL_ROOT_ARCHIVE_MAX_ENTRIES	64
 
-/* Retail Quake Live bounds the subscribed Workshop snapshot at 0x100 items. */
-#define MAX_WORKSHOP_INSTALLS			256
-/* Matches FNQL_STEAM_PATH_CAPACITY without coupling the filesystem to a provider. */
-#define MAX_WORKSHOP_INSTALL_PATH		1024
-#define MAX_WORKSHOP_OSPATH				( MAX_WORKSHOP_INSTALL_PATH + MAX_OSPATH + 1 )
 
 typedef struct fileInPack_s {
 	char					*name;		// name of the file
@@ -285,7 +265,6 @@ typedef struct pack_s {
 	int				referenced;					// referenced file flags
 	qboolean		exclude;					// found in \fs_excludeReference list
 	qboolean		quakeliveEncrypted;
-	uint64_t		workshopItemId;			// zero for non-Workshop archives
 	struct qaaBpk_s	*qaaBpk;					// QAA: PACK_FORMAT_BPK archive; fileInPack_t.pos is its record index
 	fileInPack_t	*qaaFiles;					// QAA: one entry per BPK record, named once looked up
 	int				hashSize;					// hash table size (power of 2)
@@ -318,8 +297,6 @@ typedef struct pack_s {
 typedef struct {
 	char		*path;		// c:\quake3
 	char		*gamedir;	// baseq3
-	uint64_t	workshopItemId;
-	qboolean	rawPath;	// path is already the virtual game root
 } directory_t;
 
 typedef enum {
@@ -348,7 +325,6 @@ static	cvar_t		*fs_homepath;
 // Also search the .app bundle for .pk3 files
 static  cvar_t          *fs_apppath;
 #endif
-static	cvar_t		*fs_steampath;
 
 static	cvar_t		*fs_basepath;
 static	cvar_t		*fs_basegame;
@@ -358,7 +334,6 @@ static	cvar_t		*fs_gamedirvar;
 static	cvar_t		*fs_locked;
 #endif
 static	cvar_t		*fs_excludeReference;
-static	cvar_t		*fs_skipWorkshop;
 
 static	searchpath_t	*fs_searchpaths;
 static	int			fs_readCount;			// total bytes read
@@ -373,24 +348,6 @@ static	int			fs_dirCount;			// total number of directories in searchpath
 static	int			fs_checksumFeed;
 static	unsigned int	fs_quakeLivePk3TempCounter;
 
-typedef struct {
-	uint64_t	itemId;
-	char		installFolder[MAX_WORKSHOP_INSTALL_PATH];
-} workshopInstall_t;
-
-/*
- * The subscribed set is replaced transactionally when the provider refreshes
- * its snapshot.  Transient installs deliberately survive filesystem restarts
- * and snapshot refreshes so server-required, unsubscribed downloads remain
- * mountable for the lifetime of the process, as observed in retail QL.
- */
-static workshopInstall_t fs_workshopSubscribed[MAX_WORKSHOP_INSTALLS];
-static workshopInstall_t fs_workshopSubscribedStage[MAX_WORKSHOP_INSTALLS];
-static workshopInstall_t fs_workshopTransient[MAX_WORKSHOP_INSTALLS];
-static int fs_numWorkshopSubscribed;
-static int fs_numWorkshopSubscribedStage;
-static int fs_numWorkshopTransient;
-static qboolean fs_workshopUpdateActive;
 
 static qboolean FS_IsQuakeLiveEncryptedZipFile( const char *zipfile );
 static char *FS_CreateQuakeLiveDecryptedZipFile( const char *zipfile );
@@ -457,7 +414,6 @@ void Com_AppendCDKey( const char *filename );
 void Com_ReadCDKey( const char *filename );
 
 static int FS_GetModList( char *listbuf, int bufsize );
-static void FS_CheckIdPaks( void );
 void FS_Reload( void );
 
 
@@ -664,43 +620,6 @@ char *FS_BuildOSPath( const char *base, const char *game, const char *qpath ) {
 	Com_sprintf( ospath[toggle], sizeof( ospath[0] ), "%s%s", base, temp );
 	
 	return ospath[toggle];
-}
-
-
-/*
- * Unlike FS_BuildOSPath, this helper never substitutes fs_gamedir for an empty
- * game component.  Workshop install folders are already virtual game roots.
- */
-static char *FS_BuildRawOSPath( const char *base, const char *qpath )
-{
-	static char ospath[2][MAX_WORKSHOP_OSPATH];
-	static int toggle;
-	size_t required;
-
-	toggle ^= 1;
-	if ( qpath != NULL && qpath[0] != '\0' ) {
-		required = strlen( base ) + 1 + strlen( qpath ) + 1;
-		if ( required > sizeof( ospath[toggle] ) ) {
-			Com_DPrintf( "Workshop path exceeds the filesystem path limit.\n" );
-			ospath[toggle][0] = '\0';
-			return ospath[toggle];
-		}
-		Com_sprintf( ospath[toggle], sizeof( ospath[toggle] ), "%s%c%s", base, PATH_SEP, qpath );
-	} else {
-		Q_strncpyz( ospath[toggle], base, sizeof( ospath[toggle] ) );
-	}
-	FS_ReplaceSeparators( ospath[toggle] );
-	return ospath[toggle];
-}
-
-
-static char *FS_BuildSearchPathOSPath( const directory_t *dir, const char *qpath )
-{
-	if ( dir->rawPath ) {
-		return FS_BuildRawOSPath( dir->path, qpath );
-	}
-
-	return FS_BuildOSPath( dir->path, dir->gamedir, qpath );
 }
 
 
@@ -972,344 +891,13 @@ qboolean FS_FileExists( const char *file )
 }
 
 
-static qboolean FS_WorkshopPathIsAbsolute( const char *path )
-{
-#ifdef _WIN32
-	const qboolean drivePath =
-		( ( path[0] >= 'A' && path[0] <= 'Z' ) || ( path[0] >= 'a' && path[0] <= 'z' ) )
-		&& path[1] == ':' && path[2] == PATH_SEP;
-	const char *uncSeparator = path[0] == PATH_SEP && path[1] == PATH_SEP
-		? strchr( path + 2, PATH_SEP ) : NULL;
-	const qboolean uncPath = uncSeparator != NULL && uncSeparator > path + 2 && uncSeparator[1] != '\0';
-
-	return drivePath || uncPath;
-#else
-	return path[0] == PATH_SEP;
-#endif
-}
-
-
-static qboolean FS_WorkshopPathHasTraversal( const char *path )
-{
-	const char *component;
-	const char *p;
-
-	component = path;
-	for ( p = path; ; p++ ) {
-		if ( *p != PATH_SEP && *p != '\0' ) {
-			continue;
-		}
-
-		if ( ( p - component == 1 && component[0] == '.' )
-			|| ( p - component == 2 && component[0] == '.' && component[1] == '.' ) ) {
-			return qtrue;
-		}
-
-		if ( *p == '\0' ) {
-			break;
-		}
-		component = p + 1;
-	}
-
-	return qfalse;
-}
-
-
-static qboolean FS_WorkshopPathHasEmptyComponent( const char *path )
-{
-	const char *p;
-
-#ifdef _WIN32
-	/* Skip one separator from the drive or UNC prefix, but inspect the other. */
-	p = path + ( path[1] == ':' ? 2 : 1 );
-#else
-	p = path;
-#endif
-	for ( ; p[0] != '\0' && p[1] != '\0'; p++ ) {
-		if ( p[0] == PATH_SEP && p[1] == PATH_SEP ) {
-			return qtrue;
-		}
-	}
-	return qfalse;
-}
-
-
-static qboolean FS_WorkshopPathIsFilesystemRoot( const char *path )
-{
-#ifdef _WIN32
-	const char *serverSeparator;
-	const size_t length = strlen( path );
-
-	if ( length == 3 && path[1] == ':' && path[2] == PATH_SEP ) {
-		return qtrue;
-	}
-	if ( path[0] != PATH_SEP || path[1] != PATH_SEP ) {
-		return qfalse;
-	}
-
-	serverSeparator = strchr( path + 2, PATH_SEP );
-	return serverSeparator != NULL
-		&& serverSeparator[1] != '\0'
-		&& strchr( serverSeparator + 1, PATH_SEP ) == NULL;
-#else
-	return path[0] == PATH_SEP && path[1] == '\0';
-#endif
-}
-
-
-static qboolean FS_NormalizeWorkshopPath( const char *installFolder, char *normalized, int normalizedSize )
-{
-	size_t length;
-	const char *p;
-
-	if ( installFolder == NULL || installFolder[0] == '\0' ) {
-		return qfalse;
-	}
-
-	length = strlen( installFolder );
-	if ( length >= (size_t)normalizedSize || length >= MAX_WORKSHOP_INSTALL_PATH ) {
-		return qfalse;
-	}
-
-	for ( p = installFolder; *p != '\0'; p++ ) {
-		if ( (unsigned char)*p < 0x20 || (unsigned char)*p == 0x7f ) {
-			return qfalse;
-		}
-#ifdef _WIN32
-		if ( *p == ':' && p != installFolder + 1 ) {
-			return qfalse;
-		}
-#endif
-	}
-
-	Q_strncpyz( normalized, installFolder, normalizedSize );
-	FS_ReplaceSeparators( normalized );
-	if ( !FS_WorkshopPathIsAbsolute( normalized )
-		|| FS_WorkshopPathHasTraversal( normalized )
-		|| FS_WorkshopPathHasEmptyComponent( normalized ) ) {
-		return qfalse;
-	}
-
-	/* Remove redundant trailing separators before rejecting filesystem roots. */
-	length = strlen( normalized );
-	while ( length > 1 && normalized[length - 1] == PATH_SEP ) {
-#ifdef _WIN32
-		if ( length == 3 && normalized[1] == ':' ) {
-			break;
-		}
-#endif
-		normalized[--length] = '\0';
-	}
-	if ( FS_WorkshopPathIsFilesystemRoot( normalized ) ) {
-		return qfalse;
-	}
-
-	return qtrue;
-}
-
-
-static qboolean FS_WorkshopPathEqual( const char *a, const char *b )
-{
-#ifdef _WIN32
-	return Q_stricmp( a, b ) == 0;
-#else
-	return strcmp( a, b ) == 0;
-#endif
-}
-
-
-static qboolean FS_WorkshopPathOwnedByOther(
-	const workshopInstall_t *installs,
-	int count,
-	uint64_t itemId,
-	const char *installFolder )
-{
-	int i;
-
-	for ( i = 0; i < count; i++ ) {
-		if ( installs[i].itemId != itemId
-			&& FS_WorkshopPathEqual( installs[i].installFolder, installFolder ) ) {
-			return qtrue;
-		}
-	}
-
-	return qfalse;
-}
-
-
-static fsWorkshopRegisterResult_t FS_UpsertWorkshopInstall(
-	workshopInstall_t *installs,
-	int *count,
-	uint64_t itemId,
-	const char *installFolder )
-{
-	int i;
-
-	for ( i = 0; i < *count; i++ ) {
-		if ( installs[i].itemId != itemId ) {
-			continue;
-		}
-
-		if ( FS_WorkshopPathEqual( installs[i].installFolder, installFolder ) ) {
-			return FS_WORKSHOP_REGISTER_UNCHANGED;
-		}
-
-		Q_strncpyz( installs[i].installFolder, installFolder, sizeof( installs[i].installFolder ) );
-		return FS_WORKSHOP_REGISTER_CHANGED;
-	}
-
-	if ( *count >= MAX_WORKSHOP_INSTALLS ) {
-		Com_Printf( S_COLOR_YELLOW "WARNING: Workshop install limit (%d) reached.\n",
-			MAX_WORKSHOP_INSTALLS );
-		return FS_WORKSHOP_REGISTER_REJECTED;
-	}
-
-	installs[*count].itemId = itemId;
-	Q_strncpyz( installs[*count].installFolder, installFolder,
-		sizeof( installs[*count].installFolder ) );
-	( *count )++;
-	return FS_WORKSHOP_REGISTER_CHANGED;
-}
-
-
-/*
-========================
-FS_BeginWorkshopUpdate
-
-Begins a staged replacement of the provider-owned subscribed snapshot.  The
-currently active snapshot remains intact until FS_EndWorkshopUpdate commits it.
-========================
-*/
-void FS_BeginWorkshopUpdate( void )
-{
-	Com_Memset( fs_workshopSubscribedStage, 0, sizeof( fs_workshopSubscribedStage ) );
-	fs_numWorkshopSubscribedStage = 0;
-	fs_workshopUpdateActive = qtrue;
-}
-
-
-/*
-==========================
-FS_RegisterWorkshopInstall
-
-Stores a validated read-only Workshop source.  Subscribed items participate in
-the current snapshot transaction; unsubscribed items enter the process-lifetime
-transient registry used by server-required downloads.
-==========================
-*/
-fsWorkshopRegisterResult_t FS_RegisterWorkshopInstall( uint64_t itemId, const char *installFolder, qboolean subscribed )
-{
-	workshopInstall_t *target;
-	int *targetCount;
-	char normalized[MAX_WORKSHOP_INSTALL_PATH];
-
-	if ( itemId == 0 || !FS_NormalizeWorkshopPath( installFolder, normalized, sizeof( normalized ) ) ) {
-		Com_DPrintf( "Ignored invalid Workshop install registration.\n" );
-		return FS_WORKSHOP_REGISTER_REJECTED;
-	}
-
-	if ( subscribed ) {
-		if ( fs_workshopUpdateActive ) {
-			target = fs_workshopSubscribedStage;
-			targetCount = &fs_numWorkshopSubscribedStage;
-		} else {
-			target = fs_workshopSubscribed;
-			targetCount = &fs_numWorkshopSubscribed;
-		}
-
-		if ( FS_WorkshopPathOwnedByOther( target, *targetCount, itemId, normalized )
-			|| FS_WorkshopPathOwnedByOther( fs_workshopTransient, fs_numWorkshopTransient, itemId, normalized ) ) {
-			Com_Printf( S_COLOR_YELLOW "WARNING: Workshop install folder is already owned by another item.\n" );
-			return FS_WORKSHOP_REGISTER_REJECTED;
-		}
-	} else {
-		target = fs_workshopTransient;
-		targetCount = &fs_numWorkshopTransient;
-
-		if ( FS_WorkshopPathOwnedByOther( target, *targetCount, itemId, normalized )
-			|| FS_WorkshopPathOwnedByOther( fs_workshopSubscribed, fs_numWorkshopSubscribed, itemId, normalized )
-			|| ( fs_workshopUpdateActive
-				&& FS_WorkshopPathOwnedByOther( fs_workshopSubscribedStage,
-					fs_numWorkshopSubscribedStage, itemId, normalized ) ) ) {
-			Com_Printf( S_COLOR_YELLOW "WARNING: Workshop install folder is already owned by another item.\n" );
-			return FS_WORKSHOP_REGISTER_REJECTED;
-		}
-	}
-
-	return FS_UpsertWorkshopInstall( target, targetCount, itemId, normalized );
-}
-
-
-/*
-======================
-FS_EndWorkshopUpdate
-
-Commits the staged subscribed snapshot and reports whether its ordered contents
-changed.  Mount/restart timing remains the caller's responsibility.
-======================
-*/
-qboolean FS_EndWorkshopUpdate( void )
-{
-	qboolean changed;
-	int i;
-
-	if ( !fs_workshopUpdateActive ) {
-		return qfalse;
-	}
-
-	changed = fs_numWorkshopSubscribed != fs_numWorkshopSubscribedStage;
-	if ( !changed ) {
-		for ( i = 0; i < fs_numWorkshopSubscribed; i++ ) {
-			if ( fs_workshopSubscribed[i].itemId != fs_workshopSubscribedStage[i].itemId
-				|| !FS_WorkshopPathEqual( fs_workshopSubscribed[i].installFolder,
-					fs_workshopSubscribedStage[i].installFolder ) ) {
-				changed = qtrue;
-				break;
-			}
-		}
-	}
-
-	Com_Memset( fs_workshopSubscribed, 0, sizeof( fs_workshopSubscribed ) );
-	if ( fs_numWorkshopSubscribedStage > 0 ) {
-		Com_Memcpy( fs_workshopSubscribed, fs_workshopSubscribedStage,
-			fs_numWorkshopSubscribedStage * sizeof( fs_workshopSubscribed[0] ) );
-	}
-	fs_numWorkshopSubscribed = fs_numWorkshopSubscribedStage;
-	fs_numWorkshopSubscribedStage = 0;
-	fs_workshopUpdateActive = qfalse;
-
-	return changed;
-}
-
-
-/*
-========================
-FS_CancelWorkshopUpdate
-
-Discards a staged subscribed snapshot without disturbing the last committed
-set.  Providers use this when one row of an otherwise authoritative snapshot
-cannot be validated or read completely.
-========================
-*/
-void FS_CancelWorkshopUpdate( void )
-{
-	if ( !fs_workshopUpdateActive ) {
-		return;
-	}
-
-	Com_Memset( fs_workshopSubscribedStage, 0, sizeof( fs_workshopSubscribedStage ) );
-	fs_numWorkshopSubscribedStage = 0;
-	fs_workshopUpdateActive = qfalse;
-}
-
-
 /*
 ================
 FS_ProfileQpathIsValid
 
 Profile-root access is reserved for trusted engine-owned files. Keep it
 separate from the virtual game filesystem and reject absolute/traversing paths
-so a future caller cannot accidentally escape the active Steam-user profile.
+so a future caller cannot accidentally escape the active user profile.
 ================
 */
 static qboolean FS_ProfileQpathIsValid( const char *qpath ) {
@@ -1495,20 +1083,6 @@ int FS_SV_FOpenFileRead( const char *filename, fileHandle_t *fp ) {
 			if ( fs_debug->integer )
 			{
 				Com_Printf( "FS_SV_FOpenFileRead (fs_basepath): %s\n", ospath );
-			}
-
-			fd->handleFiles.file.o = Sys_FOpen( ospath, "rb" );
-		}
-
-		// Check fs_steampath too
-		if ( !fd->handleFiles.file.o && fs_steampath->string[0] )
-		{
-			// search steampath
-			ospath = FS_BuildOSPath( fs_steampath->string, filename, NULL );
-
-			if ( fs_debug->integer )
-			{
-				Com_Printf( "FS_SV_FOpenFileRead (fs_steampath): %s\n", ospath );
 			}
 
 			fd->handleFiles.file.o = Sys_FOpen( ospath, "rb" );
@@ -1830,7 +1404,7 @@ fileHandle_t FS_FOpenProfileFileWrite( const char *filename ) {
 FS_FOpenProfileFileRead
 
 Opens only the active user-profile root. This intentionally does not fall
-through to fs_basepath, fs_steampath, a mod directory, or a package.
+through to fs_basepath, a mod directory, or a package.
 ===========
 */
 int FS_FOpenProfileFileRead( const char *filename, fileHandle_t *file ) {
@@ -2340,7 +1914,7 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 				} while ( pakFile != NULL );
 			} else if ( search->dir && search->policy != DIR_DENY ) {
 				dir = search->dir;
-				netpath = FS_BuildSearchPathOSPath( dir, filename );
+				netpath = FS_BuildOSPath( dir->path, dir->gamedir, filename );
 				if ( netpath[0] == '\0' ) {
 					continue;
 				}
@@ -2387,7 +1961,7 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 			// check a file in the directory tree
 			dir = search->dir;
 
-			netpath = FS_BuildSearchPathOSPath( dir, filename );
+			netpath = FS_BuildOSPath( dir->path, dir->gamedir, filename );
 			if ( netpath[0] == '\0' ) {
 				continue;
 			}
@@ -5225,7 +4799,7 @@ static char **FS_ListFilteredFiles( const char *path, const char *extension, con
 			char	**sysFiles;
 			const char *name;
 
-			netpath = FS_BuildSearchPathOSPath( search->dir, path );
+			netpath = FS_BuildOSPath( search->dir->path, search->dir->gamedir, path );
 			if ( netpath[0] == '\0' ) {
 				continue;
 			}
@@ -5586,7 +5160,7 @@ static int FS_GetModList( char *listbuf, int bufsize ) {
 	qboolean bDrop = qfalse;
 
 	// paths to search for mods
-	cvar_t *const *paths[] = { &fs_basepath, &fs_homepath, &fs_steampath };
+	cvar_t *const *paths[] = { &fs_basepath, &fs_homepath };
 
 	*listbuf = '\0';
 	nMods = nTotal = 0;
@@ -5908,7 +5482,7 @@ static void FS_Which_f( void ) {
 		} else if ( search->dir ) {
 			dir = search->dir;
 
-			netpath = FS_BuildSearchPathOSPath( dir, filename );
+			netpath = FS_BuildOSPath( dir->path, dir->gamedir, filename );
 			if ( netpath[0] == '\0' ) {
 				continue;
 			}
@@ -5936,24 +5510,18 @@ static void FS_Which_f( void ) {
 
 /*
 ===========================
-FS_AddGameDirectoryInternal
+FS_AddGameDirectory
 
-Adds a regular game directory or a provider-neutral read-only Workshop root to
-the head of the path, then loads its archive headers.
+Adds a game directory to the head of the path, then loads its archive headers.
 ===========================
 */
-static void FS_AddGameDirectoryInternal(
-	const char *path,
-	const char *dir,
-	uint64_t workshopItemId,
-	qboolean rawPath,
-	qboolean scanArchives ) {
+static void FS_AddGameDirectory( const char *path, const char *dir ) {
 	const searchpath_t *sp;
 	int				len;
 	searchpath_t	*search;
 	const char		*gamedir;
 	pack_t			*pak;
-	char			curpath[MAX_WORKSHOP_OSPATH];
+	char			curpath[MAX_OSPATH*2+1];
 	char			*pakfile;
 	int				numfiles;
 	char			**pakfiles;
@@ -5966,16 +5534,12 @@ static void FS_AddGameDirectoryInternal(
 	int				dir_len;
 
 	for ( sp = fs_searchpaths ; sp ; sp = sp->next ) {
-		if ( sp->dir && sp->dir->rawPath == rawPath
-			&& sp->dir->workshopItemId == workshopItemId
-			&& !Q_stricmp( sp->dir->path, path ) && !Q_stricmp( sp->dir->gamedir, dir ) ) {
+		if ( sp->dir && !Q_stricmp( sp->dir->path, path ) && !Q_stricmp( sp->dir->gamedir, dir ) ) {
 			return;	// we've already got this one
 		}
 	}
 	
-	if ( !rawPath ) {
-		Q_strncpyz( fs_gamedir, dir, sizeof( fs_gamedir ) );
-	}
+	Q_strncpyz( fs_gamedir, dir, sizeof( fs_gamedir ) );
 
 	//
 	// add the directory to the search path
@@ -5994,27 +5558,15 @@ static void FS_AddGameDirectoryInternal(
 
 	strcpy( search->dir->path, path );
 	strcpy( search->dir->gamedir, dir );
-	search->dir->workshopItemId = workshopItemId;
-	search->dir->rawPath = rawPath;
-	search->policy = workshopItemId != 0 ? DIR_ALLOW : DIR_STATIC;
-	gamedir = workshopItemId != 0 ? basegame : search->dir->gamedir;
+	search->policy = DIR_STATIC;
+	gamedir = search->dir->gamedir;
 
 	search->next = fs_searchpaths;
 	fs_searchpaths = search;
 	fs_dirCount++;
 
-	/* Retail keeps a missing-base Workshop root available for loose reads, but
-	 * does not let archives from that root enter the package search path. */
-	if ( !scanArchives ) {
-		return;
-	}
-
 	// find all pak files in this directory
-	if ( rawPath ) {
-		Q_strncpyz( curpath, FS_BuildRawOSPath( path, NULL ), sizeof( curpath ) );
-	} else {
-		Q_strncpyz( curpath, FS_BuildOSPath( path, dir, NULL ), sizeof( curpath ) );
-	}
+	Q_strncpyz( curpath, FS_BuildOSPath( path, dir, NULL ), sizeof( curpath ) );
 
 	// Get package files
 	pakfiles = Sys_ListFiles( curpath, NULL, NULL, &numfiles, 0 );
@@ -6062,11 +5614,7 @@ static void FS_AddGameDirectoryInternal(
 			}
 
 			// The next package file is before the next .pk3dir
-			if ( rawPath ) {
-				pakfile = FS_BuildRawOSPath( path, pakfiles[pakfilesi] );
-			} else {
-				pakfile = FS_BuildOSPath( path, dir, pakfiles[pakfilesi] );
-			}
+			pakfile = FS_BuildOSPath( path, dir, pakfiles[pakfilesi] );
 			if ( pakfile[0] == '\0' ) {
 				pakfilesi++;
 				continue;
@@ -6084,7 +5632,6 @@ static void FS_AddGameDirectoryInternal(
 			pak->index = fs_packCount;
 			pak->referenced = 0;
 			pak->exclude = qfalse;
-			pak->workshopItemId = workshopItemId;
 
 			fs_packFiles += pak->numfiles;
 			fs_packCount++;
@@ -6098,11 +5645,6 @@ static void FS_AddGameDirectoryInternal(
 
 			pakfilesi++;
 		} else {
-			const char *directoryPath;
-			const char *directoryGame;
-			qboolean directoryRawPath;
-			char workshopPakDir[MAX_WORKSHOP_OSPATH];
-
 			len = strlen(pakdirs[pakdirsi]);
 
 			// The next .pk3dir is before the next .pk3 file
@@ -6113,26 +5655,10 @@ static void FS_AddGameDirectoryInternal(
 				continue;
 			}
 
-			if ( rawPath ) {
-				Q_strncpyz( workshopPakDir, FS_BuildRawOSPath( curpath, pakdirs[pakdirsi] ),
-					sizeof( workshopPakDir ) );
-				if ( workshopPakDir[0] == '\0' ) {
-					pakdirsi++;
-					continue;
-				}
-				directoryPath = workshopPakDir;
-				directoryGame = "";
-				directoryRawPath = qtrue;
-			} else {
-				directoryPath = curpath;
-				directoryGame = pakdirs[pakdirsi];
-				directoryRawPath = qfalse;
-			}
-
 			// add the directory to the search path
-			path_len = (int) strlen( directoryPath ) + 1;
+			path_len = (int) strlen( curpath ) + 1;
 			path_len = PAD( path_len, sizeof( int ) );
-			dir_len = PAD( (int)strlen( directoryGame ) + 1, sizeof( int ) );
+			dir_len = PAD( (int)strlen( pakdirs[pakdirsi] ) + 1, sizeof( int ) );
 			len = sizeof( *search ) + sizeof( *search->dir ) + path_len + dir_len;
 
 			search = Z_TagMalloc( len, TAG_SEARCH_DIR );
@@ -6142,10 +5668,8 @@ static void FS_AddGameDirectoryInternal(
 			search->dir->gamedir = (char*)( search->dir->path + path_len );
 			search->policy = DIR_ALLOW;
 
-			strcpy( search->dir->path, directoryPath );
-			strcpy( search->dir->gamedir, directoryGame );
-			search->dir->workshopItemId = workshopItemId;
-			search->dir->rawPath = directoryRawPath;
+			strcpy( search->dir->path, curpath );
+			strcpy( search->dir->gamedir, pakdirs[pakdirsi] );
 
 			search->next = fs_searchpaths;
 			fs_searchpaths = search;
@@ -6158,113 +5682,6 @@ static void FS_AddGameDirectoryInternal(
 	// done
 	Sys_FreeFileList( pakdirs );
 	Sys_FreeFileList( pakfiles );
-}
-
-
-static void FS_AddGameDirectory( const char *path, const char *dir )
-{
-	FS_AddGameDirectoryInternal( path, dir, 0, qfalse, qtrue );
-}
-
-
-static void FS_AddWorkshopInstall( const workshopInstall_t *install, qboolean scanArchives )
-{
-	char childPath[MAX_WORKSHOP_OSPATH];
-	char **directories;
-	int numDirectories;
-	int i;
-
-	/* Root-level content is the dominant retail Workshop layout. */
-	FS_AddGameDirectoryInternal( install->installFolder, "", install->itemId, qtrue,
-		scanArchives );
-
-	/*
-	 * Retail Steam content also contains items whose archives and loose assets
-	 * live under an item-local baseq3 directory.  Mount that directory as a
-	 * second virtual root when it exists; it overrides the same item's root.
-	 */
-	directories = Sys_ListFiles( install->installFolder, "/", NULL, &numDirectories, 0 );
-	for ( i = 0; i < numDirectories; i++ ) {
-		if ( Q_stricmp( directories[i], BASEGAME ) != 0 ) {
-			continue;
-		}
-
-		Q_strncpyz( childPath, FS_BuildRawOSPath( install->installFolder, directories[i] ),
-			sizeof( childPath ) );
-		if ( childPath[0] != '\0' ) {
-			FS_AddGameDirectoryInternal( childPath, "", install->itemId, qtrue,
-				scanArchives );
-		}
-		break;
-	}
-	Sys_FreeFileList( directories );
-}
-
-
-static qboolean FS_WorkshopItemAlreadyMounted( uint64_t itemId )
-{
-	const searchpath_t *search;
-
-	for ( search = fs_searchpaths; search != NULL; search = search->next ) {
-		if ( ( search->pack != NULL && search->pack->workshopItemId == itemId )
-			|| ( search->dir != NULL && search->dir->workshopItemId == itemId ) ) {
-			return qtrue;
-		}
-	}
-
-	return qfalse;
-}
-
-
-static void FS_AddWorkshopDirectories( qboolean scanArchives )
-{
-	int i;
-
-	if ( fs_skipWorkshop->integer || Cvar_VariableIntegerValue( "com_buildScript" ) ) {
-		return;
-	}
-
-	for ( i = 0; i < fs_numWorkshopSubscribed; i++ ) {
-		FS_AddWorkshopInstall( &fs_workshopSubscribed[i], scanArchives );
-	}
-
-	for ( i = 0; i < fs_numWorkshopTransient; i++ ) {
-		if ( !FS_WorkshopItemAlreadyMounted( fs_workshopTransient[i].itemId ) ) {
-			FS_AddWorkshopInstall( &fs_workshopTransient[i], scanArchives );
-		}
-	}
-}
-
-
-/*
-=================================
-FS_HasTrustedBasePakOnDisk
-
-Checks retail's exact pre-Workshop marker without consulting search paths.
-Workshop content therefore cannot authorize its own archive enumeration.
-=================================
-*/
-static qboolean FS_HasTrustedBasePakOnDisk( void )
-{
-	const char *basePakPath;
-	FILE *basePak;
-
-	if ( fs_basepath == NULL || fs_basepath->string[0] == '\0' ) {
-		return qfalse;
-	}
-
-	basePakPath = FS_BuildOSPath( fs_basepath->string, BASEGAME, "pak00.pk3" );
-	if ( basePakPath[0] == '\0' ) {
-		return qfalse;
-	}
-
-	basePak = Sys_FOpen( basePakPath, "rb" );
-	if ( basePak == NULL ) {
-		return qfalse;
-	}
-
-	fclose( basePak );
-	return qtrue;
 }
 
 
@@ -6644,9 +6061,8 @@ qboolean FS_IsPureChecksum( int sum )
 ================
 FS_DefaultHomePath
 
-Retail Windows uses <install>/<SteamID> for configuration and extracted native
-modules. Other platforms retain their established user-data location. Command
-line fs_homepath still wins because it is registered as an init cvar below.
+The platform user-data folder, falling back to the base path. Command line
+fs_homepath still wins because it is registered as an init cvar below.
 ================
 */
 static const char *FS_DefaultHomePath( const char *basePath )
@@ -6676,9 +6092,7 @@ FS_Startup
 */
 static void FS_Startup( void ) {
 	const char *homePath;
-	const char *steamPath;
 	const char *defaultBasePath;
-	qboolean scanWorkshopArchives;
 	int i, start, end;
 
 	Com_Printf( "----- FS_Startup -----\n" );
@@ -6687,19 +6101,15 @@ static void FS_Startup( void ) {
 	Cvar_SetDescription( fs_debug, "Debugging tool for the filesystem. Run the game in debug mode. Prints additional information regarding read files into the console." );
 	fs_copyfiles = Cvar_Get( "fs_copyfiles", "0", CVAR_INIT );
 	Cvar_SetDescription( fs_copyfiles, "Whether or not to copy files when loading them into the game. Every file found in the cdpath will be copied over." );
-	// QAA: PC deviation. FnQL defaults fs_basepath to the retail Quake Live
-	// Steam install; openQAA's data comes from the QAA package instead
-	// (fs_qaaPackage), so the Steam library is never searched.
-	steamPath = NULL;
+	// QAA: PC deviation. FnQL finds the retail Quake Live Steam install
+	// (registry, Steam library folders) and searches it as fs_steampath.
+	// openQAA's data comes from the QAA package (fs_qaaPackage), so it looks
+	// for no game installation: fs_basepath is the launch folder.
 	defaultBasePath = Sys_DefaultBasePath();
 	fs_basepath = Cvar_Get( "fs_basepath", defaultBasePath, CVAR_INIT | CVAR_PROTECTED | CVAR_PRIVATE );
-	Cvar_SetDescription( fs_basepath, "Write-protected CVAR specifying the path to the retail Quake Live installation folder." );
+	Cvar_SetDescription( fs_basepath, "Write-protected CVAR specifying the folder holding openQAA's base game directory." );
 	fs_basegame = Cvar_Get( "fs_basegame", BASEGAME, CVAR_INIT | CVAR_PROTECTED );
 	Cvar_SetDescription( fs_basegame, "Write-protected CVAR specifying the path to the base game(s) folder(s), separated by '/'." );
-	fs_steampath = Cvar_Get( "fs_steampath", steamPath ? steamPath : "", CVAR_INIT | CVAR_PROTECTED | CVAR_PRIVATE );
-	Cvar_SetDescription( fs_steampath, "Write-protected CVAR specifying the auto-detected retail Quake Live Steam installation folder." );
-	fs_skipWorkshop = Cvar_Get( "fs_skipWorkshop", "0", CVAR_INIT );
-	Cvar_SetDescription( fs_skipWorkshop, "Skip mounting registered Steam Workshop content." );
 
 	/* parse fs_basegame cvar */
 	if ( basegame_cnt == 0 || Q_stricmp( basegame, fs_basegame->string ) ) {
@@ -6730,7 +6140,7 @@ static void FS_Startup( void ) {
 
 	fs_homepath = Cvar_Get( "fs_homepath", homePath, CVAR_INIT | CVAR_PROTECTED | CVAR_PRIVATE );
 	Cvar_SetDescription( fs_homepath, "Directory to store user configuration and downloaded files." );
-	Com_Printf( "Retail QL filesystem: install '%s', home '%s'\n",
+	Com_Printf( "Filesystem: base '%s', home '%s'\n",
 		fs_basepath->string, fs_homepath->string );
 
 	fs_gamedirvar = Cvar_Get( "fs_game", "", CVAR_INIT | CVAR_SYSTEMINFO );
@@ -6754,30 +6164,14 @@ static void FS_Startup( void ) {
 #endif
 #endif
 
-	/* Retail checks the exact normal base marker before either Workshop skip
-	 * gate.  Missing-base roots remain available for loose files, but their
-	 * archives cannot establish or replace retail base identity. */
-	scanWorkshopArchives = FS_HasTrustedBasePakOnDisk();
-	if ( !scanWorkshopArchives ) {
-		Com_Printf( "WARNING: Skipping workshop PK3s since pak00 doesn't exist.\n" );
-	}
-
 	// QAA: the package's pak0.bpk is the lowest-priority source, so loose
 	// files in the base, home and mod folders override it.
 	FS_QAA_MountPackage();
 
-	/* Retail QL mounts Workshop sources first.  Because each later source is
-	 * prepended, the normal Steam/base/home roots below retain higher priority. */
-	FS_AddWorkshopDirectories( scanWorkshopArchives );
+	// QAA: PC deviation. QAA has no Steam Workshop; FnQL mounted Workshop
+	// installs here, below the base and home roots.
 
 	// add search path elements in reverse priority order
-	if ( fs_steampath->string[0] && Q_stricmp( fs_steampath->string, fs_basepath->string ) ) {
-		// handle multiple basegames:
-		for (i = 0; i < basegame_cnt; i++) {
-			FS_AddGameDirectory( fs_steampath->string, basegames[i] );
-		}
-	}
-
 	if (fs_basepath->string[0]) {
 		// handle multiple basegames:
 		for (i = 0; i < basegame_cnt; i++) {
@@ -6807,9 +6201,6 @@ static void FS_Startup( void ) {
 
 	// check for additional game folder for mods
 	if ( fs_gamedirvar->string[0] != '\0' && !FS_IsBaseGame( fs_gamedirvar->string ) ) {
-		if ( fs_steampath->string[0] != '\0' && Q_stricmp( fs_steampath->string, fs_basepath->string ) ) {
-			FS_AddGameDirectory( fs_steampath->string, fs_gamedirvar->string );
-		}
 		if ( fs_basepath->string[0] != '\0' ) {
 			FS_AddGameDirectory( fs_basepath->string, fs_gamedirvar->string );
 		}
@@ -6885,134 +6276,6 @@ static void FS_PrintSearchPaths( void )
 			Com_Printf( " * %s\n", path->dir->path );
 
 		path = path->next;
-	}
-}
-
-
-/*
-===================
-FS_CheckIdPaks
-
-Accepts retail Quake Live's pak00.pk3 marker. Legacy Quake III paks keep their
-existing checksum guard for compatibility builds using those assets.
-===================
-*/
-static qboolean FS_HasQuakeLiveBasePak( void )
-{
-	const searchpath_t *path;
-
-	for ( path = fs_searchpaths; path; path = path->next )
-	{
-		if ( !path->pack )
-			continue;
-
-		if ( path->pack->workshopItemId == 0
-			&& !Q_stricmpn( path->pack->pakGamename, BASEGAME, MAX_OSPATH )
-			&& !Q_stricmpn( path->pack->pakBasename, "pak00", MAX_OSPATH ) )
-		{
-			return qtrue;
-		}
-	}
-
-	return qfalse;
-}
-
-
-static void FS_CheckIdPaks( void )
-{
-	const searchpath_t *path;
-	const char* pakBasename;
-	qboolean founddemo = qfalse;
-	unsigned foundPak = 0;
-
-	if ( FS_HasQuakeLiveBasePak() ) {
-		return;
-	}
-
-	for ( path = fs_searchpaths; path; path = path->next )
-	{
-		if ( !path->pack )
-			continue;
-
-		pakBasename = path->pack->pakBasename;
-
-		if(!Q_stricmpn( path->pack->pakGamename, BASEDEMO, MAX_OSPATH )
-		   && !Q_stricmpn( pakBasename, "pak0", MAX_OSPATH ))
-		{
-			founddemo = qtrue;
-
-			if( path->pack->checksum == DEMO_PAK0_CHECKSUM )
-			{
-				Com_Printf( "\n\n"
-						"**************************************************\n"
-						"WARNING: It looks like you're using pak0.pk3\n"
-						"from the demo. This may work fine, but it is not\n"
-						"guaranteed or supported.\n"
-						"**************************************************\n\n\n" );
-			}
-		}
-
-		else if(!Q_stricmpn( path->pack->pakGamename, BASEGAME, MAX_OSPATH )
-			&& strlen(pakBasename) == 4 && !Q_stricmpn( pakBasename, "pak", 3 )
-			&& pakBasename[3] >= '0' && pakBasename[3] <= '8')
-		{
-			if( (unsigned int)path->pack->checksum != pak_checksums[pakBasename[3]-'0'] )
-			{
-				FS_PrintSearchPaths();
-
-				if(pakBasename[3] == '0')
-				{
-					Com_Printf("\n\n"
-						"**************************************************\n"
-						"ERROR: pak0.pk3 is present but its checksum (%u)\n"
-						"is not correct. Please re-copy pak0.pk3 from your\n"
-						"legitimate Quake III CDROM.\n"
-						"**************************************************\n\n\n",
-						path->pack->checksum );
-				}
-				else
-				{
-					Com_Printf("\n\n"
-						"**************************************************\n"
-						"ERROR: pak%d.pk3 is present but its checksum (%u)\n"
-						"is not correct. Please re-install legacy Quake III Arena \n"
-						"Point Release v1.32 pk3 files\n"
-						"**************************************************\n\n\n",
-						pakBasename[3]-'0', path->pack->checksum );
-				}
-				Com_Error(ERR_FATAL, "\n* You need to install correct retail Quake Live or legacy Quake III Arena files in order to play *");
-			}
-
-			foundPak |= 1<<(pakBasename[3]-'0');
-		}
-	}
-
-	if(!founddemo && (foundPak & 0x1ff) != 0x1ff )
-	{
-		FS_PrintSearchPaths();
-
-		if((foundPak&1) != 1 )
-		{
-			Com_Printf("\n\n"
-			"Quake Live pak00.pk3 is missing. Please verify\n"
-			"your legitimate Steam Quake Live installation.\n");
-		}
-
-		if((foundPak&0x1fe) != 0x1fe )
-		{
-			Com_Printf("\n\n"
-			"Legacy Quake III Point Release files are missing.\n");
-		}
-
-		Com_Printf("\n\n"
-			"Also check that fs_basepath or fs_steampath points at\n"
-			"your retail Quake Live Steam install and that every file\n"
-			"in the %s directory is present and readable.\n", BASEGAME);
-
-		if(!fs_gamedirvar->string[0]
-		|| !Q_stricmp( fs_gamedirvar->string, BASEGAME )
-		|| !Q_stricmp( fs_gamedirvar->string, BASETA ))
-			Com_Error(ERR_FATAL, "\n*** you need a valid retail Quake Live Steam installation in order to play ***");
 	}
 }
 
@@ -7134,67 +6397,6 @@ const char *FS_ReferencedPakChecksums( void ) {
 				Q_strcat( info, sizeof( info ), va( "%i ", search->pack->checksum ) );
 			}
 		}
-	}
-
-	return info;
-}
-
-
-/*
-============================
-FS_ReferencedWorkshopItems
-
-Returns exact, numerically de-duplicated Workshop item IDs for referenced
-archives in filesystem search order.  Retail QL publishes a trailing space.
-============================
-*/
-const char *FS_ReferencedWorkshopItems( void )
-{
-	static char info[BIG_INFO_STRING];
-	uint64_t seen[MAX_WORKSHOP_INSTALLS];
-	const searchpath_t *search;
-	int seenCount;
-	int i;
-	char itemText[32];
-
-	info[0] = '\0';
-	seenCount = 0;
-
-	for ( search = fs_searchpaths; search != NULL; search = search->next ) {
-		uint64_t itemId;
-		qboolean duplicate;
-
-		if ( search->pack == NULL || search->pack->referenced == 0 ) {
-			continue;
-		}
-
-		itemId = search->pack->workshopItemId;
-		if ( itemId == 0 ) {
-			continue;
-		}
-
-		duplicate = qfalse;
-		for ( i = 0; i < seenCount; i++ ) {
-			if ( seen[i] == itemId ) {
-				duplicate = qtrue;
-				break;
-			}
-		}
-		if ( duplicate ) {
-			continue;
-		}
-
-		if ( seenCount >= ARRAY_LEN( seen ) ) {
-			break;
-		}
-		seen[seenCount++] = itemId;
-
-		Com_sprintf( itemText, sizeof( itemText ), "%llu ", (unsigned long long)itemId );
-		if ( strlen( info ) + strlen( itemText ) >= sizeof( info ) ) {
-			Com_Printf( S_COLOR_YELLOW "WARNING: referenced Workshop item list is too long.\n" );
-			break;
-		}
-		Q_strcat( info, sizeof( info ), itemText );
 	}
 
 	return info;
@@ -7591,8 +6793,8 @@ void FS_Restart( int checksumFeed ) {
 	Q_strncpyz( lastValidGame, fs_gamedirvar->string, sizeof( lastValidGame ) );
 
 	/* Any successful search-path transition can add or remove arena, factory,
-	 * and map-pool sources (game switches, pure reorder, downloads, or Workshop
-	 * snapshots). The server-side hook is a no-op until its registries exist. */
+	 * and map-pool sources (game switches, pure reorder, downloads). The
+	 * server-side hook is a no-op until its registries exist. */
 	SV_FactoryRefreshMountedContent();
 }
 
@@ -7944,7 +7146,7 @@ void *FS_LoadLibrary( const char *name )
 			sp = sp->next;
 		}
 		if ( sp ) {
-			const char *fn = FS_BuildSearchPathOSPath( sp->dir, name );
+			const char *fn = FS_BuildOSPath( sp->dir->path, sp->dir->gamedir, name );
 			libHandle = Sys_LoadLibrary( fn );
 			sp = sp->next;
 		}

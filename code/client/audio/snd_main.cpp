@@ -38,8 +38,6 @@ using fnql::ToQboolean;
 extern "C" {
 cvar_t *s_volume;
 cvar_t *s_musicVolume;
-cvar_t *s_voiceVolume;
-cvar_t *s_voiceStep;
 cvar_t *s_doppler;
 cvar_t *s_muteBackground;
 cvar_t *s_announcerVolume;
@@ -79,7 +77,6 @@ static bool S_ValidSoundInterface( const soundInterface_t *s )
 	if( !s->StopBackgroundTrack ) return false;
 	if( !s->UpdateBackgroundTrack ) return false;
 	if( !s->RawSamples ) return false;
-	if( !s->AddVoiceSamples ) return false;
 	if( !s->StopAllSounds ) return false;
 	if( !s->ClearLoopingSoundsFrame ) return false;
 	if( !s->ClearLoopingSounds ) return false;
@@ -441,23 +438,6 @@ static void S_SoundList( void )
 
 /*
 =================
-S_AddVoiceSamples
-=================
-*/
-extern "C" void S_AddVoiceSamples( int clientNum, int samples, int rate, const short *data )
-{
-	if ( clientNum < 0 || clientNum >= MAX_CLIENTS || samples <= 0 ||
-		rate < 8000 || rate > 192000 || data == nullptr ) {
-		return;
-	}
-
-	if ( si.AddVoiceSamples ) {
-		si.AddVoiceSamples( clientNum, samples, rate, data );
-	}
-}
-
-/*
-=================
 S_OriginInPVS
 
 Retail s_pvs is fail-open when collision data is unavailable. This preserves
@@ -639,12 +619,8 @@ extern "C" void S_Init( void )
 	s_musicVolume = Cvar_Get( "s_musicVolume", "0.25", CVAR_ARCHIVE );
 	Cvar_CheckRange( s_musicVolume, "0", "2", CV_FLOAT );
 	Cvar_SetDescription( s_musicVolume, "Sets volume for in-game music only." );
-	s_voiceVolume = Cvar_Get( "s_voiceVolume", "1.0", CVAR_ARCHIVE );
-	Cvar_CheckRange( s_voiceVolume, "0", "2", CV_FLOAT );
-	Cvar_SetDescription( s_voiceVolume, "Sets playback volume for remote Steam voice chat without affecting cinematics or music." );
-	s_voiceStep = Cvar_Get( "s_voiceStep", "0.02", CVAR_ARCHIVE_ND );
-	Cvar_CheckRange( s_voiceStep, "0", "0.25", CV_FLOAT );
-	Cvar_SetDescription( s_voiceStep, "Adds a small prebuffer delay to newly active remote voice lanes to reduce packet-boundary underruns." );
+	// QAA: PC deviation. QAA has no Steam voice chat; FnQL's s_voiceVolume and
+	// s_voiceStep, which only drove remote-voice playback, are removed.
 	s_doppler = Cvar_Get( "s_doppler", "1", CVAR_ARCHIVE_ND );
 	Cvar_CheckRange( s_doppler, "0", "1", CV_INTEGER );
 	Cvar_SetDescription( s_doppler, "Enables doppler effect on moving projectiles." );

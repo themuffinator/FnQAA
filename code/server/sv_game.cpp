@@ -613,6 +613,9 @@ static void SV_GameAASEntityInfo( int entnum, intptr_t infoArg, void *info ) {
 }
 
 
+static qboolean QDECL QL_G_trap_GetSteamId( int clientNum, unsigned int *steamIdLow, unsigned int *steamIdHigh );
+static qboolean QDECL QL_G_trap_VerifySteamAuth( int clientNum );
+
 /*
 ====================
 SV_GameSystemCalls
@@ -759,10 +762,11 @@ static intptr_t SV_GameSystemCalls( intptr_t *args ) {
 		VM_CHECKBOUNDS( gvm, args[1], args[2] );
 		SV_GetServerinfo( VMA(1), args[2] );
 		return 0;
+	// QAA: PC deviation, no Steam: no SteamID, and every live slot validates
 	case G_STEAMID_QUERY:
-		return SV_ClientSteamId( args[1], static_cast<unsigned int *>( VMA(2) ), static_cast<unsigned int *>( VMA(3) ) );
+		return QL_G_trap_GetSteamId( args[1], static_cast<unsigned int *>( VMA(2) ), static_cast<unsigned int *>( VMA(3) ) );
 	case G_STEAM_AUTH_VALIDATE:
-		return SV_VerifyClientSteamAuth( args[1] );
+		return QL_G_trap_VerifySteamAuth( args[1] );
 	case G_RANK_BEGIN:
 		SV_GameRankBegin( static_cast<const char *>( VMA(1) ) );
 		return 0;
@@ -1274,11 +1278,11 @@ static intptr_t SV_GameSystemCalls( intptr_t *args ) {
 		return SV_GetValue( VMA(1), args[2], VMA(3) );
 
 	case G_FNQL_STATS_REPORT_JSON:
-		SV_SteamStats_ProcessMatchReportJson( static_cast<const char *>( VMA(1) ) );
+		SV_Stats_ProcessMatchReportJson( static_cast<const char *>( VMA(1) ) );
 		return 0;
 
 	case G_FNQL_STATS_EVENT_JSON:
-		SV_SteamStats_ProcessEventJson( static_cast<unsigned int>( args[1] ),
+		SV_Stats_ProcessEventJson( static_cast<unsigned int>( args[1] ),
 			static_cast<unsigned int>( args[2] ), static_cast<const char *>( VMA(3) ),
 			static_cast<const char *>( VMA(4) ) );
 		return 0;
@@ -1746,97 +1750,18 @@ static intptr_t QDECL QL_G_trap_ReturnZero( void ) {
 	return 0;
 }
 
-static qboolean SV_ParseSteamIdString( const char *text, unsigned int *steamIdLow, unsigned int *steamIdHigh ) {
-	unsigned long long value = 0;
-
-	if ( !text ) {
-		return qfalse;
-	}
-
-	while ( *text == ' ' || *text == '\t' ) {
-		++text;
-	}
-
-	if ( !*text ) {
-		return qfalse;
-	}
-
-	while ( *text && *text != ' ' && *text != '\t' ) {
-		if ( *text < '0' || *text > '9' ) {
-			return qfalse;
-		}
-
-		const unsigned int digit = static_cast<unsigned int>( *text - '0' );
-		const unsigned long long maxValue = ~0ULL;
-		if ( value > ( maxValue - digit ) / 10ULL ) {
-			return qfalse;
-		}
-
-		value = value * 10ULL + digit;
-		++text;
-	}
-
-	while ( *text == ' ' || *text == '\t' ) {
-		++text;
-	}
-
-	if ( *text || value == 0ULL ) {
-		return qfalse;
-	}
-
-	if ( steamIdLow ) {
-		*steamIdLow = static_cast<unsigned int>( value & 0xffffffffULL );
-	}
-	if ( steamIdHigh ) {
-		*steamIdHigh = static_cast<unsigned int>( value >> 32 );
-	}
-
-	return qtrue;
-}
-
-static qboolean SV_ClientSteamIdFromUserinfo( int clientNum, unsigned int *steamIdLow, unsigned int *steamIdHigh ) {
-	if ( !SV_IsClientIndex( clientNum ) ) {
-		return qfalse;
-	}
-
-	const client_t &client = SV_ClientForIndex( clientNum );
-	if ( SV_ParseSteamIdString( client.platformSteamId, steamIdLow, steamIdHigh ) ) {
-		return qtrue;
-	}
-
-	if ( SV_ParseSteamIdString( Info_ValueForKey( client.userinfo, "steamid" ), steamIdLow, steamIdHigh ) ) {
-		return qtrue;
-	}
-
-	return SV_ParseSteamIdString( Info_ValueForKey( client.userinfo, "steam" ), steamIdLow, steamIdHigh );
-}
-
-qboolean SV_ClientSteamId( int clientNum, unsigned int *steamIdLow, unsigned int *steamIdHigh ) {
-	return SV_ClientSteamIdFromUserinfo( clientNum, steamIdLow, steamIdHigh );
-}
-
+// QAA: PC deviation for the Steam imports below: Quake Arena Arcade has no
+// Steam, so each answers what a server without Steam would.  The compatibility
+// SteamID query reports none.
 static qboolean QDECL QL_G_trap_GetSteamId( int clientNum, unsigned int *steamIdLow, unsigned int *steamIdHigh ) {
-	unsigned int low = 0;
-	unsigned int high = 0;
-
+	(void)clientNum;
 	if ( steamIdLow ) {
 		*steamIdLow = 0;
 	}
 	if ( steamIdHigh ) {
 		*steamIdHigh = 0;
 	}
-
-	if ( !SV_ClientSteamId( clientNum, &low, &high ) ) {
-		return qfalse;
-	}
-
-	if ( steamIdLow ) {
-		*steamIdLow = low;
-	}
-	if ( steamIdHigh ) {
-		*steamIdHigh = high;
-	}
-	return qtrue;
+	return qfalse;
 }
 
 // Retail native import slot 200 takes only the client number and returns the
@@ -1848,41 +1773,33 @@ static qboolean QDECL QL_G_trap_GetSteamId( int clientNum, unsigned int *steamId
 // sharing one function between those ABIs corrupts the caller stack.
 //
 // Observed: retail answers 0 for a bot, which it recognises by a
-// "characterfile" key in the slot's userinfo (quakelive_steam.exe 0x4e2710),
-// even though the engine holds an anonymous SteamID for the bot so Steam can
-// list it.  Retail qagame keys its access list (admin, mod, ban and complaint
+// "characterfile" key in the slot's userinfo (quakelive_steam.exe 0x4e2710).
+// Retail qagame keys its access list (admin, mod, ban and complaint
 // tempbans) by this answer and keeps an entry for 0 like any other.
 //
 // FnQL decides bot-ness by the NA_BOT address the server alone assigns:
-// userinfo is client-controlled, and a player who set characterfile would
-// otherwise share id 0, escaping a ban on their own id and inheriting any
-// entry stored for 0.  Server bots always have NA_BOT, and retail clients do
-// not send characterfile (inference: only the game's bot code writes it), so
-// bots and Steam players get the same answer as before.  A player with no
-// Steam identity of its own -- no ticket, no local provider identity; a
-// userinfo "steamid" claim does not count -- gets its connection's own
-// anonymous id instead of 0, so one `ban` or `addadmin` no longer reaches
-// every Steam-less client (SV_AssignClientGameIdentity, game_identity.hpp).
+// userinfo is client-controlled.  Every human gets its connection's own id
+// instead of 0, so one `ban` or `addadmin` does not reach every client
+// (SV_AssignClientGameIdentity, game_identity.hpp).
 static std::uint64_t QDECL QL_G_trap_GetSteamId64( int clientNum ) {
-	return SV_ClientGameSteamId( clientNum );
+	return SV_ClientGameIdentity( clientNum );
 }
 
+// Without Steam every live slot validates.
 static qboolean QDECL QL_G_trap_VerifySteamAuth( int clientNum ) {
-	return SV_VerifyClientSteamAuth( clientNum );
+	if ( !SV_IsClientIndex( clientNum ) ) {
+		return qfalse;
+	}
+	const clientState_t state = SV_ClientForIndex( clientNum ).state;
+	return state != CS_FREE && state != CS_ZOMBIE ? qtrue : qfalse;
 }
 
 // Retail slot 205 is invoked from GAME_CLIENT_CONNECT before the server moves
-// the provisional slot from CS_FREE to CS_CONNECTED.  It asks whether the
-// provider session was successfully started; final asynchronous rejection is
-// handled by the provider event callback and drops the client.
+// the provisional slot from CS_FREE to CS_CONNECTED; it asks whether the
+// Steam auth session started.  Without Steam there is none to wait for.
 static qboolean QDECL QL_G_trap_BeginSteamAuthSession( int clientNum ) {
-	if ( !svs.clients || clientNum < 0 || clientNum >= sv.maxclients ) {
-		return qfalse;
-	}
-	if ( SV_PlatformServiceAvailable( SV_PLATFORM_CAPABILITY_AUTH ) ) {
-		return svs.clients[clientNum].platformAuthSession;
-	}
-	return qtrue;
+	return svs.clients && clientNum >= 0 && clientNum < sv.maxclients
+		? qtrue : qfalse;
 }
 
 static void QDECL QL_G_trap_RankBegin( char *gameKey ) {
@@ -1918,12 +1835,12 @@ static void QDECL QL_G_trap_RankReportStr( int index1, int index2, int key, char
 }
 
 static void SV_SubmitMatchReport( void *report ) {
-	(void)SV_SteamStats_ProcessMatchReport( report, nullptr, 0 );
+	(void)SV_Stats_ProcessMatchReport( report, nullptr, 0 );
 }
 
 static void SV_ReportPlayerEvent( unsigned int steamIdLow, unsigned int steamIdHigh,
 		const void *clientStats, const char *eventName, void *payload ) {
-	SV_SteamStats_ProcessEvent( steamIdLow, steamIdHigh, clientStats, eventName, payload );
+	SV_Stats_ProcessEvent( steamIdLow, steamIdHigh, clientStats, eventName, payload );
 }
 
 static void QDECL QL_G_trap_SubmitMatchReport( void *report ) {
@@ -1938,17 +1855,17 @@ static void QDECL QL_G_trap_ReportPlayerEvent( unsigned int steamIdLow, unsigned
 // FnQL extensions for source-built game modules: the documents retail builds
 // as JsonCpp objects for slots 185/186, handed over as JSON text.
 static void QDECL QL_G_trap_StatsReportJson( const char *json ) {
-	SV_SteamStats_ProcessMatchReportJson( json );
+	SV_Stats_ProcessMatchReportJson( json );
 }
 
 static void QDECL QL_G_trap_StatsEventJson( unsigned int steamIdLow, unsigned int steamIdHigh,
 		const char *eventName, const char *json ) {
-	SV_SteamStats_ProcessEventJson( steamIdLow, steamIdHigh, eventName, json );
+	SV_Stats_ProcessEventJson( steamIdLow, steamIdHigh, eventName, json );
 }
 
+// QAA: PC deviation, no Steam stats: the call is only recorded for sv_lockstep
 static void QDECL QL_G_trap_AddSteamStat( int clientNum, int statIndex, int delta ) {
 	SV_LockstepRecordSteamCall( LOCKSTEP_STEAM_ADD_STAT, clientNum, statIndex, delta, 0 );
-	SV_SteamStats_AddFieldValue( clientNum, statIndex, delta );
 }
 
 typedef struct {
@@ -2064,16 +1981,15 @@ static void QDECL QL_G_trap_GenerateMatchGuid( char *buffer, int bufferSize ) {
 	SV_GenerateMatchGuid( buffer, bufferSize );
 }
 
+// QAA: PC deviation, no Steam achievements: none is held, and the calls are
+// only recorded for sv_lockstep
 static void QDECL QL_G_trap_UnlockSteamAchievement( int clientNum, int achievementId ) {
 	SV_LockstepRecordSteamCall( LOCKSTEP_STEAM_UNLOCK_ACHIEVEMENT, clientNum, achievementId, 0, 0 );
-	SV_SteamStats_UnlockAchievement( clientNum, achievementId );
 }
 
 static qboolean QDECL QL_G_trap_HasSteamAchievement( int clientNum, int achievementId ) {
-	const qboolean held = SV_SteamStats_HasAchievement( clientNum, achievementId );
-
-	SV_LockstepRecordSteamCall( LOCKSTEP_STEAM_HAS_ACHIEVEMENT, clientNum, achievementId, 0, held ? 1 : 0 );
-	return held;
+	SV_LockstepRecordSteamCall( LOCKSTEP_STEAM_HAS_ACHIEVEMENT, clientNum, achievementId, 0, 0 );
+	return qfalse;
 }
 
 static qboolean QDECL QL_G_trap_FactoryExists( const char *factoryName ) {

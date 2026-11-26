@@ -925,7 +925,9 @@ static intptr_t CL_UISystemCalls( intptr_t *args ) {
 		return re.RegisterSkin( VMA(1) );
 
 	case UI_R_REGISTERSHADERNOMIP:
-		return CL_Steam_RegisterShader( VMA(1) );
+		// QAA: PC deviation. QAA has no Steam avatars; FnQL's Steam avatar
+		// lookup is removed, leaving its plain renderer registration.
+		return re.RegisterShaderNoMip( VMA(1) );
 
 	case UI_R_CLEARSCENE:
 		re.ClearScene();
@@ -1804,8 +1806,10 @@ static int QDECL QL_UI_trap_GetCursorPos( int *x, int *y ) {
 	return CL_WebHost_GetCursorPosition( x, y ) ? 1 : 0;
 }
 
-static int QDECL QL_UI_trap_IsSubscribedApp( int appId ) {
-	return CL_IsSubscribedApp( appId ) ? 1 : 0;
+// QAA: PC deviation. QAA has no Steam; the slot keeps its position and no app
+// is subscribed.
+static int QDECL QL_UI_trap_IsSubscribedApp( int /*appId*/ ) {
+	return 0;
 }
 
 static void QDECL QL_UI_trap_DrawScaledText( int x, int y, const char *text, int fontHandle, float scale, int limit, float *maxX, int forceColor ) {
@@ -1852,19 +1856,14 @@ static unsigned long long QDECL QL_UI_trap_MeasureText( const char *text, const 
 	return QL_UI_PackFloatBits64( width, height );
 }
 
-static void QDECL QL_UI_trap_GetItemDownloadInfo( unsigned int itemIdLow, unsigned int itemIdHigh, unsigned long long *outDownloaded, unsigned long long *outTotal ) {
-	unsigned long long downloaded = 0ull;
-	unsigned long long total = 0ull;
-
-	if ( !CL_GetWorkshopDownloadInfo( itemIdLow, itemIdHigh, &downloaded, &total ) ) {
-		CL_Steam_GetItemDownloadInfo( itemIdLow, itemIdHigh, &downloaded, &total );
-	}
-
+// QAA: PC deviation. QAA has no Steam Workshop; the slot keeps its position and
+// reports no progress for any item.
+static void QDECL QL_UI_trap_GetItemDownloadInfo( unsigned int /*itemIdLow*/, unsigned int /*itemIdHigh*/, unsigned long long *outDownloaded, unsigned long long *outTotal ) {
 	if ( outDownloaded ) {
-		*outDownloaded = downloaded;
+		*outDownloaded = 0ull;
 	}
 	if ( outTotal ) {
-		*outTotal = total;
+		*outTotal = 0ull;
 	}
 }
 

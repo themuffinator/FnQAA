@@ -34,8 +34,6 @@ extern "C" {
 #include "window_resize.hpp"
 #include "../qcommon/protocol_contract.hpp"
 #include "../qcommon/netchan_safety.hpp"
-#include "../qcommon/steam_identity.hpp"
-#include "../platform/fnql_steam.h"
 
 #include <algorithm>
 #include <array>
@@ -61,92 +59,10 @@ constexpr const char *LEGACY_DEMOEXT = "dm3";
 constexpr int kMaxServersPerPacket = 256;
 constexpr std::size_t kServerAddressHashBuckets = 1024;
 
-struct SteamChallengeTicket {
-	std::array<byte, MAX_PACKETLEN> bytes{};
-	std::uint32_t size = 0;
-	std::uint32_t handle = 0;
-	std::uint64_t steamId = 0;
-	fnql::client::auth::ChallengeRequestMode requestMode =
-		fnql::client::auth::ChallengeRequestMode::None;
-};
-
-SteamChallengeTicket steamChallengeTicket;
-
-static void CL_ClearSteamChallengeTicket() {
-	if ( steamChallengeTicket.handle != 0 ) {
-		FNQL_Steam_CancelAuthTicket( steamChallengeTicket.handle );
-	}
-	volatile byte *ticket = steamChallengeTicket.bytes.data();
-	for ( std::size_t i = 0; i < steamChallengeTicket.bytes.size(); ++i ) {
-		ticket[i] = 0;
-	}
-	steamChallengeTicket = {};
-}
-
-static void CL_EraseSteamChallengePayload() {
-	volatile byte *ticket = steamChallengeTicket.bytes.data();
-	for ( std::size_t i = 0; i < steamChallengeTicket.bytes.size(); ++i ) {
-		ticket[i] = 0;
-	}
-	steamChallengeTicket.size = 0;
-	steamChallengeTicket.requestMode =
-		fnql::client::auth::ChallengeRequestMode::None;
-}
-
-static bool CL_AcquireSteamChallengeTicket( std::uint32_t capacity ) {
-	if ( steamChallengeTicket.handle != 0 && steamChallengeTicket.size != 0 &&
-		steamChallengeTicket.steamId != 0 ) {
-		return steamChallengeTicket.size <= capacity;
-	}
-	if ( steamChallengeTicket.handle != 0 ) {
-		CL_ClearSteamChallengeTicket();
-	}
-	if ( !FNQL_Steam_Available( FNQL_STEAM_CAP_AUTH | FNQL_STEAM_CAP_IDENTITY ) ) {
-		return false;
-	}
-	fnqlSteamStatus_t status{};
-	status.size = sizeof( status );
-	if ( !FNQL_Steam_GetStatus( &status ) || status.local_steam_id == 0 ) {
-		return false;
-	}
-	std::uint32_t ticketSize = 0;
-	std::uint32_t ticketHandle = 0;
-	if ( FNQL_Steam_GetAuthTicket( steamChallengeTicket.bytes.data(), capacity,
-		&ticketSize, &ticketHandle ) != FNQL_STEAM_RESULT_OK ||
-		ticketSize == 0 || ticketSize > capacity || ticketHandle == 0 ) {
-		CL_ClearSteamChallengeTicket();
-		return false;
-	}
-	steamChallengeTicket.size = ticketSize;
-	steamChallengeTicket.handle = ticketHandle;
-	steamChallengeTicket.steamId = status.local_steam_id;
-	return true;
-}
-
-static bool CL_SendRetailSteamChallenge() {
-	constexpr std::size_t headerBytes =
-		fnql::client::auth::RetailSteamChallengeHeaderBytes;
-	static_assert( headerBytes < MAX_PACKETLEN );
-	const std::uint32_t ticketCapacity = static_cast<std::uint32_t>(
-		MAX_PACKETLEN - headerBytes );
-	if ( !CL_AcquireSteamChallengeTicket( ticketCapacity ) ) {
-		return false;
-	}
-	std::array<byte, MAX_PACKETLEN> packet{};
-	const std::size_t packetBytes =
-		fnql::client::auth::BuildRetailSteamChallenge(
-			packet.data(), packet.size(), steamChallengeTicket.steamId,
-			steamChallengeTicket.bytes.data(), steamChallengeTicket.size );
-	if ( packetBytes == 0 ) {
-		CL_ClearSteamChallengeTicket();
-		return false;
-	}
-	NET_SendPacket( NS_CLIENT, static_cast<int>( packetBytes ), packet.data(),
-		&clc.serverAddress );
-	steamChallengeTicket.requestMode =
-		fnql::client::auth::ChallengeRequestMode::RetailSteam;
-	return true;
-}
+// QAA: PC deviation. QAA has no Steam; FnQL's Steam ticket challenge is
+// removed, so only the kind of challenge request last sent is kept.
+fnql::client::auth::ChallengeRequestMode challengeRequestMode =
+	fnql::client::auth::ChallengeRequestMode::None;
 
 static int OpenPureFileRead( const char *qpath, ScopedFileHandle &file )
 {
@@ -214,8 +130,6 @@ cvar_t	*cl_aviPipeFormat;
 cvar_t	*cl_activeAction;
 
 cvar_t	*cl_motdString;
-static cvar_t *cl_platform;
-static cvar_t *cl_steamNameLock;
 
 cvar_t	*cl_allowDownload;
 #ifdef USE_CURL
@@ -1416,12 +1330,6 @@ void CL_ShutdownAll( void ) {
 		}
 	}
 
-	// RE_Shutdown drops every texture and the next RE_BeginRegistration rebuilds
-	// tr.shaders from zero, so any handle cached outside the renderer now names
-	// an unrelated shader. CL_ShutdownRef covers its own path; this one does not
-	// go through it.
-	CL_ClearAvatarImageHandles();
-
 	cls.rendererStarted = qfalse;
 	cls.soundRegistered = qfalse;
 
@@ -1516,9 +1424,6 @@ void CL_MapLoading( void ) {
 		clc.connectTime = -RETRANSMIT_TIMEOUT;
 		NET_StringToAdr( cls.servername, &clc.serverAddress, NA_UNSPEC );
 		CL_WebView_PublishGameStartForAddress( &clc.serverAddress );
-		// this path sends userinfo without waiting for the next frame, so assert
-		// the Steam identity before it is captured into the connect request
-		CL_EnforceSteamIdentity();
 		// we don't need a challenge on the localhost
 		CL_CheckForResend();
 	}
@@ -1541,323 +1446,6 @@ void CL_ClearState( void ) {
 	// a full temporary on MSVC, so clear the POD state directly in place.
 	Com_Memset( &cl, 0, sizeof( cl ) );
 }
-
-/*
-====================
-CL_ParseUnsignedLongLongString
-====================
-*/
-static qboolean CL_ParseUnsignedLongLongString( const char *text, unsigned long long *outValue ) {
-	const char *ch;
-	unsigned long long value;
-
-	if ( outValue ) {
-		*outValue = 0ull;
-	}
-
-	if ( !text || !text[0] || !outValue ) {
-		return qfalse;
-	}
-
-	value = 0ull;
-	for ( ch = text; *ch; ++ch ) {
-		unsigned int digit;
-
-		if ( *ch < '0' || *ch > '9' ) {
-			return qfalse;
-		}
-
-		digit = static_cast<unsigned int>( *ch - '0' );
-		if ( value > ( ULLONG_MAX - digit ) / 10ull ) {
-			return qfalse;
-		}
-
-		value = value * 10ull + digit;
-	}
-
-	*outValue = value;
-	return qtrue;
-}
-
-/*
-====================
-CL_ParseSteamIdString
-
-Parses the decimal retail SteamID transport into low/high identity words.
-====================
-*/
-static qboolean CL_ParseSteamIdString( const char *steamId, unsigned int *steamIdLow, unsigned int *steamIdHigh ) {
-	unsigned long long value;
-
-	if ( steamIdLow ) {
-		*steamIdLow = 0;
-	}
-	if ( steamIdHigh ) {
-		*steamIdHigh = 0;
-	}
-
-	if ( !steamId || !steamId[0] || !steamIdLow || !steamIdHigh ) {
-		return qfalse;
-	}
-
-	if ( !CL_ParseUnsignedLongLongString( steamId, &value ) ) {
-		return qfalse;
-	}
-
-	*steamIdLow = static_cast<unsigned int>( value & 0xffffffffull );
-	*steamIdHigh = static_cast<unsigned int>( ( value >> 32 ) & 0xffffffffull );
-	return qtrue;
-}
-
-/*
-====================
-CL_GetConfigStringValue
-====================
-*/
-static const char *CL_GetConfigStringValue( int index ) {
-	int offset;
-
-	if ( index < 0 || index >= MAX_CONFIGSTRINGS ) {
-		return "";
-	}
-
-	offset = cl.gameState.stringOffsets[index];
-	if ( offset <= 0 || offset >= cl.gameState.dataCount ||
-		offset >= static_cast<int>( sizeof( cl.gameState.stringData ) ) ) {
-		return "";
-	}
-
-	return cl.gameState.stringData + offset;
-}
-
-/*
-====================
-CL_CopyClientIdentity
-
-Returns the native cgame identity sidecar when available, with a configstring
-fallback for the safe data already replicated through CS_PLAYERS.
-====================
-*/
-qboolean CL_CopyClientIdentity( int clientNum, cgameClientIdentity_t *identity ) {
-	char info[MAX_INFO_STRING];
-	char generatedCleanName[CG_CLIENT_IDENTITY_NAME_CHARS];
-	const char *configstring;
-	const char *steamId;
-	const char *name;
-	const char *cleanName;
-	qboolean hasIdentity;
-
-	if ( !identity ) {
-		return qfalse;
-	}
-
-	Com_Memset( identity, 0, sizeof( *identity ) );
-
-	if ( clientNum < 0 || clientNum >= MAX_CLIENTS ) {
-		return qfalse;
-	}
-
-	if ( cgvm && cgvm->dllExports &&
-		VM_Call( cgvm, 2, CG_COPY_CLIENT_IDENTITY,
-			static_cast<intptr_t>( clientNum ), reinterpret_cast<intptr_t>( identity ) ) ) {
-		return ( identity->identityLow || identity->identityHigh ||
-			identity->displayName[0] || identity->cleanName[0] ) ? qtrue : qfalse;
-	}
-
-	configstring = CL_GetConfigStringValue( CS_PLAYERS + clientNum );
-	if ( !configstring[0] ) {
-		return qfalse;
-	}
-
-	Q_strncpyz( info, configstring, sizeof( info ) );
-
-	identity->clientNum = clientNum;
-	hasIdentity = qfalse;
-
-	steamId = Info_ValueForKey( info, "steamid" );
-	if ( !steamId[0] ) {
-		steamId = Info_ValueForKey( info, "steam" );
-	}
-	if ( CL_ParseSteamIdString( steamId, &identity->identityLow, &identity->identityHigh ) &&
-		( identity->identityLow || identity->identityHigh ) ) {
-		hasIdentity = qtrue;
-	}
-
-	name = Info_ValueForKey( info, "n" );
-	if ( !name[0] ) {
-		name = Info_ValueForKey( info, "name" );
-	}
-	if ( name[0] ) {
-		Q_strncpyz( identity->displayName, name, sizeof( identity->displayName ) );
-		hasIdentity = qtrue;
-	}
-
-	cleanName = Info_ValueForKey( info, "cn" );
-	if ( !cleanName[0] ) {
-		cleanName = Info_ValueForKey( info, "cleanName" );
-	}
-	if ( cleanName[0] ) {
-		Q_strncpyz( identity->cleanName, cleanName, sizeof( identity->cleanName ) );
-		hasIdentity = qtrue;
-	} else if ( identity->displayName[0] ) {
-		Q_strncpyz( generatedCleanName, identity->displayName, sizeof( generatedCleanName ) );
-		Q_CleanStr( generatedCleanName );
-		Q_strncpyz( identity->cleanName,
-			generatedCleanName[0] ? generatedCleanName : identity->displayName, sizeof( identity->cleanName ) );
-	}
-
-	return hasIdentity;
-}
-
-/*
-====================
-CL_GetClientSteamId
-====================
-*/
-qboolean CL_GetClientSteamId( int clientNum, unsigned int *steamIdLow, unsigned int *steamIdHigh ) {
-	cgameClientIdentity_t identity;
-
-	if ( steamIdLow ) {
-		*steamIdLow = 0;
-	}
-	if ( steamIdHigh ) {
-		*steamIdHigh = 0;
-	}
-
-	if ( !steamIdLow || !steamIdHigh ) {
-		return qfalse;
-	}
-
-	if ( !CL_CopyClientIdentity( clientNum, &identity ) ) {
-		return qfalse;
-	}
-
-	if ( !identity.identityLow && !identity.identityHigh ) {
-		return qfalse;
-	}
-
-	*steamIdLow = identity.identityLow;
-	*steamIdHigh = identity.identityHigh;
-	return qtrue;
-}
-
-/*
-====================
-CL_GetWorkshopDownloadInfo
-
-Uses live provider progress when available, with the active QL-style download
-cvars retained as the provider-free fallback.
-====================
-*/
-qboolean CL_GetWorkshopDownloadInfo( unsigned int itemIdLow, unsigned int itemIdHigh, unsigned long long *outDownloaded, unsigned long long *outTotal ) {
-	char itemText[32];
-	char downloadedText[32];
-	char totalText[32];
-	unsigned long long itemId;
-	unsigned long long requestedItemId;
-	unsigned long long downloaded;
-	unsigned long long total;
-
-	if ( outDownloaded ) {
-		*outDownloaded = 0ull;
-	}
-	if ( outTotal ) {
-		*outTotal = 0ull;
-	}
-	requestedItemId = ( static_cast<unsigned long long>( itemIdHigh ) << 32 ) | itemIdLow;
-	if ( FNQL_Steam_Available( FNQL_STEAM_CAP_UGC ) ) {
-		itemId = requestedItemId;
-		if ( itemId == 0 ) {
-			Cvar_VariableStringBuffer( "cl_downloadItem", itemText, sizeof( itemText ) );
-			(void)CL_ParseUnsignedLongLongString( itemText, &itemId );
-		}
-		if ( itemId != 0 ) {
-			std::uint64_t liveDownloaded = 0;
-			std::uint64_t liveTotal = 0;
-			if ( FNQL_Steam_GetItemDownloadInfo( itemId,
-				&liveDownloaded, &liveTotal ) == FNQL_STEAM_RESULT_OK ) {
-				if ( outDownloaded ) {
-					*outDownloaded = static_cast<unsigned long long>( liveDownloaded );
-				}
-				if ( outTotal ) {
-					*outTotal = static_cast<unsigned long long>( liveTotal );
-				}
-				return qtrue;
-			}
-		}
-	}
-
-	Cvar_VariableStringBuffer( "cl_downloadItem", itemText, sizeof( itemText ) );
-	if ( !itemText[0] || !CL_ParseUnsignedLongLongString( itemText, &itemId ) ) {
-		return qfalse;
-	}
-
-	if ( requestedItemId && requestedItemId != itemId ) {
-		return qfalse;
-	}
-
-	Cvar_VariableStringBuffer( "cl_downloadCount", downloadedText, sizeof( downloadedText ) );
-	Cvar_VariableStringBuffer( "cl_downloadSize", totalText, sizeof( totalText ) );
-	if ( !CL_ParseUnsignedLongLongString( downloadedText, &downloaded ) ) {
-		downloaded = 0ull;
-	}
-	if ( !CL_ParseUnsignedLongLongString( totalText, &total ) ) {
-		total = 0ull;
-	}
-
-	if ( outDownloaded ) {
-		*outDownloaded = downloaded;
-	}
-	if ( outTotal ) {
-		*outTotal = total;
-	}
-
-	return qtrue;
-}
-
-/*
-====================
-CL_IsVoiceSenderMuted
-====================
-*/
-qboolean CL_IsVoiceSenderMuted( int clientNum ) {
-	unsigned int steamIdLow;
-	unsigned int steamIdHigh;
-
-	if ( !CL_GetClientSteamId( clientNum, &steamIdLow, &steamIdHigh ) ) {
-		return qfalse;
-	}
-
-	return CL_IsSteamIdentityMuted( steamIdLow, steamIdHigh );
-}
-
-/*
-====================
-CL_SetClientSpeakingState
-====================
-*/
-void CL_SetClientSpeakingState( int clientNum, qboolean speaking ) {
-	if ( !cgvm || !cgvm->dllExports || cls.state != CA_ACTIVE || !cl.snap.valid ) {
-		return;
-	}
-
-	if ( clientNum < 0 || clientNum >= MAX_CLIENTS ) {
-		return;
-	}
-
-	VM_Call( cgvm, 2, CG_SET_CLIENT_SPEAKING_STATE,
-		static_cast<intptr_t>( clientNum ), static_cast<intptr_t>( speaking ? 1 : 0 ) );
-}
-
-/*
-====================
-CL_SetLocalSpeakingState
-====================
-*/
-void CL_SetLocalSpeakingState( qboolean speaking ) {
-	CL_SetClientSpeakingState( cl.snap.ps.clientNum, speaking );
-}
-
 
 /*
 ====================
@@ -1970,8 +1558,7 @@ qboolean CL_Disconnect( qboolean showMainMenu ) {
 	// into the browser menu after the session has ended.
 	Cvar_Set( "timescale", "1" );
 	Cvar_Set( "r_uiFullScreen", "1" );
-	CL_ClearSteamChallengeTicket();
-	CL_Workshop_Reset();
+	challengeRequestMode = fnql::client::auth::ChallengeRequestMode::None;
 
 	if ( publishGameEnd ) {
 		CL_WebView_PublishGameEnd();
@@ -2013,9 +1600,6 @@ qboolean CL_Disconnect( qboolean showMainMenu ) {
 	S_StopAllSounds();
 	CL_WebHost_NotifySoundsStopped();
 	Key_ClearStates();
-	// Ordinary catcher changes preserve an explicitly started voice session,
-	// but disconnect is a session boundary and must stop it unconditionally.
-	CL_ResetVoiceInputState();
 
 	if ( uivm && showMainMenu ) {
 		VM_Call( uivm, 1, UI_SET_ACTIVE_MENU, UIMENU_NONE );
@@ -3049,7 +2633,6 @@ static void CL_BeginDownload( const char *localName, const char *remoteName ) {
 
 	// Set so UI gets access to it
 	Cvar_Set( "cl_downloadName", remoteName );
-	Cvar_Set( "cl_downloadItem", "" );
 	Cvar_Set( "cl_downloadSize", "0" );
 	Cvar_Set( "cl_downloadCount", "0" );
 	Cvar_SetIntegerValue( "cl_downloadTime", cls.realtime );
@@ -3172,7 +2755,9 @@ After receiving a valid game state, we valid the cgame and local zip files here
 and determine if we need to download them
 =================
 */
-static void CL_InitLegacyDownloads( void ) {
+// QAA: PC deviation. QAA has no Steam Workshop; FnQL's Workshop download step
+// that ran before this one is removed.
+void CL_InitDownloads( void ) {
 
 	// Retail Quake Live has no in-band download: its server command table has
 	// no `download`, and its client only warns about missing paks and carries
@@ -3247,23 +2832,6 @@ static void CL_InitLegacyDownloads( void ) {
 	CL_DownloadsComplete();
 }
 
-void CL_ResumeDownloadsAfterWorkshop( void ) {
-	CL_InitLegacyDownloads();
-}
-
-void CL_InitDownloads( void ) {
-	constexpr int QL_STEAM_REFERENCED_CONFIGSTRING = 0x2cb;
-	const fnql::protocol::Contract &activeContract =
-		fnql::protocol::ForWireProfile( clc.netchan.wireProfile );
-	if ( !clc.demoplaying &&
-		activeContract.Has( fnql::protocol::Capability::WorkshopContent ) &&
-		CL_Workshop_BeginRequiredDownloads(
-			CL_GetConfigStringValue( QL_STEAM_REFERENCED_CONFIGSTRING ) ) ) {
-		return;
-	}
-	CL_InitLegacyDownloads();
-}
-
 
 /*
 =================
@@ -3299,7 +2867,7 @@ static void CL_CheckForResend( void ) {
 	switch ( cls.state ) {
 	case CA_CONNECTING:
 		// The retired Quake III authorize service applies only to the legacy
-		// protocol. Protocol 91 authenticates with its Steam challenge ticket.
+		// protocol.
 #ifndef STANDALONE
 		if ( com_protocol->integer <= OLD_PROTOCOL_VERSION &&
 			!Cvar_VariableIntegerValue("com_standalone") &&
@@ -3308,21 +2876,18 @@ static void CL_CheckForResend( void ) {
 			CL_RequestAuthorization();
 #endif
 		if ( com_protocol->integer == QL_RETAIL_PROTOCOL_VERSION ) {
-			if ( !CL_SendRetailSteamChallenge() ) {
-				// Retail's deterministic no-Steam fallback is a bare textual
-				// challenge. The remote server remains authoritative about whether
-				// an unauthenticated client is allowed.
-				NET_OutOfBandPrint( NS_CLIENT, &clc.serverAddress, "getchallenge" );
-				steamChallengeTicket.requestMode =
-					fnql::client::auth::ChallengeRequestMode::RetailWithoutSteam;
-				Com_DPrintf( "Steam challenge ticket unavailable; sent protocol-91 no-Steam fallback.\n" );
-			}
+			// QAA: PC deviation. QAA has no Steam, so protocol 91 always sends
+			// retail's no-Steam fallback: a bare textual challenge. The server
+			// decides whether an unauthenticated client is allowed.
+			NET_OutOfBandPrint( NS_CLIENT, &clc.serverAddress, "getchallenge" );
+			challengeRequestMode =
+				fnql::client::auth::ChallengeRequestMode::RetailWithoutSteam;
 		} else {
 			// Legacy/ioq3 peers echo this nonce, preventing an unrelated server
 			// from redirecting the connection.
 			NET_OutOfBandPrint( NS_CLIENT, &clc.serverAddress,
 				"getchallenge %d %s", clc.challenge, GAMENAME_FOR_MASTER );
-			steamChallengeTicket.requestMode =
+			challengeRequestMode =
 				fnql::client::auth::ChallengeRequestMode::LegacyNonce;
 		}
 		break;
@@ -3659,7 +3224,7 @@ static bool CL_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 	if ( !Q_stricmp(c, "challengeResponse" ) ) {
 		int serverProtocol = 0;
 		const fnql::client::auth::ChallengeRequestMode requestMode =
-			steamChallengeTicket.requestMode;
+			challengeRequestMode;
 		const bool retailRequest =
 			fnql::client::auth::IsRetailRequest( requestMode );
 
@@ -3694,9 +3259,8 @@ static bool CL_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 			}
 		}
 		if ( serverProtocol <= 0 && retailRequest ) {
-			// Retail protocol 91 sends a bare challengeResponse for both its
-			// binary Steam-ticket request and the no-Steam fallback. The request
-			// mode is therefore the protocol discriminator.
+			// Retail protocol 91 sends a bare challengeResponse, so the request
+			// mode is the protocol discriminator.
 			serverProtocol = QL_RETAIL_PROTOCOL_VERSION;
 			clc.compat = qfalse;
 		}
@@ -3704,7 +3268,7 @@ static bool CL_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 		if ( retailRequest )
 		{
 			// Retail does not echo a client nonce. Constrain its handoff to the
-			// address that received our credential-bearing request; a same-host
+			// address that received our request; a same-host
 			// port handoff remains compatible with the retail proxy behavior.
 			if ( !NET_CompareBaseAdr( from, &clc.serverAddress ) )
 			{
@@ -3747,10 +3311,7 @@ static bool CL_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 		// take this address as the new server address.  This allows
 		// a server proxy to hand off connections to multiple servers
 		clc.serverAddress = *from;
-		// Keep the Steam ticket handle alive until disconnect so a retail
-		// server's asynchronous validation cannot be invalidated by us. The
-		// raw ticket bytes are no longer needed after the accepted challenge.
-		CL_EraseSteamChallengePayload();
+		challengeRequestMode = fnql::client::auth::ChallengeRequestMode::None;
 		Com_DPrintf( "challengeResponse: %d\n", clc.challenge );
 		return true;
 	}
@@ -4042,187 +3603,6 @@ qboolean CL_NoDelay( void )
 
 
 /*
-===============================================================================
-
-RETAIL STEAM PLAYER IDENTITY
-
-Retail Quake Live registers "name" with the "UnnamedPlayer" default and owns the
-value from there. It never persists one: "name" appears in neither retail-written
-config, while every other userinfo key does, so the identity is re-derived each
-session. "country" is persisted, into the replicated config rather than the
-hardware one, which makes it an engine publication of the Steam account country
-instead of a preference.
-
-The retail web UI has no rename control: its only identity reference is the
-read-only qz_instance.playerName, and SetCvar() is used solely for "password",
-"net_port", "bot_minplayers", and "sv_serverType". A rename is therefore a Steam
-profile action, and the engine keeps the published identity matching the persona.
-
-FnQL still has a console and can run non-retail modules, so the identity is
-re-asserted rather than assumed: a write that drifts away from the persona is
-reverted before the userinfo update leaves the client, and the reason is printed
-once per rejected value. \cl_steamNameLock 0 is a documented FnQL extension for
-provider-free and mod setups; the lock is inert without a Steam identity.
-
-===============================================================================
-*/
-
-namespace {
-
-struct SteamIdentityState {
-	std::array<char, MAX_NAME_LENGTH> name{};
-	std::array<char, 3> country{};
-	std::array<char, MAX_NAME_LENGTH> rejected{};
-	bool available = false;    // a Steam persona currently owns "name"
-	bool synced = false;       // the resolved identity reached the cvars
-	bool announced = false;    // the resolved identity was printed once
-	uint32_t nextStatusPoll = 0;
-};
-
-SteamIdentityState steamIdentity;
-
-/*
-Re-read the provider identity. Returns true when the persona changed the value
-that "name" has to carry.
-*/
-qboolean CL_ReadSteamIdentity( void ) {
-	fnqlSteamStatus_t status = {};
-	std::array<char, MAX_NAME_LENGTH> name{};
-	std::array<char, 3> country{};
-	const qboolean locked = CL_SteamIdentityNameLocked();
-	bool available = false;
-
-	status.size = sizeof( status );
-	if ( locked && FNQL_Steam_Available( FNQL_STEAM_CAP_IDENTITY )
-		&& FNQL_Steam_GetStatus( &status ) && status.local_steam_id != 0 ) {
-		const fnql::identity::NameNormalization normalized =
-			fnql::identity::NormalizePersonaName( status.persona_name,
-				name.data(), name.size() );
-		if ( !normalized.usable ) {
-			// A persona that normalizes away still identifies a signed-in
-			// account, so publish the retail default instead of a local value.
-			Q_strncpyz( name.data(), fnql::identity::kUnnamedPlayer,
-				static_cast<int>( name.size() ) );
-		}
-		fnql::identity::NormalizeCountryCode( status.country,
-			country.data(), country.size() );
-		available = true;
-	}
-
-	const bool changed = available != steamIdentity.available
-		|| strcmp( name.data(), steamIdentity.name.data() ) != 0
-		|| strcmp( country.data(), steamIdentity.country.data() ) != 0;
-
-	steamIdentity.available = available;
-	steamIdentity.name = name;
-	steamIdentity.country = country;
-	if ( changed ) {
-		steamIdentity.rejected[0] = '\0';
-		steamIdentity.synced = false;
-	}
-	return ToQboolean( changed );
-}
-
-/*
-Publish the resolved identity, reverting a local write that drifted away from
-it. Retail never surfaces a rename attempt because it has no rename control, so
-the explanation is bounded to one print per distinct rejected value.
-*/
-void CL_PublishSteamIdentity( void ) {
-	if ( !steamIdentity.available ) {
-		return;
-	}
-
-	const char *published = Cvar_VariableString( "name" );
-	if ( strcmp( published, steamIdentity.name.data() ) != 0 ) {
-		// Adopting the identity is silent: the archived value, a persona edit,
-		// and an account change all reach this path legitimately. Only a write
-		// that lands after the identity was already published is a rename
-		// attempt, and the reason is printed once per distinct value so a
-		// module retrying every frame cannot flood the console.
-		if ( steamIdentity.synced && published[0] != '\0'
-			&& Q_strncmp( published, steamIdentity.rejected.data(),
-				static_cast<int>( steamIdentity.rejected.size() ) - 1 ) != 0 ) {
-			Q_strncpyz( steamIdentity.rejected.data(), published,
-				static_cast<int>( steamIdentity.rejected.size() ) );
-			Com_Printf( "Your player name follows your Steam profile name."
-				" Rename through Steam, or set \\cl_steamNameLock 0 to manage"
-				" \\name locally.\n" );
-		}
-		Cvar_Set2( "name", steamIdentity.name.data(), qtrue );
-	}
-	if ( strcmp( Cvar_VariableString( "country" ),
-		steamIdentity.country.data() ) != 0 ) {
-		Cvar_Set2( "country", steamIdentity.country.data(), qtrue );
-	}
-	steamIdentity.synced = true;
-}
-
-} // namespace
-
-const char *CL_SteamIdentityName( void ) {
-	return steamIdentity.available ? steamIdentity.name.data() : "";
-}
-
-qboolean CL_SteamIdentityNameLocked( void ) {
-	return cl_steamNameLock == NULL || cl_steamNameLock->integer != 0
-		? qtrue : qfalse;
-}
-
-/*
-==================
-CL_RefreshSteamIdentity
-
-Resolve the identity from the provider and publish it. Called once the client
-cvars exist and again whenever the account or persona can have changed.
-==================
-*/
-void CL_RefreshSteamIdentity( void ) {
-	const qboolean changed = CL_ReadSteamIdentity();
-
-	CL_PublishSteamIdentity();
-	if ( changed ) {
-		// qz_instance exposes identity outside the ordinary cvar map. Let the
-		// WebUI refresh that aggregate snapshot once, on its next visible
-		// frame, instead of relying on a periodic full-state rebuild.
-		CL_WebHost_InvalidateConfigSnapshot();
-	}
-	if ( !steamIdentity.available ) {
-		steamIdentity.announced = false;
-		return;
-	}
-	if ( changed || !steamIdentity.announced ) {
-		steamIdentity.announced = true;
-		Com_DPrintf( "Steam identity published: name \"%s\", country \"%s\".\n",
-			steamIdentity.name.data(),
-			steamIdentity.country[0] ? steamIdentity.country.data()
-				: "unavailable" );
-	}
-}
-
-/*
-==================
-CL_EnforceSteamIdentity
-
-Per-frame identity assertion. The drift check is a string compare against the
-resolved persona; the provider itself is re-read on a bounded interval so a
-persona edit or an account transition is picked up without a callback.
-==================
-*/
-void CL_EnforceSteamIdentity( void ) {
-	const uint32_t now = static_cast<uint32_t>( Sys_Milliseconds() );
-
-	if ( !steamIdentity.nextStatusPoll
-		|| static_cast<int32_t>( now - steamIdentity.nextStatusPoll ) >= 0 ) {
-		steamIdentity.nextStatusPoll = now + 1000u;
-		CL_RefreshSteamIdentity();
-		return;
-	}
-	CL_PublishSteamIdentity();
-}
-
-
-/*
 ==================
 CL_CheckUserinfo
 ==================
@@ -4424,17 +3804,12 @@ void CL_Frame( int msec, int realMsec ) {
 	cls.gameFrametime = gameMsec;
 	cls.realtime += realMsec;
 	cls.gametime += gameMsec;
-	CL_SteamP2PFrame();
-	CL_Steam_AvatarFrame();
-	CL_Workshop_Frame();
+	// QAA: PC deviation. QAA has no Steam; FnQL's per-frame Steam P2P, avatar,
+	// Workshop and persona-name work is removed.
 
 	if ( cl_timegraph->integer ) {
 		SCR_DebugGraph( realMsec * 0.25f );
 	}
-
-	// keep the published identity matching the Steam persona before any
-	// userinfo update or connection request leaves the client
-	CL_EnforceSteamIdentity();
 
 	// see if we need to update any userinfo
 	CL_CheckUserinfo();
@@ -4527,7 +3902,6 @@ static void CL_ShutdownRef( refShutdownCode_t code ) {
 	if ( re.Shutdown ) {
 		re.Shutdown( code );
 	}
-	CL_ClearAvatarImageHandles();
 
 #ifdef USE_RENDERER_DLOPEN
 	if ( rendererLib ) {
@@ -4767,9 +4141,9 @@ static void *CL_LoadRendererLibrary( const char *dllName ) {
 #if defined( __APPLE__ ) || defined( __linux__ )
 	void *library;
 	/* Packaged Unix clients keep renderer modules beside the executable.  The
-	 * base path may instead be the retail Steam install or the launch working
-	 * directory, so prefer the resolved application directory on platforms that
-	 * expose it and retain the established base-path fallback below. */
+	 * base path may instead be the launch working directory, so prefer the
+	 * resolved application directory on platforms that expose it and retain
+	 * the established base-path fallback below. */
 	const char *appPath = Sys_DefaultAppPath();
 	if ( appPath && appPath[0] ) {
 		ospath = FS_BuildOSPath( appPath, dllName, nullptr );
@@ -5607,19 +4981,18 @@ void CL_Init( void ) {
 
 	cl_motdString = Cvar_Get( "cl_motdString", "", CVAR_ROM );
 	Cvar_SetDescription( cl_motdString, "Message of the day string from id's master server, it is a read only variable." );
-	cl_platform = Cvar_Get( "cl_platform", "1", CVAR_ROM );
-	Cvar_SetDescription( cl_platform, "Retail platform marker (1 identifies the Steam Quake Live client contract)." );
+	// QAA: PC deviation. QAA has no Steam or Workshop; FnQL's cl_platform
+	// (Steam client marker, read by nothing here) and cl_downloadItem
+	// (Workshop item id) are not registered.
 
 	cv = Cvar_Get( "cl_maxPing", "800", CVAR_ARCHIVE_ND );
 	Cvar_CheckRange( cv, "100", "999", CV_INTEGER );
 	Cvar_SetDescription( cv, "Specify the maximum allowed ping to a server." );
 
 	Cvar_SetDescription( Cvar_Get( "cl_downloadName", "", CVAR_TEMP ),
-		"Current retail-compatible direct or Workshop download display name." );
+		"Current download display name." );
 	Cvar_SetDescription( Cvar_Get( "cl_downloadTime", "0", CVAR_TEMP ),
 		"Client real-time timestamp at which the current download began." );
-	Cvar_SetDescription( Cvar_Get( "cl_downloadItem", "", CVAR_TEMP ),
-		"Current Workshop item identifier, empty when no item download is active." );
 	Cvar_SetDescription( Cvar_Get( "cl_downloadCount", "0", CVAR_TEMP ),
 		"Downloaded byte count published for retained UI progress consumers." );
 	Cvar_SetDescription( Cvar_Get( "cl_downloadSize", "0", CVAR_TEMP ),
@@ -5644,19 +5017,10 @@ void CL_Init( void ) {
 	cl_reconnectArgs = Cvar_Get( "cl_reconnectArgs", "", CVAR_ARCHIVE_ND | CVAR_NOTABCOMPLETE );
 
 	// userinfo
-	Cvar_Get ("name", fnql::identity::kUnnamedPlayer,
-		CVAR_USERINFO | CVAR_ARCHIVE_ND );
-	// Retail publishes the Steam account country alongside the persona name and
-	// archives it, so a profile config carries both identity keys.
-	Cvar_SetDescription( Cvar_Get( "country", "",
-		CVAR_USERINFO | CVAR_ARCHIVE_ND | CVAR_PROTECTED ),
-		"Steam account country code published in userinfo; empty without a Steam identity." );
-	cl_steamNameLock = Cvar_Get( "cl_steamNameLock", "1", CVAR_ARCHIVE_ND );
-	Cvar_CheckRange( cl_steamNameLock, "0", "1", CV_INTEGER );
-	Cvar_SetDescription( cl_steamNameLock,
-		"Keep \\name matching the signed-in Steam persona like retail Quake Live:\n"
-		" 0 - manage \\name locally (FnQL extension)\n"
-		" 1 - the Steam profile name owns \\name and reverts local writes" );
+	// QAA: PC deviation. QAA has no Steam, so "name" is the player's own and
+	// nothing syncs it from a Steam persona. FnQL's Steam "country" key and
+	// \cl_steamNameLock are removed; nothing else reads them.
+	Cvar_Get ("name", "UnnamedPlayer", CVAR_USERINFO | CVAR_ARCHIVE_ND );
 	Cvar_Get ("rate", "25000", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get ("snaps", "40", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get ("model", "sarge", CVAR_USERINFO | CVAR_ARCHIVE_ND );
@@ -5686,17 +5050,11 @@ void CL_Init( void ) {
 	Cvar_Get( "cg_autoAction", "", CVAR_USERINFO | CVAR_ARCHIVE | CVAR_PROTECTED | CVAR_CLOUD );
 	Cvar_Get( "cg_autoHop", "1", CVAR_USERINFO | CVAR_ARCHIVE | CVAR_PROTECTED | CVAR_CLOUD );
 
-	// FNQL_Steam_Init() already ran, so a signed-in persona takes ownership of
-	// the identity keys before any archived value can reach a server.
-	CL_RefreshSteamIdentity();
-
-
 	// cgame might not be initialized before menu is used
 	Cvar_Get ("cg_viewsize", "100", CVAR_ARCHIVE_ND );
 	Cvar_Get ("cg_stereoSeparation", "0.4", CVAR_ARCHIVE);
 
 	CL_WebHost_Init();
-	CL_Workshop_Init();
 
 	//
 	// register client commands
@@ -5785,7 +5143,6 @@ void CL_Shutdown( const char *finalmsg, qboolean quit ) {
 
 	noGameRestart = quit != qfalse;
 	CL_Disconnect( qfalse );
-	CL_Workshop_Shutdown();
 	CL_WebHost_Shutdown();
 	CL_WebPak_Shutdown();
 

@@ -14,7 +14,6 @@ public:
 	void StopBackgroundTrack();
 	void UpdateBackgroundTrack();
 	void RawSamples( int samples, int rate, int width, int channels, const byte *data, float volume );
-	void AddVoiceSamples( int clientNum, int samples, int rate, const short *data );
 	void StopAllSounds();
 	void ClearLoopingSoundsFrame();
 	void ClearLoopingSounds( qboolean killall );
@@ -51,7 +50,8 @@ private:
 	Q3SoundWorld world_;
 	StreamPlayer musicPlayer_;
 	StreamPlayer rawPlayer_;
-	VoiceChatPlayer voicePlayer_;
+	// QAA: PC deviation. QAA has no Steam voice chat; FnQL's remote-voice
+	// player is removed.
 	std::deque<SoundSample> samples_;
 	std::unordered_map<std::string, sfxHandle_t> sampleLookup_;
 	SoundShaderLibrary weaponSoundShaders_;
@@ -308,7 +308,6 @@ bool AudioSystem::Init( soundInterface_t *si ) {
 	world_.Reset( &device_ );
 	musicPlayer_.Init( &device_, device_.MusicSource() );
 	rawPlayer_.Init( &device_, device_.RawSource() );
-	voicePlayer_.Init( &device_ );
 
 	samples_.clear();
 	sampleLookup_.clear();
@@ -324,7 +323,6 @@ bool AudioSystem::Init( soundInterface_t *si ) {
 	si->StopBackgroundTrack = []() { AudioSystem::Get().StopBackgroundTrack(); };
 	si->UpdateBackgroundTrack = []() { AudioSystem::Get().UpdateBackgroundTrack(); };
 	si->RawSamples = []( int samples, int rate, int width, int channels, const byte *data, float volume ) { AudioSystem::Get().RawSamples( samples, rate, width, channels, data, volume ); };
-	si->AddVoiceSamples = []( int clientNum, int samples, int rate, const short *data ) { AudioSystem::Get().AddVoiceSamples( clientNum, samples, rate, data ); };
 	si->StopAllSounds = []() { AudioSystem::Get().StopAllSounds(); };
 	si->ClearLoopingSoundsFrame = []() { AudioSystem::Get().ClearLoopingSoundsFrame(); };
 	si->ClearLoopingSounds = []( qboolean killall ) { AudioSystem::Get().ClearLoopingSounds( killall ); };
@@ -359,7 +357,6 @@ void AudioSystem::Shutdown() {
 	samples_.clear();
 	sampleLookup_.clear();
 	weaponSoundShaders_.Clear();
-	voicePlayer_.Shutdown();
 	musicPlayer_.Shutdown();
 	rawPlayer_.Shutdown();
 	device_.Shutdown();
@@ -635,13 +632,6 @@ void AudioSystem::RawSamples( int samples, int rate, int width, int channels, co
 	QueueStreamChunk( rawPlayer_, samples, rate, width, channels, data, volume, outputChannels, false );
 }
 
-void AudioSystem::AddVoiceSamples( int clientNum, int samples, int rate, const short *data ) {
-	if ( !started_ || hardMuted_ ) {
-		return;
-	}
-	voicePlayer_.Queue( clientNum, samples, rate, data );
-}
-
 void AudioSystem::StopAllSounds() {
 	if ( !started_ ) {
 		return;
@@ -649,7 +639,6 @@ void AudioSystem::StopAllSounds() {
 
 	world_.StopAllSounds();
 	rawPlayer_.Clear();
-	voicePlayer_.Clear();
 	StopBackgroundTrack();
 }
 
@@ -756,8 +745,6 @@ void AudioSystem::Update( int msec ) {
 		device_.EndDeferredUpdates();
 	}
 	rawPlayer_.Update( softMuted ? 0.0f : 1.0f );
-	const float voiceVolume = ( s_voiceVolume != nullptr ) ? ClampFloat( s_voiceVolume->value, 0.0f, 2.0f ) : 1.0f;
-	voicePlayer_.Update( softMuted ? 0.0f : voiceVolume );
 	const float musicVolume = ( s_musicVolume != nullptr ) ? s_musicVolume->value : 1.0f;
 	musicPlayer_.Update( softMuted ? 0.0f : musicVolume );
 	UpdateBackgroundTrack();
@@ -766,7 +753,6 @@ void AudioSystem::Update( int msec ) {
 void AudioSystem::DisableSounds() {
 	world_.StopAllSounds();
 	rawPlayer_.Clear();
-	voicePlayer_.Clear();
 	StopBackgroundTrack();
 	hardMuted_ = true;
 }
@@ -774,7 +760,6 @@ void AudioSystem::DisableSounds() {
 void AudioSystem::ClearSoundBuffer() {
 	world_.ClearSoundBuffer();
 	rawPlayer_.Clear();
-	voicePlayer_.Clear();
 }
 
 void AudioSystem::SoundInfo() {
@@ -858,7 +843,6 @@ void AudioSystem::SoundInfo() {
 	Com_Printf( "%5d stream buffers (%d free)\n", device_.BufferPool().TotalCount(), device_.BufferPool().FreeCount() );
 	Com_Printf( "Music stream buffers: %d queued\n", musicPlayer_.QueuedBufferCount() );
 	Com_Printf( "Raw stream buffers: %d queued\n", rawPlayer_.QueuedBufferCount() );
-	Com_Printf( "Remote voice lanes: %d allocated, %d active\n", voicePlayer_.LaneCount(), voicePlayer_.ActiveLaneCount() );
 	weaponSoundShaders_.EnsureLoaded();
 	Com_Printf( "%5d weapon sound shader rules\n", weaponSoundShaders_.Count() );
 	Com_Printf( "%5lu registered samples\n", static_cast<unsigned long>( samples_.size() ) );

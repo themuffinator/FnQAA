@@ -11,8 +11,8 @@ This file is part of openQAA, licensed under the GNU GPL v2 or later.
 // Quake Live's Awesomium web front end, so openQAA does not import FnQL's WebUI
 // (cl_webui.cpp, cl_webpak.cpp, awesomium_backend_win32.cpp). This file keeps
 // the client's interface to it (client.h) with no web view: nothing is shown,
-// no input is captured and every request fails. The Steam-backed helpers that
-// lived in cl_webui.cpp report Steam unavailable. QAA's menus are M6.
+// no input is captured and every request fails. QAA has no Steam, so FnQL's
+// Steam helpers from cl_webui.cpp are removed, not stubbed. QAA's menus are M6.
 
 #include "../client/client.h"
 
@@ -48,96 +48,6 @@ qboolean CL_WebRequestResolve( const char * /*virtualPath*/, void ** /*outBuffer
 
 qboolean CL_LauncherRequestData( const char * /*virtualPath*/, void ** /*outBuffer*/, int * /*outLength*/ ) {
 	return qfalse;
-}
-
-void CL_RefreshOnlineServicesBridgeState( void ) {
-}
-
-qboolean CL_IsSubscribedApp( int /*appId*/ ) {
-	return qfalse;
-}
-
-qhandle_t CL_GetAvatarImageHandle( unsigned int /*identityLow*/, unsigned int /*identityHigh*/ ) {
-	return 0;
-}
-
-void CL_ClearAvatarImageHandles( void ) {
-}
-
-void CL_Steam_AvatarFrame( void ) {
-}
-
-qboolean CL_Steam_OpenOverlayUrl( const char * /*url*/ ) {
-	return qfalse;
-}
-
-qhandle_t CL_Steam_RegisterShader( const char * /*url*/ ) {
-	return 0;
-}
-
-qboolean CL_Steam_RequestServers( int /*requestMode*/ ) {
-	return qfalse;
-}
-
-qboolean CL_Steam_RequestServerDetails( unsigned int /*serverIp*/, unsigned short /*serverPort*/ ) {
-	return qfalse;
-}
-
-qboolean CL_Steam_RefreshServerList( void ) {
-	return qfalse;
-}
-
-qboolean CL_Steam_CreateLobby( void ) {
-	return qfalse;
-}
-
-qboolean CL_Steam_LeaveLobby( void ) {
-	return qfalse;
-}
-
-qboolean CL_Steam_JoinLobby( const char * /*lobbyId*/ ) {
-	return qfalse;
-}
-
-qboolean CL_Steam_SetLobbyServer( unsigned int /*serverIp*/, unsigned short /*serverPort*/ ) {
-	return qfalse;
-}
-
-qboolean CL_Steam_ShowInviteOverlay( void ) {
-	return qfalse;
-}
-
-qboolean CL_Steam_Invite( const char * /*steamId*/ ) {
-	return qfalse;
-}
-
-qboolean CL_Steam_SayLobby( const char * /*message*/ ) {
-	return qfalse;
-}
-
-qboolean CL_Steam_RequestAllUGC( int /*filter*/ ) {
-	return qfalse;
-}
-
-qboolean CL_Steam_RequestUserStats( const char * /*steamId*/ ) {
-	return qfalse;
-}
-
-qboolean CL_Steam_ActivateOverlayToUser( const char * /*dialog*/, const char * /*steamId*/ ) {
-	return qfalse;
-}
-
-qboolean CL_Steam_GetItemDownloadInfo( unsigned int /*itemIdLow*/, unsigned int /*itemIdHigh*/, unsigned long long * /*outDownloaded*/, unsigned long long * /*outTotal*/ ) {
-	return qfalse;
-}
-
-void CL_Steam_OnRichPresenceJoinRequested( const char * /*command*/ ) {
-}
-
-void CL_Steam_OnGameServerChangeRequested( const char * /*server*/, const char * /*password*/ ) {
-}
-
-void CL_SteamP2PFrame( void ) {
 }
 
 void QLWebHost_RegisterCommands( void ) {
@@ -382,7 +292,7 @@ qboolean CL_Awesomium_RequestResource( const char * /*virtualPath*/, void ** /*o
 	return qfalse;
 }
 
-qboolean CL_Awesomium_Startup( const char * /*runtimePath*/, const char * /*basePath*/, const char * /*retailPath*/, const char * /*playerName*/, unsigned int /*appId*/, unsigned int /*steamIdLow*/, unsigned int /*steamIdHigh*/, int /*width*/, int /*height*/, const char * /*initialConfigJson*/, const char * /*initialMapJson*/, const char * /*initialFactoryJson*/, const char * /*initialFriendJson*/ ) {
+qboolean CL_Awesomium_Startup( const char * /*runtimePath*/, const char * /*basePath*/, const char * /*retailPath*/, const char * /*playerName*/, int /*width*/, int /*height*/, const char * /*initialConfigJson*/, const char * /*initialMapJson*/, const char * /*initialFactoryJson*/, const char * /*initialFriendJson*/ ) {
 	return qfalse;
 }
 
@@ -477,18 +387,6 @@ void CL_Awesomium_Shutdown( void ) {
 
 const char *CL_Awesomium_LastError( void ) {
 	return "";
-}
-
-
-// Steam voice chat input (client.h, cl_input.cpp): with no Steam there is no
-// voice recording to stop.
-void CL_ClearGeneratedVoiceInputState( void ) {
-}
-
-void CL_ResetVoiceInputState( void ) {
-}
-
-void CL_RemoveVoiceInputSource( int /*sourceKey*/ ) {
 }
 
 } // extern "C"

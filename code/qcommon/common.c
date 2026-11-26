@@ -23,7 +23,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "q_shared.h"
 #include "qcommon.h"
-#include "../platform/fnql_steam.h"
 #include <setjmp.h>
 #ifndef _WIN32
 #include <netinet/in.h>
@@ -3213,8 +3212,7 @@ static void Com_ExecuteCfg( void )
 	Cbuf_ExecuteText(EXEC_NOW, "exec default.cfg\n");
 	Cbuf_Execute(); // Always execute after exec to prevent text buffer overflowing
 
-	// Retail QL stores the managed client config at the active Steam profile
-	// root. Existing FnQ3/FnQL q3config.cfg files remain a one-way migration
+	// Retail QL stores the managed client config at the profile root. Existing FnQ3/FnQL q3config.cfg files remain a one-way migration
 	// fallback when no qzconfig.cfg exists yet.
 	if ( !Com_SafeMode() ) {
 		if ( FS_ProfileFileExists( QL_CONFIG_HARDWARE_FILE ) ) {
@@ -4250,20 +4248,9 @@ void Com_Init( char *commandLine ) {
 	VM_Init();
 	SV_Init();
 	SV_RegisterGameCvars();
-	FNQL_Steam_Init( com_dedicated->integer
-		? FNQL_STEAM_ROLE_GAME_SERVER
-		: ( FNQL_STEAM_ROLE_CLIENT | FNQL_STEAM_ROLE_GAME_SERVER ) );
-	/* Retail initializes the Steam GameServer owner during common startup, not
-	 * on the first map.  Besides matching publication lifetime, this lets a
-	 * dedicated provider expose SteamGameServerUGC before the Workshop snapshot
-	 * is captured and the filesystem is reloaded. */
-	SV_SteamGameServerStart( "" );
-	Com_WorkshopInit();
-	/* Workshop initialization can mount subscribed packages and restart the
-	 * filesystem. Rebuild the engine-owned retail content registries only after
-	 * those paths are visible. */
+	// QAA: PC deviation. QAA has no Steam: FnQL's Steam provider, Steam
+	// GameServer and Workshop start here, and are removed.
 	SV_FactoryRefreshMountedContent();
-	SV_RefreshPlatformServiceCvars();
 
 	com_dedicated->modified = qfalse;
 
@@ -4752,8 +4739,6 @@ void Com_Frame( qboolean noDelay ) {
 	}
 
 	Cbuf_Execute();
-	FNQL_Steam_Pump();
-	Com_WorkshopFrame();
 
 	// mess with msec if needed
 	if ( lockstepMsec > 0 ) {
@@ -4799,12 +4784,6 @@ void Com_Frame( qboolean noDelay ) {
 			SV_AddDedicatedCommands();
 			gw_minimized = qtrue;
 		}
-		FNQL_Steam_Reconfigure( com_dedicated->integer
-			? FNQL_STEAM_ROLE_GAME_SERVER
-			: ( FNQL_STEAM_ROLE_CLIENT | FNQL_STEAM_ROLE_GAME_SERVER ) );
-		SV_SteamGameServerStart( "" );
-		Com_WorkshopProviderChanged();
-		SV_RefreshPlatformServiceCvars();
 	}
 
 #ifdef DEDICATED
@@ -4893,8 +4872,6 @@ Com_Shutdown
 =================
 */
 static void Com_Shutdown( void ) {
-	Com_WorkshopShutdown();
-	FNQL_Steam_Shutdown();
 	Zmq_ShutdownRuntime();
 
 	if ( logfile != FS_INVALID_HANDLE ) {

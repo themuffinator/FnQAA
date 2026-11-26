@@ -770,10 +770,7 @@ void SV_SpawnServer( const char *mapname, qboolean killBots ) {
 
 	SV_PublishFnQLClientPaks();
 
-	// Retail clients consume Workshop dependencies from this dedicated
-	// configstring.  Publish it after all map and module pak references have
-	// settled, independently of whether a Steam GameServer identity exists.
-	SV_PublishWorkshopReferences();
+	// QAA: PC deviation, no Workshop references configstring (no Steam)
 
 	// save systeminfo and serverinfo strings
 	SV_SetConfigstring( CS_SYSTEMINFO, Cvar_InfoString_Big( CVAR_SYSTEMINFO, nullptr ) );
@@ -790,7 +787,7 @@ void SV_SpawnServer( const char *mapname, qboolean killBots ) {
 	// to all clients
 	sv.state = SS_GAME;
 	Zmq_InitStatsPublisher();
-	SV_SteamGameServerStart( mapname );
+	// QAA: PC deviation, no Steam GameServer to start
 
 	// send a heartbeat now so the master will get up to date info
 	SV_Heartbeat_f();
@@ -850,9 +847,8 @@ void SV_Init( void )
 	Cvar_SetDescription( sv_privateClients, "The number of spots, out of sv_maxclients, reserved for players with the server password (sv_privatePassword)." );
 	sv_hostname = Cvar_Get ("sv_hostname", "noname", CVAR_SERVERINFO | CVAR_ARCHIVE );
 	Cvar_SetDescription( sv_hostname, "Sets the name of the server." );
-	sv_tags = Cvar_Get( "sv_tags", "", CVAR_ARCHIVE );
-	Cvar_SetDescription( sv_tags,
-		"Comma-separated custom tags appended to the retail Steam server tag set." );
+	// QAA: PC deviation, no Steam server cvars (sv_tags, sv_vac,
+	// sv_referencedSteamworks, sv_setSteamAccount) or service-status cvars
 	sv_maxclients = Cvar_Get ("sv_maxclients", "8", CVAR_SERVERINFO | CVAR_LATCH);
 	Cvar_CheckRange( sv_maxclients, "1", XSTRING(MAX_CLIENTS), CV_INTEGER );
 	Cvar_SetDescription( sv_maxclients, "Maximum number of people allowed to join the server." );
@@ -913,10 +909,6 @@ void SV_Init( void )
 	Cvar_CheckRange( sv_cylinderScale, "0", "16", CV_FLOAT );
 	Cvar_SetDescription( sv_cylinderScale,
 		"Retail radius scale for vertical cylinder collision traces." );
-	sv_vac = Cvar_Get( "sv_vac", "1", CVAR_INIT );
-	Cvar_CheckRange( sv_vac, "0", "1", CV_INTEGER );
-	Cvar_SetDescription( sv_vac,
-		"Allow an explicitly requested Steam secure server; FnQL's sv_steamSecure opt-in remains authoritative." );
 
 	// systeminfo
 	sv_cheats = Cvar_Get( "sv_cheats", "1", CVAR_SYSTEMINFO | CVAR_ROM );
@@ -937,13 +929,8 @@ void SV_Init( void )
 		"FnQL-game client package this server has loaded (" FNQL_GAME_CGAME_MODULE_FILE
 		" in a pk3). 0 accepts only the retail cgame. Takes effect on the next map." );
 	Cvar_SetDescription( sv_referencedPakNames, "Variable holds a list of all the pack archives the server loaded data from." );
-	cvar_t *svReferencedSteamworks = Cvar_Get( "sv_referencedSteamworks", "", CVAR_ROM );
-	Cvar_SetDescription( svReferencedSteamworks,
-		"Space-separated Workshop item IDs required by the current server map." );
 	Cvar_Get( "sv_rankingsProvider", "Unavailable", CVAR_ROM );
 	Cvar_Get( "sv_rankingsPolicy", "compatibility-unavailable", CVAR_ROM );
-	SV_RefreshPlatformServiceCvars();
-	SV_RegisterSteamEventSink();
 	SV_GameRefreshRankingsPolicyCvars();
 
 	// server vars
@@ -994,8 +981,6 @@ void SV_Init( void )
 	sv_showloss = Cvar_Get( "sv_showloss", "0", 0 );
 	Cvar_SetDescription( sv_showloss,
 		"Retained retail server packet-loss diagnostic toggle." );
-	(void)Cvar_Get( "sv_setSteamAccount", "",
-		CVAR_ARCHIVE | CVAR_PROTECTED | CVAR_PRIVATE );
 
 	sv_padPackets = Cvar_Get( "sv_padPackets", "0", CVAR_DEVELOPER );
 	Cvar_SetDescription( sv_padPackets, "Adds padding bytes to network packets for rate debugging." );
@@ -1125,9 +1110,7 @@ void SV_Shutdown( const char *finalmsg ) {
 	}
 
 	SV_RemoveOperatorCommands();
-	SV_MasterShutdown();
-	SV_FlushAllSteamStats();
-	SV_SteamGameServerStop();
+	SV_MasterShutdown();	// QAA: no Steam stats to flush or GameServer to stop
 	SV_ShutdownGameProgs();
 	Zmq_ShutdownStatsPublisher();
 	SV_InitChallenger();
@@ -1135,7 +1118,7 @@ void SV_Shutdown( const char *finalmsg ) {
 	// Free the clients BEFORE SV_ClearServer(): it memsets sv, and SV_Clients()
 	// is bounded by sv.maxclients, so clearing first made this loop run zero
 	// times and leaked every client's download buffers, queued netchan
-	// fragments, demo handles and Steam auth sessions on each shutdown.
+	// fragments and demo handles on each shutdown.
 	if ( svs.clients ) {
 		for ( client_t &client : SV_Clients() ) {
 			SV_FreeClient( &client );
@@ -1177,7 +1160,6 @@ void SV_Shutdown( const char *finalmsg ) {
 	// clean some server cvars
 	Cvar_Set( "sv_referencedPaks", "" );
 	Cvar_Set( "sv_referencedPakNames", "" );
-	Cvar_Set( "sv_referencedSteamworks", "" );
 	Cvar_Set( "sv_mapChecksum", "" );
 	Cvar_Set( "sv_serverid", "0" );
 

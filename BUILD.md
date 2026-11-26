@@ -69,10 +69,10 @@ Vorbis.
 | `audio-tests`, `glx-tests` | `true` | build those unit tests |
 | `strict-warnings` | `false` | warnings are errors in openQAA's targets |
 
-FnQL's Steam integration and Awesomium WebUI are not part of openQAA; there
-is no option for them. `code/qaa/qaa_null_services.cpp` and
-`code/qaa/qaa_null_webui.cpp` implement their engine interfaces with every
-service unavailable.
+FnQL's Steam integration (Steamworks, the Workshop, Steam install detection)
+is removed from openQAA, and its Awesomium WebUI is not part of it; there is
+no option for either. `code/qaa/qaa_null_webui.cpp` implements the WebUI's
+engine interface with every service unavailable.
 
 ## Tests
 

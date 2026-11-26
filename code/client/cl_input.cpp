@@ -232,7 +232,6 @@ static void IN_RemoveCommandInputSource( int sourceKey ) {
 void CL_ClearKeyCommandInputState( void ) {
 	Key_AdvanceAllBindingGenerations();
 	IN_ClearCommandInputState();
-	CL_ClearGeneratedVoiceInputState();
 }
 
 /*
@@ -557,9 +556,8 @@ qboolean CL_IsEngineStatefulInputCommand( const char *command ) {
 			return qtrue;
 		}
 	}
-	return fnql::input::IsCanonicalCommandSegment( command, "+voice" )
-		? qtrue
-		: qfalse;
+	// QAA: PC deviation. QAA has no Steam voice chat; FnQL's +voice is removed.
+	return qfalse;
 }
 
 
@@ -1109,13 +1107,12 @@ CL_ResetInputState
 
 Ordered system-event barrier used for focus, window, and queue-overflow
 recovery. Key_ClearStates is the logical-key barrier; this full barrier also
-clears explicit/manual voice ownership and persistent motion state so input
-sampled before it cannot affect a later frame.
+clears persistent motion state so input sampled before it cannot affect a
+later frame.
 =================
 */
 void CL_ResetInputState( void ) {
 	Key_ClearStates();
-	CL_ResetVoiceInputState();
 
 	for ( int i = 0; i < 2; ++i ) {
 		cl.mouseDx[i] = 0;
@@ -1157,14 +1154,12 @@ void CL_ResetMouseInputState( unsigned int auxiliaryKeyMask ) {
 	for ( int key = K_MOUSE1; key <= K_MWHEELUP; ++key ) {
 		Key_AdvanceBindingGeneration( key );
 		IN_RemoveCommandInputSource( key );
-		CL_RemoveVoiceInputSource( key );
 	}
 	for ( unsigned int bit = 0; bit < 16; ++bit ) {
 		if ( auxiliaryKeyMask & ( 1u << bit ) ) {
 			const int key = K_AUX1 + static_cast<int>( bit );
 			Key_AdvanceBindingGeneration( key );
 			IN_RemoveCommandInputSource( key );
-			CL_RemoveVoiceInputSource( key );
 		}
 	}
 
@@ -1328,11 +1323,9 @@ static bool CL_ReadyToSendPacket( void ) {
 		return false;
 	}
 
-	// Retail keys this pacing on its pending Steam Workshop download
-	// (quakelive_steam.exe 0x4b5e7e-0x4b5eb5), which is its only download; the
-	// in-band download keeps the same rule here.
-	const bool downloading = *clc.downloadTempName != '\0'
-		|| CL_WorkshopDownloadsActive() != qfalse;
+	// QAA: PC deviation. QAA has no Steam Workshop, so only the in-band
+	// download counts here; FnQL also paced on a pending Workshop download.
+	const bool downloading = *clc.downloadTempName != '\0';
 
 	// If we are downloading, we send no less than 50ms between packets
 	if ( downloading && cls.realtime - clc.lastPacketSentTime < 50 ) {

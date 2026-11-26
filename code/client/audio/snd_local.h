@@ -145,7 +145,6 @@ struct soundInterface_t {
 	void (*StopBackgroundTrack)( void );
 	void (*UpdateBackgroundTrack)( void );
 	void (*RawSamples)(int samples, int rate, int width, int channels, const byte *data, float volume);
-	void (*AddVoiceSamples)( int clientNum, int samples, int rate, const short *data );
 	void (*StopAllSounds)( void );
 	void (*ClearLoopingSoundsFrame)( void );
 	void (*ClearLoopingSounds)( qboolean killall );
@@ -208,8 +207,6 @@ extern	portable_samplepair_t	s_rawsamples[MAX_RAW_SAMPLES];
 
 extern cvar_t *s_volume;
 extern cvar_t *s_musicVolume;
-extern cvar_t *s_voiceVolume;
-extern cvar_t *s_voiceStep;
 extern cvar_t *s_doppler;
 extern cvar_t *s_pvs;
 extern cvar_t *s_muteWhenUnfocused;
@@ -244,7 +241,6 @@ void		SND_setup( void );
 void		SND_shutdown( void );
 
 void S_PaintChannels(int endtime);
-void S_PaintVoiceSamples( int starttime, int endtime, portable_samplepair_t *paintbuffer );
 qboolean S_OriginInPVS( const vec3_t listener, const vec3_t origin );
 
 // spatializes a channel
