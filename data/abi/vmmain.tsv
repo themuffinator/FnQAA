@@ -1,0 +1,32 @@
+module	cmd	qaa_name	fnql_name	fnql_num	args	returns	engine_callers	module_handler	evidence	note
+game	0	GAME_INIT	GAME_INIT	0	int levelTime, int randomSeed, int restart	void	0x82133858	0x88042A48	code	levelTime = svs.time (0x82E0FD04).
+game	1	GAME_SHUTDOWN	GAME_SHUTDOWN	1	int restart	void	0x8211BE68 0x8212CAA0 0x82134248 0x82135058	0x88042E80	code
+game	2	GAME_CLIENT_CONNECT	GAME_CLIENT_CONNECT	2	int clientNum, int firstTime, int isBot	ptr	0x8212CAA0 0x8212DFD8 0x82134248	0x88039500	code	Returns NULL to accept, else a guest pointer to the denial text (0x8212CAA0 converts it with VM_ExplicitArgPtr 0x8213C5B0).
+game	3	GAME_CLIENT_BEGIN	GAME_CLIENT_BEGIN	3	int clientNum	void	0x8212EC90 0x82134248	0x88039748	code
+game	4	GAME_CLIENT_USERINFO_CHANGED	GAME_CLIENT_USERINFO_CHANGED	4	int clientNum	void	0x8212F6D0	0x88039038	code
+game	5	GAME_CLIENT_DISCONNECT	GAME_CLIENT_DISCONNECT	5	int clientNum	void	0x8212E8B8	0x88039EB8	code
+game	6	GAME_CLIENT_COMMAND	GAME_CLIENT_COMMAND	6	int clientNum	void	0x8212F7A0	0x8803D558	code
+game	7	GAME_CLIENT_THINK	GAME_CLIENT_THINK	7	int clientNum	void	0x8212FA28 (and trap 211)	0x88035C60	code
+game	8	GAME_RUN_FRAME	GAME_RUN_FRAME	8	int levelTime	void	0x8212CAA0 0x82134248 0x821362F8	0x880448E8	code
+game	9	QAA_GAME_SET_ENGINE_TABLE	-	-	ptr table	void	0x82133858	inline (stores 0x881B0710)	code	QAA only. Called immediately before GAME_INIT with the address of a 10-entry table of engine function pointers (engine_tables.tsv). The module then calls those engine functions directly instead of through syscalls. Quake III's GAME_CONSOLE_COMMAND (9) moves to 10.
+game	10	GAME_CONSOLE_COMMAND	GAME_CONSOLE_COMMAND	9	void	int	0x82119938 0x8211A368	0x8804C750	code	qboolean: qtrue if the command was recognised.
+game	11	QAA_GAME_UPDATE_SCORES	-	-	int clientNum	void	0x8212EC90 (after GAME_CLIENT_BEGIN) 0x8212E8B8 (after GAME_CLIENT_DISCONNECT)	0x8803A138	code	QAA only. The handler builds sv_hostname and a score list and passes them to game trap 69 (_global.cacheHostName / _global.cacheScores). Whether it reads its argument is not checked.
+game	12	BOTAI_START_FRAME	BOTAI_START_FRAME	10	int time	int	0x82134248 0x821362F8	0x880273C8	code
+game	other	(unknown)	-	-	-	int	-	vmMain 0x88042158	code	Returns -1 for any command above 12.
+cgame	0	CG_INIT	CG_INIT	0	int serverMessageNum, int serverCommandSequence, int clientNum	void	0x821023F8	0x86025730	code	Called right after cmd 12.
+cgame	1	CG_SHUTDOWN	CG_SHUTDOWN	1	void	void	0x82100828	0x8602F5D8 then 0x8601EBC0	code
+cgame	2	CG_CONSOLE_COMMAND	CG_CONSOLE_COMMAND	2	void	int	0x82119938 0x8211A368	inline (command list 0x86087D40)	code	qboolean.
+cgame	3	CG_DRAW_ACTIVE_FRAME	CG_DRAW_ACTIVE_FRAME	3	int serverTime, int stereoView, int demoPlayback	void	0x821027E8	0x86033B30	code	serverTime = cl.serverTime (0x82E32DE4), demoPlayback = clc.demoplaying (0x82FD10E4).
+cgame	4	CG_CROSSHAIR_PLAYER	CG_CROSSHAIR_PLAYER	4	void	int	0x82102EE0	inline	code
+cgame	5	CG_LAST_ATTACKER	CG_LAST_ATTACKER	5	void	int	0x82102F90	inline	code
+cgame	6	CG_KEY_EVENT	CG_KEY_EVENT	6	int key, int down	void	0x82106D20 0x821071B0 0x82183990	0x86028120	code
+cgame	7	CG_MOUSE_EVENT	CG_MOUSE_EVENT	7	int dx, int dy	void	0x8211C690	0x86027E50	code	The handler latches two cgame globals first (0x8626BA00/04).
+cgame	8	(no-op)	CG_EVENT_HANDLING	8	-	int	none	inline (returns 0)	code	QAA leaves 8 empty; the engine never calls it.
+cgame	9	CG_EVENT_HANDLING	CG_EVENT_HANDLING	8	int type	void	0x82106D20	0x86028048	code	CL_KeyEvent clears KEYCATCH_CGAME (8) and calls it with type 0, as Quake III does with CG_EVENT_HANDLING. Handler references "teamMenu", "getMenu".
+cgame	10	QAA_CG_10	-	-	?	int	none	0x86025170	code	QAA only. Not called by default.xex (observed: no VM_Call site). Small float computation.
+cgame	11	QAA_CG_11	-	-	?	int	none	0x860253B0	code	QAA only. Not called by default.xex (observed). Uses cgame traps 133 and 134 and formats "%i:%02i:%02i".
+cgame	12	QAA_CG_SET_ENGINE_TABLE	-	-	ptr table	void	0x821023F8	inline (stores 0x8627D824)	code	QAA only. Called immediately before CG_INIT with the address of an 18-entry table of engine function pointers (engine_tables.tsv).
+cgame	13	QAA_CG_13	-	-	void	void	none	0x8602F5D8	code	QAA only. Not called by default.xex (observed). Runs the first half of the CG_SHUTDOWN handler.
+cgame	14	QAA_CG_MATCH_START	-	-	void	void	0x82176370	inline	code	QAA only. Called by the Live session/lobby code. Fires the UI event "CenterPrint" "$fight" (cgame trap 126) and starts a local sound (trap 30).
+cgame	15	QAA_CG_PLAYER_VOICE	-	-	int, int, int (passed by 0x8217C818)	void	0x8217C818	0x860252A8	code	QAA only. Called by the engine's "PlayerVoiceChanged" handler; the module reacts through cgame trap 131 (PlayerVoiceInfo).
+cgame	other	(unknown)	-	-	-	-	-	vmMain 0x86020E68	code	Calls the error trap with "vmMain: unknown command %i".

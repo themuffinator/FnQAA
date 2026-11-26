@@ -1,0 +1,233 @@
+struct	field	qaa_offset	size_bytes	type	evidence	source_address	fnql_offset	note
+trajectory_t	(sizeof)	0x24	36	struct	verified	netfield table 0x827EF130	0x28	pos at 0x0C, apos at 0x30 in entityState_t
+trajectory_t	trType	0x0	4	int (trType_t)	verified	netfield table 0x827EF130	0x0	
+trajectory_t	trTime	0x4	4	int	verified	netfield table 0x827EF130	0x4	
+trajectory_t	trDuration	0x8	4	int	verified	netfield table 0x827EF130	0x8	
+trajectory_t	trBase	0xc	12	vec3_t	verified	netfield table 0x827EF130	0xc	
+trajectory_t	trDelta	0x18	12	vec3_t	verified	netfield table 0x827EF130	0x18	
+trajectory_t	gravity	-	-	-	verified	netfield table 0x827EF130	0x24	absent in QAA (FnQL/QL field)
+entityState_t	(sizeof)	0xd0	208	struct	code	0x82100000 CL_GetSnapshot	0xec	copy size and entities[] stride 0xD0; same as Quake III
+entityState_t	number	0x0	4	int	code	0x82137DF8 SV_LinkEntity	0x0	bounds-checked < 1024
+entityState_t	eType	0x4	4	int	verified	netfield table 0x827EF130	0x4	
+entityState_t	eFlags	0x8	4	int	verified	netfield table 0x827EF130	0x8	
+entityState_t	pos	0xc	36	trajectory_t	verified	netfield table 0x827EF130	0xc	
+entityState_t	apos	0x30	36	trajectory_t	verified	netfield table 0x827EF130	0x34	
+entityState_t	time	0x54	4	int	verified	netfield table 0x827EF130	0x5c	
+entityState_t	time2	0x58	4	int	verified	netfield table 0x827EF130	0x60	
+entityState_t	origin	0x5c	12	vec3_t	verified	netfield table 0x827EF130	0x64	
+entityState_t	origin2	0x68	12	vec3_t	verified	netfield table 0x827EF130	0x70	
+entityState_t	angles	0x74	12	vec3_t	verified	netfield table 0x827EF130	0x7c	
+entityState_t	angles2	0x80	12	vec3_t	verified	netfield table 0x827EF130	0x88	
+entityState_t	otherEntityNum	0x8c	4	int	verified	netfield table 0x827EF130	0x94	
+entityState_t	otherEntityNum2	0x90	4	int	verified	netfield table 0x827EF130	0x98	
+entityState_t	groundEntityNum	0x94	4	int	verified	netfield table 0x827EF130	0x9c	
+entityState_t	constantLight	0x98	4	int	verified	netfield table 0x827EF130	0xa0	
+entityState_t	loopSound	0x9c	4	int	verified	netfield table 0x827EF130	0xa4	
+entityState_t	modelindex	0xa0	4	int	verified	netfield table 0x827EF130	0xa8	
+entityState_t	modelindex2	0xa4	4	int	verified	netfield table 0x827EF130	0xac	
+entityState_t	clientNum	0xa8	4	int	verified	netfield table 0x827EF130	0xb0	
+entityState_t	frame	0xac	4	int	verified	netfield table 0x827EF130	0xb4	
+entityState_t	solid	0xb0	4	int	verified	netfield table 0x827EF130	0xb8	
+entityState_t	event	0xb4	4	int	verified	netfield table 0x827EF130	0xbc	
+entityState_t	eventParm	0xb8	4	int	verified	netfield table 0x827EF130	0xc0	
+entityState_t	powerups	0xbc	4	int	verified	netfield table 0x827EF130	0xc4	
+entityState_t	weapon	0xc0	4	int	verified	netfield table 0x827EF130	0xd0	
+entityState_t	legsAnim	0xc4	4	int	verified	netfield table 0x827EF130	0xd8	
+entityState_t	torsoAnim	0xc8	4	int	verified	netfield table 0x827EF130	0xdc	
+entityState_t	generic1	0xcc	4	int	verified	netfield table 0x827EF130	0xe0	
+entityState_t	health	-	-	-	verified	netfield table 0x827EF130	0xc8	absent in QAA (FnQL/QL field); no room in 0xD0
+entityState_t	armor	-	-	-	verified	netfield table 0x827EF130	0xcc	absent in QAA (FnQL/QL field); no room in 0xD0
+entityState_t	location	-	-	-	verified	netfield table 0x827EF130	0xd4	absent in QAA (FnQL/QL field); no room in 0xD0
+entityState_t	jumpTime	-	-	-	verified	netfield table 0x827EF130	0xe4	absent in QAA (FnQL/QL field); no room in 0xD0
+entityState_t	doubleJumped	-	-	-	verified	netfield table 0x827EF130	0xe8	absent in QAA (FnQL/QL field); no room in 0xD0
+playerState_t	(sizeof)	0x1d8	472	struct	code	0x82100000 CL_GetSnapshot	0x1f8	copy size 0x1D8; Quake III is 0x1D4
+playerState_t	commandTime	0x0	4	int	verified	netfield table 0x827EF3B0	0x0	
+playerState_t	pm_type	0x4	4	int	verified	netfield table 0x827EF3B0	0x4	
+playerState_t	bobCycle	0x8	4	int	verified	netfield table 0x827EF3B0	0x8	
+playerState_t	pm_flags	0xc	4	int	verified	netfield table 0x827EF3B0	0xc	
+playerState_t	pm_time	0x10	4	int	verified	netfield table 0x827EF3B0	0x10	
+playerState_t	origin	0x14	12	vec3_t	verified	netfield table 0x827EF3B0	0x14	
+playerState_t	velocity	0x20	12	vec3_t	verified	netfield table 0x827EF3B0	0x20	
+playerState_t	weaponTime	0x2c	4	int	verified	netfield table 0x827EF3B0	0x2c	
+playerState_t	gravity	0x30	4	int	verified	netfield table 0x827EF3B0	0x30	
+playerState_t	speed	0x34	4	int	verified	netfield table 0x827EF3B0	0x34	
+playerState_t	delta_angles	0x38	12	int[3]	verified	netfield table 0x827EF3B0	0x38	
+playerState_t	groundEntityNum	0x44	4	int	verified	netfield table 0x827EF3B0	0x44	
+playerState_t	legsTimer	0x48	4	int	verified	netfield table 0x827EF3B0	0x48	
+playerState_t	legsAnim	0x4c	4	int	verified	netfield table 0x827EF3B0	0x4c	
+playerState_t	torsoTimer	0x50	4	int	verified	netfield table 0x827EF3B0	0x50	
+playerState_t	torsoAnim	0x54	4	int	verified	netfield table 0x827EF3B0	0x54	
+playerState_t	movementDir	0x58	4	int	verified	netfield table 0x827EF3B0	0x58	
+playerState_t	grapplePoint	0x5c	12	vec3_t	verified	netfield table 0x827EF3B0	0x5c	
+playerState_t	eFlags	0x68	4	int	verified	netfield table 0x827EF3B0	0x68	
+playerState_t	eventSequence	0x6c	4	int	verified	netfield table 0x827EF3B0	0x6c	
+playerState_t	events	0x70	8	int[2]	verified	netfield table 0x827EF3B0	0x70	
+playerState_t	eventParms	0x78	8	int[2]	verified	netfield table 0x827EF3B0	0x78	
+playerState_t	externalEvent	0x80	4	int	verified	netfield table 0x827EF3B0	0x80	
+playerState_t	externalEventParm	0x84	4	int	verified	netfield table 0x827EF3B0	0x84	
+playerState_t	externalEventTime	0x88	4	int	observed	-	0x1f0	not networked; the gap between externalEventParm and clientNum, Quake III position
+playerState_t	clientNum	0x8c	4	int	verified	netfield table 0x827EF3B0	0x88	
+playerState_t	weapon	0x90	4	int	verified	netfield table 0x827EF3B0	0x90	
+playerState_t	weaponstate	0x94	4	int	verified	netfield table 0x827EF3B0	0x98	
+playerState_t	viewangles	0x98	12	vec3_t	verified	netfield table 0x827EF3B0	0xa0	
+playerState_t	viewheight	0xa4	4	int	verified	netfield table 0x827EF3B0	0xac	
+playerState_t	damageEvent	0xa8	4	int	verified	netfield table 0x827EF3B0	0xb0	
+playerState_t	damageYaw	0xac	4	int	verified	netfield table 0x827EF3B0	0xb4	
+playerState_t	damagePitch	0xb0	4	int	verified	netfield table 0x827EF3B0	0xb8	
+playerState_t	damageCount	0xb4	4	int	verified	netfield table 0x827EF3B0	0xbc	
+playerState_t	stats	0xb8	64	int[16]	code	0x821278A0 MSG_WriteDeltaPlayerstate	0xc0	16 entries
+playerState_t	persistant	0xf8	64	int[16]	code	0x821278A0 MSG_WriteDeltaPlayerstate	0x100	16 entries
+playerState_t	powerups	0x138	64	int[16]	code	0x821278A0 MSG_WriteDeltaPlayerstate	0x140	16 entries
+playerState_t	ammo	0x178	64	int[16]	code	0x821278A0 MSG_WriteDeltaPlayerstate	0x180	16 entries
+playerState_t	generic1	0x1b8	4	int	verified	netfield table 0x827EF3B0	0x1c0	
+playerState_t	loopSound	0x1bc	4	int	verified	netfield table 0x827EF3B0	0x1c4	
+playerState_t	jumppad_ent	0x1c0	4	int	verified	netfield table 0x827EF3B0	0x1c8	
+playerState_t	ping	0x1c4	4	int	observed	-	0x1e0	Quake III position; not networked
+playerState_t	pmove_framecount	0x1c8	4	int	code	qagame 0x880335E8 PmoveSingle	0x1e4	incremented and masked with 63
+playerState_t	jumppad_frame	0x1cc	4	int	code	qagame 0x8802F3C0 BG_TouchJumpPad	0x1e8	set from pmove_framecount
+playerState_t	entityEventSequence	0x1d0	4	int	code	BG_PlayerStateToEntityState: qagame 0x8802F744, cgame 0x8601097C	0x1ec	post-incremented
+playerState_t	(qaa_1d4)	0x1d4	4	int	code	qagame 0x88035368 ClientThink and 0x88032A64 pmove; cgame 0x8602EED0 prediction	-	QAA-only, not networked: set to 0 or 1 before every Pmove, read by pmove animation code; name unknown
+playerState_t	location	-	-	-	verified	netfield table 0x827EF3B0	0x8c	absent in QAA (FnQL/QL field)
+playerState_t	weaponPrimary	-	-	-	verified	netfield table 0x827EF3B0	0x94	absent in QAA (FnQL/QL field)
+playerState_t	fov	-	-	-	verified	netfield table 0x827EF3B0	0x9c	absent in QAA (FnQL/QL field)
+playerState_t	jumpTime	-	-	-	verified	netfield table 0x827EF3B0	0x1cc	absent in QAA (FnQL/QL field)
+playerState_t	doubleJumped	-	-	-	verified	netfield table 0x827EF3B0	0x1d0	absent in QAA (FnQL/QL field)
+playerState_t	crouchTime	-	-	-	verified	netfield table 0x827EF3B0	0x1d4	absent in QAA (FnQL/QL field)
+playerState_t	crouchSlideTime	-	-	-	verified	netfield table 0x827EF3B0	0x1d8	absent in QAA (FnQL/QL field)
+playerState_t	forwardmove	-	-	-	verified	netfield table 0x827EF3B0	0x1dc	absent in QAA (FnQL/QL field)
+playerState_t	rightmove	-	-	-	verified	netfield table 0x827EF3B0	0x1dd	absent in QAA (FnQL/QL field)
+playerState_t	upmove	-	-	-	verified	netfield table 0x827EF3B0	0x1de	absent in QAA (FnQL/QL field)
+playerState_t	commandMirrorPad	-	-	-	verified	netfield table 0x827EF3B0	0x1df	absent in QAA (FnQL/QL field)
+playerState_t	armorTier	-	-	-	verified	netfield table 0x827EF3B0	0x1f4	absent in QAA (FnQL/QL field)
+usercmd_t	(sizeof)	0x18	24	struct	code	0x8213184C G_GET_USERCMD; 0x82101E64 CL_GetUserCmd	0x1c	copied as 6 words; cl.cmds stride 24
+usercmd_t	serverTime	0x0	4	int	code	0x82126FC8 MSG_ReadDeltaUsercmdKey	0x0	
+usercmd_t	angles	0x4	12	int[3]	code	0x82126FC8 MSG_ReadDeltaUsercmdKey	0x4	
+usercmd_t	buttons	0x10	4	int	code	0x82126FC8 MSG_ReadDeltaUsercmdKey	0x10	
+usercmd_t	weapon	0x14	1	byte	code	0x82126FC8 MSG_ReadDeltaUsercmdKey	0x14	
+usercmd_t	forwardmove	0x15	1	signed char	code	0x82126FC8 MSG_ReadDeltaUsercmdKey	0x17	
+usercmd_t	rightmove	0x16	1	signed char	code	0x82126FC8 MSG_ReadDeltaUsercmdKey	0x18	
+usercmd_t	upmove	0x17	1	signed char	code	0x82126FC8 MSG_ReadDeltaUsercmdKey	0x19	
+usercmd_t	weaponPrimary	-	-	-	code	0x82126FC8 MSG_ReadDeltaUsercmdKey	0x15	absent in QAA (FnQL/QL field)
+usercmd_t	fov	-	-	-	code	0x82126FC8 MSG_ReadDeltaUsercmdKey	0x16	absent in QAA (FnQL/QL field)
+sharedEntity_t	(sizeof)	0x204	516	struct	code	0x82137DF8 SV_LinkEntity	0x23c	s + r; the game gentity_t is 0x348 (G_LOCATE_GAME_DATA)
+sharedEntity_t	s	0x0	208	entityState_t	code	0x82137DF8 SV_LinkEntity	0x0	
+sharedEntity_t	r	0xd0	308	entityShared_t	code	0x82137DF8 SV_LinkEntity	0xec	
+entityShared_t	(sizeof)	0x134	308	struct	code	0x82137DF8 SV_LinkEntity; 0x821385A8 SV_ClipMoveToEntities	0x150	ends after ownerNum
+entityShared_t	s	0x0	208	entityState_t	observed	-	0x0	0xD0-byte block before linked, the size of entityState_t (Quake Live-style leading copy); contents not checked
+entityShared_t	linked	0xd0	4	qboolean	code	0x82137DF8 SV_LinkEntity; 0x82137D10 SV_UnlinkEntity	0xec	gentity offset 0x1A0
+entityShared_t	linkcount	0xd4	4	int	code	0x82137DF8 SV_LinkEntity	0xf0	gentity offset 0x1A4
+entityShared_t	svFlags	0xd8	4	int	code	0x82136F78 snapshot entity loop; 0x8212E8B8 SV_DropClient (SVF_BOT 8)	0xf4	gentity offset 0x1A8
+entityShared_t	singleClient	0xdc	4	int	code	0x82136F78 snapshot entity loop	0xf8	gentity offset 0x1AC
+entityShared_t	bmodel	0xe0	4	qboolean	code	0x82137DF8 SV_LinkEntity	0xfc	gentity offset 0x1B0
+entityShared_t	mins	0xe4	12	vec3_t	code	0x82137DF8 SV_LinkEntity	0x100	gentity offset 0x1B4
+entityShared_t	maxs	0xf0	12	vec3_t	code	0x82137DF8 SV_LinkEntity	0x10c	gentity offset 0x1C0
+entityShared_t	contents	0xfc	4	int	code	0x82137DF8 SV_LinkEntity	0x118	gentity offset 0x1CC
+entityShared_t	absmin	0x100	12	vec3_t	code	0x82137DF8 SV_LinkEntity	0x11c	gentity offset 0x1D0
+entityShared_t	absmax	0x10c	12	vec3_t	code	0x82137DF8 SV_LinkEntity	0x128	gentity offset 0x1DC
+entityShared_t	currentOrigin	0x118	12	vec3_t	code	0x82137DF8 SV_LinkEntity	0x134	gentity offset 0x1E8
+entityShared_t	currentAngles	0x124	12	vec3_t	code	0x82137DF8 SV_LinkEntity	0x140	gentity offset 0x1F4
+entityShared_t	ownerNum	0x130	4	int	code	0x821385A8 SV_ClipMoveToEntities	0x14c	gentity offset 0x200
+refEntity_t	(sizeof)	0xc0	192	struct	code	0x821484E0 RE_AddRefEntityToScene	0x8c	copied as 0xC0 bytes; renderer slot stride 0x100
+refEntity_t	reType	0x0	4	int	observed	cgame stores after its 41 memsets of 0xC0	0x0	renderer checks reType < 8
+refEntity_t	renderfx	0x4	4	int	observed	cgame stores after its 41 memsets of 0xC0	0x4	
+refEntity_t	hModel	0x8	4	qhandle_t	observed	cgame stores after its 41 memsets of 0xC0	0x8	
+refEntity_t	lightingOrigin	0xc	12	vec3_t	observed	cgame stores after its 41 memsets of 0xC0	0xc	
+refEntity_t	shadowPlane	0x18	4	float	observed	cgame stores after its 41 memsets of 0xC0	0x18	
+refEntity_t	(qaa_1c)	0x1c	52	unknown	observed	cgame stores after its 41 memsets of 0xC0	-	QAA-only 52-byte block; the cgame only zeroes 0x1C; every later Quake III field moves by +0x34
+refEntity_t	axis	0x50	36	vec3_t[3]	observed	cgame stores after its 41 memsets of 0xC0	0x1c	address taken as axis[0..2]
+refEntity_t	nonNormalizedAxes	0x74	4	qboolean	observed	cgame stores after its 41 memsets of 0xC0	0x40	stores of 0 and 1
+refEntity_t	origin	0x78	12	vec3_t	observed	cgame stores after its 41 memsets of 0xC0	0x44	most-stored field
+refEntity_t	frame	0x84	4	int	observed	cgame stores after its 41 memsets of 0xC0	0x50	
+refEntity_t	oldorigin	0x88	12	vec3_t	observed	cgame stores after its 41 memsets of 0xC0	0x54	
+refEntity_t	oldframe	0x94	4	int	observed	cgame stores after its 41 memsets of 0xC0	0x60	
+refEntity_t	backlerp	0x98	4	float	observed	cgame stores after its 41 memsets of 0xC0	0x64	
+refEntity_t	skinNum	0x9c	4	int	observed	cgame stores after its 41 memsets of 0xC0	0x68	
+refEntity_t	customSkin	0xa0	4	qhandle_t	observed	cgame stores after its 41 memsets of 0xC0	0x6c	
+refEntity_t	customShader	0xa4	4	qhandle_t	observed	cgame stores after its 41 memsets of 0xC0	0x70	
+refEntity_t	shaderRGBA	0xa8	4	byte[4]	observed	cgame stores after its 41 memsets of 0xC0	-	byte stores
+refEntity_t	shaderTexCoord	0xac	8	float[2]	observed	cgame stores after its 41 memsets of 0xC0	0x78	by order
+refEntity_t	shaderTime	0xb4	4	float	observed	cgame stores after its 41 memsets of 0xC0	0x80	by order
+refEntity_t	radius	0xb8	4	float	observed	cgame stores after its 41 memsets of 0xC0	0x84	
+refEntity_t	rotation	0xbc	4	float	observed	cgame stores after its 41 memsets of 0xC0	0x88	
+refdef_t	(sizeof)	0x170	368	struct	code	0x82148678 RE_RenderScene	0x170	highest field read is text[] at 0x70..0x170
+refdef_t	x	0x0	4	int	code	0x82148678 RE_RenderScene	0x0	
+refdef_t	y	0x4	4	int	code	0x82148678 RE_RenderScene	0x4	
+refdef_t	width	0x8	4	int	code	0x82148678 RE_RenderScene	0x8	
+refdef_t	height	0xc	4	int	code	0x82148678 RE_RenderScene	0xc	
+refdef_t	fov_x	0x10	4	float	code	0x82148678 RE_RenderScene	0x10	
+refdef_t	fov_y	0x14	4	float	code	0x82148678 RE_RenderScene	0x14	
+refdef_t	vieworg	0x18	12	vec3_t	code	0x82148678 RE_RenderScene	0x18	
+refdef_t	viewaxis	0x24	36	vec3_t[3]	code	0x82148678 RE_RenderScene	0x24	
+refdef_t	time	0x48	4	int	code	0x82148678 RE_RenderScene	0x48	
+refdef_t	rdflags	0x4c	4	int	code	0x82148678 RE_RenderScene	0x4c	
+refdef_t	areamask	0x50	32	byte[32]	code	0x82148678 RE_RenderScene	0x50	
+refdef_t	text	0x70	256	char[8][32]	code	0x82148678 RE_RenderScene	0x70	
+snapshot_t	(sizeof)	0xd210	53776	struct	code	0x82100000 CL_GetSnapshot	0xee30	
+snapshot_t	snapFlags	0x0	4	int	code	0x82100000 CL_GetSnapshot	0x0	
+snapshot_t	ping	0x4	4	int	code	0x82100000 CL_GetSnapshot	0x4	
+snapshot_t	serverTime	0x8	4	int	code	0x82100000 CL_GetSnapshot	0x8	
+snapshot_t	areamask	0xc	32	byte[32]	code	0x82100000 CL_GetSnapshot	0xc	
+snapshot_t	ps	0x2c	472	playerState_t	code	0x82100000 CL_GetSnapshot	0x2c	
+snapshot_t	numEntities	0x204	4	int	code	0x82100000 CL_GetSnapshot	0x224	clamped to 256
+snapshot_t	entities	0x208	53248	entityState_t[256]	code	0x82100000 CL_GetSnapshot	0x228	
+snapshot_t	numServerCommands	0xd208	4	int	code	0x82100000 CL_GetSnapshot	0xee28	not written by CL_GetSnapshot (as in Quake III)
+snapshot_t	serverCommandSequence	0xd20c	4	int	code	0x82100000 CL_GetSnapshot	0xee2c	
+gameState_t	(sizeof)	0x4e84	20100	struct	code	0x82101DC0 cgame trap GETGAMESTATE	0x4e84	memcpy 0x4E84
+gameState_t	stringOffsets	0x0	4096	int[1024]	observed	-	0x0	implied by the size and MAX_CONFIGSTRINGS 1024
+gameState_t	stringData	0x1000	16000	char[16000]	observed	-	0x1000	implied by the size and MAX_CONFIGSTRINGS 1024
+gameState_t	dataCount	0x4e80	4	int	observed	-	0x4e80	implied by the size and MAX_CONFIGSTRINGS 1024
+glconfig_t	(sizeof)	0x2c54	11348	struct	code	0x82101D94 cgame trap GETGLCONFIG	0x2c44	memcpy 0x2C54 from cls.glconfig (0x82F85634); Quake III and FnQL 0x2C44
+glconfig_t	renderer_string	0x0	1024	char[1024]	observed	-	0x0	Quake III position; consistent with the code-read fields
+glconfig_t	vendor_string	0x400	1024	char[1024]	observed	-	0x400	Quake III position; consistent with the code-read fields
+glconfig_t	version_string	0x800	1024	char[1024]	observed	-	0x800	Quake III position; consistent with the code-read fields
+glconfig_t	extensions_string	0xc00	8192	char[8192]	observed	-	0xc00	Quake III position; consistent with the code-read fields
+glconfig_t	maxTextureSize	0x2c00	4	int	observed	-	0x2c00	Quake III position; consistent with the code-read fields
+glconfig_t	numTextureUnits	0x2c04	4	int	observed	-	0x2c04	Quake III position; consistent with the code-read fields
+glconfig_t	colorBits	0x2c08	4	int	observed	-	0x2c08	Quake III position; consistent with the code-read fields
+glconfig_t	depthBits	0x2c0c	4	int	observed	-	0x2c0c	Quake III position; consistent with the code-read fields
+glconfig_t	stencilBits	0x2c10	4	int	observed	-	0x2c10	Quake III position; consistent with the code-read fields
+glconfig_t	driverType	0x2c14	4	int	observed	-	0x2c14	Quake III position; consistent with the code-read fields
+glconfig_t	hardwareType	0x2c18	4	int	code	cgame 0x86025730 CG_Init and others	0x2c18	read through cgs.glconfig
+glconfig_t	deviceSupportsGamma	0x2c1c	4	qboolean	observed	-	0x2c1c	Quake III position; consistent with the code-read fields
+glconfig_t	textureCompression	0x2c20	4	int	observed	-	0x2c20	Quake III position; consistent with the code-read fields
+glconfig_t	textureEnvAddAvailable	0x2c24	4	qboolean	observed	-	0x2c24	Quake III position; consistent with the code-read fields
+glconfig_t	vidWidth	0x2c28	4	int	code	cgame 0x860258D0 CG_Init (screenXScale)	0x2c28	
+glconfig_t	vidHeight	0x2c2c	4	int	code	cgame 0x860258D4 CG_Init; engine 0x82101C9C DrawStretchPic trap (reads 0x82F88260)	0x2c2c	the engine flips y as vidHeight - y - h
+glconfig_t	windowAspect	0x2c30	4	float	observed	-	0x2c30	Quake III position; consistent with the code-read fields
+glconfig_t	displayFrequency	0x2c34	4	int	observed	-	0x2c34	Quake III position; consistent with the code-read fields
+glconfig_t	isFullscreen	0x2c38	4	qboolean	observed	-	0x2c38	Quake III position; consistent with the code-read fields
+glconfig_t	stereoEnabled	0x2c3c	4	qboolean	observed	-	0x2c3c	Quake III position; consistent with the code-read fields
+glconfig_t	smpActive	0x2c40	4	qboolean	observed	-	0x2c40	Quake III position; consistent with the code-read fields
+glconfig_t	(qaa_2c44)	0x2c44	16	unknown	code	0x82101D94 (size only)	-	QAA-only 16-byte tail; never read by the cgame
+vmCvar_t	(sizeof)	0x110	272	struct	code	0x82120AA8 Cvar_Update	0x114	Quake III layout
+vmCvar_t	handle	0x0	4	cvarHandle_t	code	0x82120AA8 Cvar_Update	0x0	
+vmCvar_t	modificationCount	0x4	4	int	code	0x82120AA8 Cvar_Update	0x4	
+vmCvar_t	value	0x8	4	float	code	0x82120AA8 Cvar_Update	0x8	
+vmCvar_t	integer	0xc	4	int	code	0x82120AA8 Cvar_Update	0xc	
+vmCvar_t	string	0x10	256	char[256]	code	0x82120AA8 Cvar_Update	0x14	
+vmCvar_t	flags	-	-	-	code	0x82120AA8 Cvar_Update	0x10	absent in QAA (FnQL/QL field); string follows integer
+trace_t	(sizeof)	0x38	56	struct	code	0x82138788 SV_Trace	0x38	results copied as 0x38 bytes
+trace_t	allsolid	0x0	4	qboolean	observed	-	0x0	Quake III position
+trace_t	startsolid	0x4	4	qboolean	observed	-	0x4	Quake III position
+trace_t	fraction	0x8	4	float	code	0x82138788 SV_Trace	0x8	
+trace_t	endpos	0xc	12	vec3_t	observed	-	0xc	Quake III position
+trace_t	plane	0x18	20	cplane_t	observed	-	0x18	Quake III position
+trace_t	surfaceFlags	0x2c	4	int	observed	-	0x2c	Quake III position
+trace_t	contents	0x30	4	int	observed	-	0x30	Quake III position
+trace_t	entityNum	0x34	4	int	code	0x82138788 SV_Trace	0x34	
+cplane_t	(sizeof)	0x14	20	struct	observed	-	0x14	Quake III layout; fits trace_t
+cplane_t	normal	0x0	12	vec3_t	observed	-	0x0	
+cplane_t	dist	0xc	4	float	observed	-	0xc	
+cplane_t	type	0x10	1	byte	observed	-	0x10	
+cplane_t	signbits	0x11	1	byte	observed	-	0x11	
+cplane_t	pad	0x12	2	byte[2]	observed	-	0x12	
+polyVert_t	(sizeof)	0x18	24	struct	code	0x82148090 RE_AddPolyToScene	0x18	vertex stride 24
+polyVert_t	xyz	0x0	12	vec3_t	observed	-	0x0	
+polyVert_t	st	0xc	8	float[2]	observed	-	0xc	
+polyVert_t	modulate	0x14	4	byte[4]	code	0x82148090 RE_AddPolyToScene	0x14	
+markFragment_t	(sizeof)	0x8	8	struct	observed	-	0x8	Quake III layout assumed; the renderer MarkFragments was not located
+markFragment_t	firstPoint	0x0	4	int	observed	-	0x0	
+markFragment_t	numPoints	0x4	4	int	observed	-	0x4	
+orientation_t	(sizeof)	0x30	48	struct	observed	-	0x30	Quake III layout assumed; the cgame calls LerpTag through the vmMain-12 engine table, not trap 51
+orientation_t	origin	0x0	12	vec3_t	observed	-	0x0	
+orientation_t	axis	0xc	36	vec3_t[3]	observed	-	0xc	

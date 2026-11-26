@@ -1,0 +1,219 @@
+num	qaa_name	fnql_name	fnql_num	vs_fnql	case_addr	engine_function	nargs	args	returns	module_call_sites	evidence	note
+0	G_PRINT	G_PRINT	0	same	0x82130D84	Com_Printf 0x826F9BC8	1	ptr text	void	6	code	Com_Printf("%s", text).
+1	G_ERROR	G_ERROR	1	same	0x82130DA8	Com_Error 0x826F9BC8	1	ptr text	noreturn	2	code	Com_Error(ERR_DROP, "%s", text).
+2	G_MILLISECONDS	G_MILLISECONDS	2	same	0x82130DD0	Sys_Milliseconds 0x82185850	0	void	int	0	code	
+3	G_CVAR_REGISTER	G_CVAR_REGISTER	3	same	0x82130DDC	Cvar_Register 0x82120A40	4	ptr vmCvar, ptr name, ptr defaultValue, int flags	void	8	code	
+4	G_CVAR_UPDATE	G_CVAR_UPDATE	4	same	0x82130E10	Cvar_Update 0x82120AA8	1	ptr vmCvar	void	0	code	Also engine table slot 4 (vmMain 9).
+5	G_CVAR_SET	G_CVAR_SET	5	same	0x82130E28	Cvar_Set2 0x8211F908	2	ptr name, ptr value	void	0	code	Called with force = 1. Engine table slot 5 is the same call (0x8211FBE0).
+6	G_CVAR_VARIABLE_INTEGER_VALUE	G_CVAR_VARIABLE_INTEGER_VALUE	6	same	0x82130E50	Cvar_FindVar 0x8211F548	1	ptr name	int	0	code	Returns cvar->integer (cvar_t +0x20), 0 if absent. Engine table slot 6 (0x8211F628).
+7	G_CVAR_VARIABLE_STRING_BUFFER	G_CVAR_VARIABLE_STRING_BUFFER	7	same	0x82130E70	Cvar_VariableStringBuffer 0x8211F668	3	ptr name, ptr buffer, int bufsize	void	10	code	
+8	G_ARGC	G_ARGC	8	same	0x82130E98	Cmd_Argc (inline, cmd_argc 0x828E0AD0)	0	void	int	10	code	
+9	G_ARGV	G_ARGV	9	same	0x82130EAC	Cmd_ArgvBuffer (inline; Q_strncpyz 0x8212A988)	3	int n, ptr buffer, int bufferLength	void	15	code	Copies "" when n >= argc.
+10	G_FS_FOPEN_FILE	G_FS_FOPEN_FILE	10	same	0x82130F20	FS_FOpenFileByMode 0x82125360	3	ptr qpath, ptr fileHandle, int mode	int	2	code	Returns the file length.
+11	G_FS_READ	G_FS_READ	11	same	0x82130F44	FS_Read 0x82122278	3	ptr buffer, int len, int f	void	0	code	
+12	G_FS_WRITE	G_FS_WRITE	12	same	0x82130F64	FS_Write 0x821223B8	3	ptr buffer, int len, int f	void	0	code	
+13	G_FS_FCLOSE_FILE	G_FS_FCLOSE_FILE	13	same	0x82130F84	FS_FCloseFile 0x82121B28	1	int f	void	0	code	
+14	G_SEND_CONSOLE_COMMAND	G_SEND_CONSOLE_COMMAND	14	same	0x82130F00	Cbuf_ExecuteText 0x82119870	2	int exec_when, ptr text	void	3	code	
+15	G_LOCATE_GAME_DATA	G_LOCATE_GAME_DATA	15	same	0x82130FE0	SV_LocateGameData (inline)	5	ptr gEnts, int numGEntities, int sizeofGEntity, ptr clients, int sizeofGameClient	void	1	code	Stores sv.gentities 0x82E0FCC8, sv.gentitySize 0x82E0FCCC, sv.num_entities 0x82E0FCD0, sv.gameClients 0x82E0FCD4, sv.gameClientSize 0x82E0FCD8. qagame passes sizes 0x348 and 0x360 (call at 0x88051764).
+16	G_DROP_CLIENT	G_DROP_CLIENT	16	same	0x82131050	SV_DropClient 0x8212E8B8	2	int clientNum, ptr reason	void	1	code	Ignored unless 0 <= clientNum < sv_maxclients.
+17	G_SEND_SERVER_COMMAND	G_SEND_SERVER_COMMAND	17	same	0x821310A8	SV_SendServerCommand 0x82135280	2	int clientNum, ptr text	void	26	code	clientNum -1 sends to all.
+18	G_SET_CONFIGSTRING	G_SET_CONFIGSTRING	18	same	0x82131588	SV_SetConfigstring 0x821339B0	2	int num, ptr string	void	18	code	
+19	G_GET_CONFIGSTRING	G_GET_CONFIGSTRING	19	same	0x821315A8	SV_GetConfigstring (inline)	3	int num, ptr buffer, int bufferSize	void	20	code	Errors if bufferSize < 1 or num outside 0..1023.
+20	G_GET_USERINFO	G_GET_USERINFO	20	same	0x82131664	SV_GetUserinfo (inline)	3	int num, ptr buffer, int bufferSize	void	12	code	Copies client_t +4 (userinfo); client_t stride 0x2CB78.
+21	G_SET_USERINFO	G_SET_USERINFO	21	same	0x82131644	SV_SetUserinfo 0x82133BB8	2	int num, ptr buffer	void	3	code	
+22	G_GET_SERVERINFO	G_GET_SERVERINFO	22	same	0x821316FC	Cvar_InfoString(CVAR_SERVERINFO) 0x82120778	2	ptr buffer, int bufferSize	void	10	code	
+23	G_SET_BRUSH_MODEL	G_SET_BRUSH_MODEL	23	same	0x82131524	SV_SetBrushModel 0x8212FF78	2	ptr ent, ptr name	void	9	code	
+24	G_TRACE	G_TRACE	24	same	0x8213145C	SV_Trace 0x82138788	7	ptr results, ptr start, ptr mins, ptr maxs, ptr end, int passEntityNum, int contentmask	void	0	code	capsule = 0. Engine table slot 2 is SV_Trace itself (8 args, capsule last).
+25	G_POINT_CONTENTS	G_POINT_CONTENTS	25	same	0x8213150C	SV_PointContents 0x82138990	2	ptr point, int passEntityNum	int	0	code	Engine table slot 3.
+26	G_IN_PVS	G_IN_PVS	26	same	0x82131548	SV_inPVS 0x82130070	2	ptr p1, ptr p2	int	4	code	
+27	G_IN_PVS_IGNORE_PORTALS	G_IN_PVS_IGNORE_PORTALS	27	same	0x82131568	SV_inPVSIgnorePortals 0x82130258	2	ptr p1, ptr p2	int	0	code	
+28	G_ADJUST_AREA_PORTAL_STATE	G_ADJUST_AREA_PORTAL_STATE	28	same	0x8213174C	SV_AdjustAreaPortalState (inline) -> CM_AdjustAreaPortalState 0x82117F18	2	ptr ent, int open	void	2	code	
+29	G_AREAS_CONNECTED	G_AREAS_CONNECTED	29	same	0x82131818	CM_AreasConnected 0x82118030	2	int area1, int area2	int	0	code	
+30	QAA_G_ACTIVE_CLIENT_COUNT	-	-	qaa-only	0x821317C0	inline	0	void	int	1	code	QAA only. Counts svs.clients[0..sv_maxclients) whose state is neither CS_FREE (0) nor CS_ZOMBIE (1). Inserted here, so every later Quake III trap up to G_ENTITY_CONTACTCAPSULE moves up by one.
+31	G_LINKENTITY	G_LINKENTITY	30	renumbered	0x8213112C	SV_LinkEntity 0x82137DF8	1	ptr ent	void	0	code	Engine table slot 1.
+32	G_UNLINKENTITY	G_UNLINKENTITY	31	renumbered	0x82131144	SV_UnlinkEntity 0x82137D10	1	ptr ent	void	0	code	Engine table slot 0.
+33	G_ENTITIES_IN_BOX	G_ENTITIES_IN_BOX	32	renumbered	0x8213115C	SV_AreaEntities (inline) -> SV_AreaEntities_r 0x82138340	4	ptr mins, ptr maxs, ptr list, int maxcount	int	7	code	Returns the count.
+34	G_ENTITY_CONTACT	G_ENTITY_CONTACT	33	renumbered	0x821311AC	SV_EntityContact 0x821303C0	3	ptr mins, ptr maxs, ptr ent	int	0	code	capsule = 0.
+35	G_BOT_ALLOCATE_CLIENT	G_BOT_ALLOCATE_CLIENT	34	renumbered	0x8213182C	SV_BotAllocateClient 0x8212B648	0	void	int	1	code	
+36	G_BOT_FREE_CLIENT	G_BOT_FREE_CLIENT	35	renumbered	0x82131838	SV_BotFreeClient 0x8212B720	1	int clientNum	void	0	code	
+37	G_GET_USERCMD	G_GET_USERCMD	36	renumbered	0x8213184C	SV_GetUsercmd (inline)	2	int clientNum, ptr cmd	void	1	code	Errors "SV_GetUsercmd: bad clientNum:%i".
+38	G_GET_ENTITY_TOKEN	G_GET_ENTITY_TOKEN	37	renumbered	0x821318D4	COM_Parse 0x8212A520 on sv.entityParsePoint 0x82E0FCC4	2	ptr buffer, int bufferSize	int	2	code	Returns qfalse when the parse point is exhausted.
+39	G_FS_GETFILELIST	G_FS_GETFILELIST	38	renumbered	0x82130F98	FS_GetFileList 0x82123080	4	ptr path, ptr extension, ptr listbuf, int bufsize	int	2	code	
+40	G_DEBUG_POLYGON_CREATE	G_DEBUG_POLYGON_CREATE	39	renumbered	0x82131930	BotImport_DebugPolygonCreate 0x8212BD68	3	int color, int numPoints, ptr points	int	0	code	
+41	G_DEBUG_POLYGON_DELETE	G_DEBUG_POLYGON_DELETE	40	renumbered	0x82131950	none (returns 0)	1	int id	void	0	code	No-op in QAA.
+42	G_REAL_TIME	G_REAL_TIME	41	renumbered	0x8213197C	Com_RealTime 0x8211B188	1	ptr qtime	int	0	code	
+43	G_SNAPVECTOR	G_SNAPVECTOR	42	renumbered	0x82131990	inline, floorf 0x821DC8C8 per component	1	ptr v	void	1	code	QAA floors each component (the same function as trap 110 G_FLOOR); Quake III rounds to nearest.
+44	G_TRACECAPSULE	G_TRACECAPSULE	43	renumbered	0x821314B4	SV_Trace 0x82138788	7	ptr results, ptr start, ptr mins, ptr maxs, ptr end, int passEntityNum, int contentmask	void	0	code	capsule = 1.
+45	G_ENTITY_CONTACTCAPSULE	G_ENTITY_CONTACTCAPSULE	44	renumbered	0x821311DC	SV_EntityContact 0x821303C0	3	ptr mins, ptr maxs, ptr ent	int	0	code	capsule = 1.
+46	QAA_G_LIVE_LEAVE_SESSION	-	-	qaa-only	0x8213123C	0x821837A0, 0x821784B8, 0x82178568	0	void	void	1	code	QAA only (Xbox Live). Calls 0x821837A0 with the active user index, then, if the Live state > 3 and flag 0x82C01BD8 is set, signals the session worker (NtSetEvent). qagame calls it beside "ui_LeavingGame" (0x88043C80). Purpose inferred: end the Live session.
+47	QAA_G_AWARD_ACHIEVEMENT	-	-	qaa-only	0x82131288	UI/achievement 0x82186B10 ("AchievementAwarded")	2	int a1, int a2	void	0	code	QAA only. Same engine call as cgame trap 114. Not called by qagame (observed).
+48	QAA_G_UI_GOTO_STACK_PATH	-	-	qaa-only	0x821312B4	Scaleform invoke 0x8218E8A8 "_global.sceneManager.gotoStackPath" "%s %s"	1	ptr path	void	0	code	QAA only (menus). Not called by qagame (observed).
+49	QAA_G_UI_INGAME_MENU	-	-	qaa-only	0x821312A0	0x8218EC70 ("_global.sceneManager.gotoScene", "InvokeIngameMenu")	1	int a1	int	0	code	QAA only. Returns -1. Not called by qagame (observed).
+50	QAA_G_LIVE_SESSION_INFO_4	-	-	qaa-only	0x821313F8	session info 0x82176AC8	0	void	int	1	code	QAA only. Returns word 4 of the session-info record that 0x82176AC8 fills, or 0 without a session. Used by the exit rules (0x88043DB0).
+51	QAA_G_LIVE_SESSION_INFO_5	-	-	qaa-only	0x82131418	session info 0x82176AC8	0	void	int	0	code	QAA only. Word 5 of the same record. Not called by qagame (observed).
+52	QAA_G_LIVE_SET_52	-	-	qaa-only	0x82131438	stores 0x82C0251C, NtSetEvent 0x821F18E8	1	int value	void	0	code	QAA only. Stores the value for the Live worker thread and signals it. Not called by qagame (observed).
+56	QAA_G_LIVE_MEMBER_SET	-	-	qaa-only	0x82131354	0x82176AC8, 0x8217A298, 0x8217D698	2	int member, int value	void	0	code	QAA only. With an active session, looks up member a1 (byte), writes a2 into its record (+4) and commits. Not called by qagame (observed).
+57	QAA_G_LIVE_SET_57	-	-	qaa-only	0x821312F4	stores 0x82C02514/0x82C02518, NtSetEvent	2	int a1, int a2	void	0	code	QAA only. Not called by qagame (observed).
+58	QAA_G_LIVE_MEMBER_GET	-	-	qaa-only	0x82131320	0x8217A298	1	int member	int	0	code	QAA only. Returns the first word of member a1's record, else 0. Not called by qagame (observed).
+61	QAA_G_STUB_61	-	-	qaa-only	0x82130D9C	none	0	void	int	0	code	QAA only. Returns 0.
+62	QAA_G_STUB_62	-	-	qaa-only	0x82130D9C	none	0	void	int	0	code	QAA only. Returns 0.
+63	QAA_G_STUB_63	-	-	qaa-only	0x82130D9C	none	0	void	int	0	code	QAA only. Returns 0.
+64	QAA_G_LIVE_MARK_MATCH	-	-	qaa-only	0x8213120C	0x82178510	0	void	void	1	code	QAA only. If 0x82178510() succeeds, sets flags 0x82C01BD8 and 0x82C01BD4 (the flag trap 46 tests). Used by the exit rules. Purpose inferred: mark the match as played for Live.
+65	QAA_G_UI_COURSE_RESULTS	-	-	qaa-only	0x821319D8	Scaleform set 0x82196D40 "_global.courseResults"	1	ptr results	void	1	code	QAA only. Copies 0x4C bytes to the UI and publishes them. qagame calls it beside "postgame" and "ui_singlePlayerCourse" (0x88036078).
+66	QAA_G_LIVE_WRITE_STAT	-	-	qaa-only	0x82131A44	0x82187228 (XamSessionRefObjByHandle, XMsgStartIORequest, "ui_arenaStatsFailed")	2	int statId, int value	void	0	code	QAA only. Stores max(value, 0) at 0x82A74F4C and posts a Live stats write for id statId+20 (statId < 400), statId-300 (< 900) or statId-700. Not called by qagame (observed).
+67	QAA_G_LIVE_SESSION_INFO_1	-	-	qaa-only	0x82131AB4	session info 0x82176AC8	0	void	int	1	code	QAA only. Word 1 of the session-info record. Used by the exit rules.
+68	QAA_G_LIVE_SESSION_INFO_0	-	-	qaa-only	0x82131AD4	session info 0x82176AC8	0	void	int	1	code	QAA only. Word 0 of the session-info record. Used by the scoreboard code (0x8803AD70).
+69	QAA_G_UI_CACHE_SCORES	-	-	qaa-only	0x82131B74	0x8218E610 ("_global.cacheHostName", "_global.cacheScores")	2	ptr hostName, ptr scores	void	1	code	QAA only. Called from the game vmMain 11 handler with sv_hostname and a list of scores. cgame trap 120 is the same call.
+70	QAA_G_LIVE_UPDATE_CONTEXT	-	-	qaa-only	0x82131AF4	0x821822A8 (reads g_gameType, ui_sessionType)	0	void	void	0	code	QAA only. Purpose inferred: update the Live game-mode context. Not called by qagame (observed).
+71	QAA_G_LIVE_SHUTDOWN_71	-	-	qaa-only	0x82131B04	session object vtable +0x5C	0	void	void	1	code	QAA only. Acts only in Live state 4. qagame calls it from GAME_SHUTDOWN (0x88042E80).
+72	QAA_G_LIVE_SUBMIT_STATS	-	-	qaa-only	0x82131B98	memcpy to 0x82A6D6E8 and 0x82C01EC8, NtSetEvent	3	ptr data, int size, int a3	void	1	code	QAA only. Copies size bytes; in Live state 4 with size < 0x24C also hands data, size and a3 to the Live worker. Used by qagame 0x8803A3F0.
+73	G_FS_SEEK	G_FS_SEEK	45	renumbered	0x82130FC8	FS_Seek 0x82122440	3	int f, int offset, int origin	int	0	code	Quake III 1.32 number 45; QAA put the Xbox traps 46..72 in front of it.
+100	G_MEMSET	TRAP_MEMSET	-	renumbered	0x821336A0	memset 0x821D2BC0	3	ptr dest, int c, int count	void	0	code	
+101	G_MEMCPY	TRAP_MEMCPY	-	renumbered	0x821336C0	memcpy 0x821D3058	3	ptr dest, ptr src, int count	void	0	code	
+102	G_STRNCPY	TRAP_STRNCPY	-	renumbered	0x821336E8	strncpy 0x821DC868	3	ptr dest, ptr src, int count	ptr	0	code	Returns the engine's strncpy result (dest).
+103	G_SIN	TRAP_SIN	-	renumbered	0x8213370C	sin 0x821DC648	1	float a	float-bits	0	code	
+104	G_COS	TRAP_COS	-	renumbered	0x82133728	cos 0x821DC728	1	float a	float-bits	0	code	
+105	G_ATAN2	TRAP_ATAN2	-	renumbered	0x82133744	atan2 0x821DC518	2	float y, float x	float-bits	0	code	
+106	G_SQRT	TRAP_SQRT	-	renumbered	0x82133764	inline fsqrts	1	float a	float-bits	0	code	
+107	G_MATRIXMULTIPLY	G_MATRIXMULTIPLY	107	same	0x8213377C	MatrixMultiply 0x82129E98	3	ptr in1, ptr in2, ptr out	void	0	code	
+108	G_ANGLEVECTORS	G_ANGLEVECTORS	108	same	0x821337AC	AngleVectors 0x8212A008	4	ptr angles, ptr forward, ptr right, ptr up	void	0	code	
+109	G_PERPENDICULARVECTOR	G_PERPENDICULARVECTOR	109	same	0x821337E8	PerpendicularVector 0x8212A160	2	ptr dst, ptr src	void	0	code	
+110	G_FLOOR	G_FLOOR	110	same	0x8213380C	floor 0x821DC8C8	1	float a	float-bits	0	code	
+111	G_CEIL	G_CEIL	111	same	0x82133828	ceil 0x821DC808	1	float a	float-bits	0	code	
+200	BOTLIB_SETUP	BOTLIB_SETUP	200	same	0x82131C28	SV_BotLibSetup	0	void	int	0	code	Prints "SV_BotLibSetup without SV_BotInitBotLib" and returns -1 when botlib is absent.
+201	BOTLIB_SHUTDOWN	BOTLIB_SHUTDOWN	201	same	0x82131C74	botlib export +0x1e8	0	void	int	0	code	
+202	BOTLIB_LIBVAR_SET	BOTLIB_LIBVAR_SET	202	same	0x82131C98	botlib export +0x1ec	2	ptr a1, ptr a2	int	3	code	
+203	BOTLIB_LIBVAR_GET	BOTLIB_LIBVAR_GET	203	same	0x82131CC8	botlib export +0x1f0	3	ptr a1, ptr a2, int a3	int	0	code	
+204	BOTLIB_PC_ADD_GLOBAL_DEFINE	BOTLIB_PC_ADD_GLOBAL_DEFINE	204	same	0x82131CFC	botlib export +0x1f4	1	ptr a1	int	0	code	
+205	BOTLIB_START_FRAME	BOTLIB_START_FRAME	205	same	0x82131DC8	botlib export +0x208	1	float a1	int	0	code	
+206	BOTLIB_LOAD_MAP	BOTLIB_LOAD_MAP	206	same	0x82131DE8	botlib export +0x20c	1	ptr a1	int	0	code	
+207	BOTLIB_UPDATENTITY	BOTLIB_UPDATENTITY	207	same	0x82131E0C	botlib export +0x210	2	int a1, ptr a2	int	0	code	
+208	BOTLIB_TEST	BOTLIB_TEST	208	same	0x82131E38	botlib export +0x214	4	int a1, ptr a2, ptr a3, ptr a4	int	0	code	
+209	BOTLIB_GET_SNAPSHOT_ENTITY	BOTLIB_GET_SNAPSHOT_ENTITY	209	same	0x82131E7C	SV_BotGetSnapshotEntity (inline)	2	int client, int ent	int	1	code	
+210	BOTLIB_GET_CONSOLE_MESSAGE	BOTLIB_GET_CONSOLE_MESSAGE	210	same	0x82131F10	SV_BotGetConsoleMessage (inline)	3	int client, ptr buf, int size	int	1	code	
+211	BOTLIB_USER_COMMAND	BOTLIB_USER_COMMAND	211	same	0x82131F9C	SV_ClientThink (inline) -> VM_Call(gvm, 7)	2	int client, ptr ucmd	void	2	code	Runs game vmMain 7 (GAME_CLIENT_THINK).
+300	BOTLIB_AAS_ENABLE_ROUTING_AREA	BOTLIB_AAS_ENABLE_ROUTING_AREA	300	same	0x8213239C	botlib export +0x44	2	int a1, int a2	int	7	code	
+301	BOTLIB_AAS_BBOX_AREAS	BOTLIB_AAS_BBOX_AREAS	301	same	0x8213201C	botlib export +0x1c	4	ptr a1, ptr a2, ptr a3, int a4	int	0	code	
+302	BOTLIB_AAS_AREA_INFO	BOTLIB_AAS_AREA_INFO	302	same	0x8213205C	botlib export +0x20	2	int a1, ptr a2	int	1	code	
+303	BOTLIB_AAS_ENTITY_INFO	BOTLIB_AAS_ENTITY_INFO	303	same	0x821320E0	botlib export +0x0	2	int a1, ptr a2	void	33	code	
+304	BOTLIB_AAS_INITIALIZED	BOTLIB_AAS_INITIALIZED	304	same	0x82132110	botlib export +0x4	0	void	int	0	code	
+305	BOTLIB_AAS_PRESENCE_TYPE_BOUNDING_BOX	BOTLIB_AAS_PRESENCE_TYPE_BOUNDING_BOX	305	same	0x8213212C	botlib export +0x8	3	int a1, ptr a2, ptr a3	void	1	code	
+306	BOTLIB_AAS_TIME	BOTLIB_AAS_TIME	306	same	0x82132168	botlib export +0xc	0	void	float-bits	1	code	
+307	BOTLIB_AAS_POINT_AREA_NUM	BOTLIB_AAS_POINT_AREA_NUM	307	same	0x8213218C	botlib export +0x10	1	ptr a1	int	2	code	
+308	BOTLIB_AAS_TRACE_AREAS	BOTLIB_AAS_TRACE_AREAS	308	same	0x821321D4	botlib export +0x18	5	ptr a1, ptr a2, ptr a3, ptr a4, int a5	int	0	code	
+309	BOTLIB_AAS_POINT_CONTENTS	BOTLIB_AAS_POINT_CONTENTS	309	same	0x82132220	botlib export +0x24	1	ptr a1	int	0	code	
+310	BOTLIB_AAS_NEXT_BSP_ENTITY	BOTLIB_AAS_NEXT_BSP_ENTITY	310	same	0x82132244	botlib export +0x28	1	int a1	int	1	code	
+311	BOTLIB_AAS_VALUE_FOR_BSP_EPAIR_KEY	BOTLIB_AAS_VALUE_FOR_BSP_EPAIR_KEY	311	same	0x82132264	botlib export +0x2c	4	int a1, ptr a2, ptr a3, int a4	int	4	code	
+312	BOTLIB_AAS_VECTOR_FOR_BSP_EPAIR_KEY	BOTLIB_AAS_VECTOR_FOR_BSP_EPAIR_KEY	312	same	0x821322A0	botlib export +0x30	3	int a1, ptr a2, ptr a3	int	0	code	
+313	BOTLIB_AAS_FLOAT_FOR_BSP_EPAIR_KEY	BOTLIB_AAS_FLOAT_FOR_BSP_EPAIR_KEY	313	same	0x821322D8	botlib export +0x34	3	int a1, ptr a2, ptr a3	int	0	code	
+314	BOTLIB_AAS_INT_FOR_BSP_EPAIR_KEY	BOTLIB_AAS_INT_FOR_BSP_EPAIR_KEY	314	same	0x82132310	botlib export +0x38	3	int a1, ptr a2, ptr a3	int	0	code	
+315	BOTLIB_AAS_AREA_REACHABILITY	BOTLIB_AAS_AREA_REACHABILITY	315	same	0x82132348	botlib export +0x3c	1	int a1	int	3	code	
+316	BOTLIB_AAS_AREA_TRAVEL_TIME_TO_GOAL_AREA	BOTLIB_AAS_AREA_TRAVEL_TIME_TO_GOAL_AREA	316	same	0x82132368	botlib export +0x40	4	int a1, ptr a2, int a3, int a4	int	5	code	
+317	BOTLIB_AAS_SWIMMING	BOTLIB_AAS_SWIMMING	317	same	0x82132428	botlib export +0x50	1	ptr a1	int	0	code	
+318	BOTLIB_AAS_PREDICT_CLIENT_MOVEMENT	BOTLIB_AAS_PREDICT_CLIENT_MOVEMENT	318	same	0x8213244C	botlib export +0x54	13	ptr a1, int a2, ptr a3, int a4, int a5, ptr a6, ptr a7, int a8, int a9, float a10, int a11, int a12, int a13	int	0	code	
+400	BOTLIB_EA_SAY	BOTLIB_EA_SAY	400	same	0x821324D0	botlib export +0x5c	2	int a1, ptr a2	void	0	code	
+401	BOTLIB_EA_SAY_TEAM	BOTLIB_EA_SAY_TEAM	401	same	0x82132500	botlib export +0x60	2	int a1, ptr a2	void	0	code	
+402	BOTLIB_EA_COMMAND	BOTLIB_EA_COMMAND	402	same	0x82132530	botlib export +0x58	2	int a1, ptr a2	void	11	code	
+403	BOTLIB_EA_ACTION	BOTLIB_EA_ACTION	403	same	0x82132560	botlib export +0x64	2	int a1, int a2	int	4	code	
+404	BOTLIB_EA_GESTURE	BOTLIB_EA_GESTURE	404	same	0x82132588	botlib export +0x68	1	int a1	void	1	code	
+405	BOTLIB_EA_TALK	BOTLIB_EA_TALK	405	same	0x821325AC	botlib export +0x6c	1	int a1	void	0	code	
+406	BOTLIB_EA_ATTACK	BOTLIB_EA_ATTACK	406	same	0x821325D0	botlib export +0x70	1	int a1	void	0	code	
+407	BOTLIB_EA_USE	BOTLIB_EA_USE	407	same	0x821325F4	botlib export +0x74	1	int a1	void	3	code	
+408	BOTLIB_EA_RESPAWN	BOTLIB_EA_RESPAWN	408	same	0x82132618	botlib export +0x78	1	int a1	void	2	code	
+409	BOTLIB_EA_CROUCH	BOTLIB_EA_CROUCH	409	same	0x8213263C	botlib export +0x94	1	int a1	void	0	code	
+410	BOTLIB_EA_MOVE_UP	BOTLIB_EA_MOVE_UP	410	same	0x82132660	botlib export +0x7c	1	int a1	void	0	code	
+411	BOTLIB_EA_MOVE_DOWN	BOTLIB_EA_MOVE_DOWN	411	same	0x82132684	botlib export +0x80	1	int a1	void	0	code	
+412	BOTLIB_EA_MOVE_FORWARD	BOTLIB_EA_MOVE_FORWARD	412	same	0x821326A8	botlib export +0x84	1	int a1	void	0	code	
+413	BOTLIB_EA_MOVE_BACK	BOTLIB_EA_MOVE_BACK	413	same	0x821326CC	botlib export +0x88	1	int a1	void	0	code	
+414	BOTLIB_EA_MOVE_LEFT	BOTLIB_EA_MOVE_LEFT	414	same	0x821326F0	botlib export +0x8c	1	int a1	void	0	code	
+415	BOTLIB_EA_MOVE_RIGHT	BOTLIB_EA_MOVE_RIGHT	415	same	0x82132714	botlib export +0x90	1	int a1	void	0	code	
+416	BOTLIB_EA_SELECT_WEAPON	BOTLIB_EA_SELECT_WEAPON	416	same	0x82132738	botlib export +0x98	2	int a1, int a2	void	2	code	
+417	BOTLIB_EA_JUMP	BOTLIB_EA_JUMP	417	same	0x82132760	botlib export +0x9c	1	int a1	void	0	code	
+418	BOTLIB_EA_DELAYED_JUMP	BOTLIB_EA_DELAYED_JUMP	418	same	0x82132784	botlib export +0xa0	1	int a1	void	0	code	
+419	BOTLIB_EA_MOVE	BOTLIB_EA_MOVE	419	same	0x821327A8	botlib export +0xa4	3	int a1, ptr a2, float a3	void	0	code	
+420	BOTLIB_EA_VIEW	BOTLIB_EA_VIEW	420	same	0x821327DC	botlib export +0xa8	2	int a1, ptr a2	void	0	code	
+421	BOTLIB_EA_END_REGULAR	BOTLIB_EA_END_REGULAR	421	same	0x8213280C	botlib export +0xac	2	int a1, float a2	void	0	code	
+422	BOTLIB_EA_GET_INPUT	BOTLIB_EA_GET_INPUT	422	same	0x82132834	botlib export +0xb0	3	int a1, float a2, ptr a3	void	1	code	
+423	BOTLIB_EA_RESET_INPUT	BOTLIB_EA_RESET_INPUT	423	same	0x82132868	botlib export +0xb4	1	int a1	void	1	code	
+500	BOTLIB_AI_LOAD_CHARACTER	BOTLIB_AI_LOAD_CHARACTER	500	same	0x8213288C	botlib export +0xb8	2	ptr a1, float a2	int	1	code	
+501	BOTLIB_AI_FREE_CHARACTER	BOTLIB_AI_FREE_CHARACTER	501	same	0x821328B4	botlib export +0xbc	1	int a1	void	0	code	
+502	BOTLIB_AI_CHARACTERISTIC_FLOAT	BOTLIB_AI_CHARACTERISTIC_FLOAT	502	same	0x821328D8	botlib export +0xc0	2	int a1, int a2	float-bits	0	code	
+503	BOTLIB_AI_CHARACTERISTIC_BFLOAT	BOTLIB_AI_CHARACTERISTIC_BFLOAT	503	same	0x82132904	botlib export +0xc4	4	int a1, int a2, float a3, float a4	float-bits	19	code	
+504	BOTLIB_AI_CHARACTERISTIC_INTEGER	BOTLIB_AI_CHARACTERISTIC_INTEGER	504	same	0x82132938	botlib export +0xc8	2	int a1, int a2	int	0	code	
+505	BOTLIB_AI_CHARACTERISTIC_BINTEGER	BOTLIB_AI_CHARACTERISTIC_BINTEGER	505	same	0x8213295C	botlib export +0xcc	4	int a1, int a2, int a3, int a4	int	5	code	
+506	BOTLIB_AI_CHARACTERISTIC_STRING	BOTLIB_AI_CHARACTERISTIC_STRING	506	same	0x82132988	botlib export +0xd0	4	int a1, int a2, ptr a3, int a4	void	1	code	
+507	BOTLIB_AI_ALLOC_CHAT_STATE	BOTLIB_AI_ALLOC_CHAT_STATE	507	same	0x821329C0	botlib export +0xd4	0	void	int	0	code	
+508	BOTLIB_AI_FREE_CHAT_STATE	BOTLIB_AI_FREE_CHAT_STATE	508	same	0x821329DC	botlib export +0xd8	1	int a1	void	1	code	
+509	BOTLIB_AI_QUEUE_CONSOLE_MESSAGE	BOTLIB_AI_QUEUE_CONSOLE_MESSAGE	509	same	0x82132A00	botlib export +0xdc	3	int a1, int a2, ptr a3	void	0	code	
+510	BOTLIB_AI_REMOVE_CONSOLE_MESSAGE	BOTLIB_AI_REMOVE_CONSOLE_MESSAGE	510	same	0x82132A34	botlib export +0xe0	2	int a1, int a2	void	0	code	
+511	BOTLIB_AI_NEXT_CONSOLE_MESSAGE	BOTLIB_AI_NEXT_CONSOLE_MESSAGE	511	same	0x82132A5C	botlib export +0xe4	2	int a1, ptr a2	int	0	code	
+512	BOTLIB_AI_NUM_CONSOLE_MESSAGE	BOTLIB_AI_NUM_CONSOLE_MESSAGE	512	same	0x82132A88	botlib export +0xe8	1	int a1	int	0	code	
+513	BOTLIB_AI_INITIAL_CHAT	BOTLIB_AI_INITIAL_CHAT	513	same	0x82132AA8	botlib export +0xec	11	int a1, ptr a2, int a3, ptr a4, ptr a5, ptr a6, ptr a7, ptr a8, ptr a9, ptr a10, ptr a11	void	1	code	
+514	BOTLIB_AI_REPLY_CHAT	BOTLIB_AI_REPLY_CHAT	514	same	0x82132B7C	botlib export +0xf4	12	int a1, ptr a2, int a3, int a4, ptr a5, ptr a6, ptr a7, ptr a8, ptr a9, ptr a10, ptr a11, ptr a12	int	0	code	
+515	BOTLIB_AI_CHAT_LENGTH	BOTLIB_AI_CHAT_LENGTH	515	same	0x82132C28	botlib export +0xf8	1	int a1	int	0	code	
+516	BOTLIB_AI_ENTER_CHAT	BOTLIB_AI_ENTER_CHAT	516	same	0x82132C48	botlib export +0xfc	3	int a1, int a2, int a3	void	10	code	
+517	BOTLIB_AI_STRING_CONTAINS	BOTLIB_AI_STRING_CONTAINS	517	same	0x82132CA8	botlib export +0x104	3	ptr a1, ptr a2, int a3	int	0	code	
+518	BOTLIB_AI_FIND_MATCH	BOTLIB_AI_FIND_MATCH	518	same	0x82132CDC	botlib export +0x108	3	ptr a1, ptr a2, int a3	int	0	code	
+519	BOTLIB_AI_MATCH_VARIABLE	BOTLIB_AI_MATCH_VARIABLE	519	same	0x82132D10	botlib export +0x10c	4	ptr a1, int a2, ptr a3, int a4	void	0	code	
+520	BOTLIB_AI_UNIFY_WHITE_SPACES	BOTLIB_AI_UNIFY_WHITE_SPACES	520	same	0x82132D4C	botlib export +0x110	1	ptr a1	void	0	code	
+521	BOTLIB_AI_REPLACE_SYNONYMS	BOTLIB_AI_REPLACE_SYNONYMS	521	same	0x82132D74	botlib export +0x114	2	ptr a1, int a2	void	0	code	
+522	BOTLIB_AI_LOAD_CHAT_FILE	BOTLIB_AI_LOAD_CHAT_FILE	522	same	0x82132DA0	botlib export +0x118	3	int a1, ptr a2, ptr a3	int	0	code	
+523	BOTLIB_AI_SET_CHAT_GENDER	BOTLIB_AI_SET_CHAT_GENDER	523	same	0x82132DD8	botlib export +0x11c	2	int a1, int a2	void	0	code	
+524	BOTLIB_AI_SET_CHAT_NAME	BOTLIB_AI_SET_CHAT_NAME	524	same	0x82132E00	botlib export +0x120	3	int a1, ptr a2, int a3	void	0	code	
+525	BOTLIB_AI_RESET_GOAL_STATE	BOTLIB_AI_RESET_GOAL_STATE	525	same	0x82132E34	botlib export +0x124	1	int a1	void	2	code	
+526	BOTLIB_AI_RESET_AVOID_GOALS	BOTLIB_AI_RESET_AVOID_GOALS	526	same	0x82132E58	botlib export +0x128	1	int a1	void	2	code	
+527	BOTLIB_AI_PUSH_GOAL	BOTLIB_AI_PUSH_GOAL	527	same	0x82132EA4	botlib export +0x130	2	int a1, ptr a2	void	1	code	
+528	BOTLIB_AI_POP_GOAL	BOTLIB_AI_POP_GOAL	528	same	0x82132ED4	botlib export +0x134	1	int a1	void	2	code	
+529	BOTLIB_AI_EMPTY_GOAL_STACK	BOTLIB_AI_EMPTY_GOAL_STACK	529	same	0x82132EF8	botlib export +0x138	1	int a1	void	0	code	
+530	BOTLIB_AI_DUMP_AVOID_GOALS	BOTLIB_AI_DUMP_AVOID_GOALS	530	same	0x82132F1C	botlib export +0x13c	1	int a1	void	0	code	
+531	BOTLIB_AI_DUMP_GOAL_STACK	BOTLIB_AI_DUMP_GOAL_STACK	531	same	0x82132F40	botlib export +0x140	1	int a1	void	0	code	
+532	BOTLIB_AI_GOAL_NAME	BOTLIB_AI_GOAL_NAME	532	same	0x82132F64	botlib export +0x144	3	int a1, ptr a2, int a3	void	2	code	
+533	BOTLIB_AI_GET_TOP_GOAL	BOTLIB_AI_GET_TOP_GOAL	533	same	0x82132F98	botlib export +0x148	2	int a1, ptr a2	int	6	code	
+534	BOTLIB_AI_GET_SECOND_GOAL	BOTLIB_AI_GET_SECOND_GOAL	534	same	0x82132FC4	botlib export +0x14c	2	int a1, ptr a2	int	1	code	
+535	BOTLIB_AI_CHOOSE_LTG_ITEM	BOTLIB_AI_CHOOSE_LTG_ITEM	535	same	0x82132FF0	botlib export +0x150	4	int a1, ptr a2, ptr a3, int a4	int	0	code	
+536	BOTLIB_AI_CHOOSE_NBG_ITEM	BOTLIB_AI_CHOOSE_NBG_ITEM	536	same	0x8213302C	botlib export +0x154	6	int a1, ptr a2, ptr a3, int a4, ptr a5, float a6	int	2	code	
+537	BOTLIB_AI_TOUCHING_GOAL	BOTLIB_AI_TOUCHING_GOAL	537	same	0x82133078	botlib export +0x158	2	ptr a1, ptr a2	int	1	code	
+538	BOTLIB_AI_ITEM_GOAL_IN_VIS_BUT_NOT_VISIBLE	BOTLIB_AI_ITEM_GOAL_IN_VIS_BUT_NOT_VISIBLE	538	same	0x821330A8	botlib export +0x15c	4	int a1, ptr a2, ptr a3, ptr a4	int	1	code	
+539	BOTLIB_AI_GET_LEVEL_ITEM_GOAL	BOTLIB_AI_GET_LEVEL_ITEM_GOAL	539	same	0x821330EC	botlib export +0x160	3	int a1, ptr a2, ptr a3	int	6	code	
+540	BOTLIB_AI_AVOID_GOAL_TIME	BOTLIB_AI_AVOID_GOAL_TIME	540	same	0x82133180	botlib export +0x16c	2	int a1, int a2	float-bits	0	code	
+541	BOTLIB_AI_INIT_LEVEL_ITEMS	BOTLIB_AI_INIT_LEVEL_ITEMS	541	same	0x821331D8	botlib export +0x174	0	void	void	0	code	
+542	BOTLIB_AI_UPDATE_ENTITY_ITEMS	BOTLIB_AI_UPDATE_ENTITY_ITEMS	542	same	0x821331F8	botlib export +0x178	0	void	void	1	code	
+543	BOTLIB_AI_LOAD_ITEM_WEIGHTS	BOTLIB_AI_LOAD_ITEM_WEIGHTS	543	same	0x82133218	botlib export +0x17c	2	int a1, ptr a2	int	0	code	
+544	BOTLIB_AI_FREE_ITEM_WEIGHTS	BOTLIB_AI_FREE_ITEM_WEIGHTS	544	same	0x82133244	botlib export +0x180	1	int a1	void	0	code	
+545	BOTLIB_AI_SAVE_GOAL_FUZZY_LOGIC	BOTLIB_AI_SAVE_GOAL_FUZZY_LOGIC	545	same	0x82133294	botlib export +0x188	2	int a1, ptr a2	void	1	code	
+546	BOTLIB_AI_ALLOC_GOAL_STATE	BOTLIB_AI_ALLOC_GOAL_STATE	546	same	0x821332EC	botlib export +0x190	1	int a1	int	1	code	
+547	BOTLIB_AI_FREE_GOAL_STATE	BOTLIB_AI_FREE_GOAL_STATE	547	same	0x8213330C	botlib export +0x194	1	int a1	void	1	code	
+548	BOTLIB_AI_RESET_MOVE_STATE	BOTLIB_AI_RESET_MOVE_STATE	548	same	0x82133330	botlib export +0x198	1	int a1	void	2	code	
+549	BOTLIB_AI_MOVE_TO_GOAL	BOTLIB_AI_MOVE_TO_GOAL	549	same	0x8213338C	botlib export +0x19c	4	ptr a1, int a2, ptr a3, int a4	void	1	code	
+550	BOTLIB_AI_MOVE_IN_DIRECTION	BOTLIB_AI_MOVE_IN_DIRECTION	550	same	0x821333C8	botlib export +0x1a0	4	int a1, ptr a2, float a3, int a4	int	1	code	
+551	BOTLIB_AI_RESET_AVOID_REACH	BOTLIB_AI_RESET_AVOID_REACH	551	same	0x821333FC	botlib export +0x1a4	1	int a1	void	1	code	
+552	BOTLIB_AI_RESET_LAST_AVOID_REACH	BOTLIB_AI_RESET_LAST_AVOID_REACH	552	same	0x82133420	botlib export +0x1a8	1	int a1	void	2	code	
+553	BOTLIB_AI_REACHABILITY_AREA	BOTLIB_AI_REACHABILITY_AREA	553	same	0x82133444	botlib export +0x1ac	2	ptr a1, int a2	int	0	code	
+554	BOTLIB_AI_MOVEMENT_VIEW_TARGET	BOTLIB_AI_MOVEMENT_VIEW_TARGET	554	same	0x8213346C	botlib export +0x1b0	5	int a1, ptr a2, int a3, float a4, ptr a5	int	0	code	
+555	BOTLIB_AI_ALLOC_MOVE_STATE	BOTLIB_AI_ALLOC_MOVE_STATE	555	same	0x821334F0	botlib export +0x1b8	0	void	int	0	code	
+556	BOTLIB_AI_FREE_MOVE_STATE	BOTLIB_AI_FREE_MOVE_STATE	556	same	0x8213350C	botlib export +0x1bc	1	int a1	void	1	code	
+557	BOTLIB_AI_INIT_MOVE_STATE	BOTLIB_AI_INIT_MOVE_STATE	557	same	0x82133530	botlib export +0x1c0	2	int a1, ptr a2	void	1	code	
+558	BOTLIB_AI_CHOOSE_BEST_FIGHT_WEAPON	BOTLIB_AI_CHOOSE_BEST_FIGHT_WEAPON	558	same	0x82133560	botlib export +0x1c8	2	int a1, ptr a2	int	1	code	
+559	BOTLIB_AI_GET_WEAPON_INFO	BOTLIB_AI_GET_WEAPON_INFO	559	same	0x8213358C	botlib export +0x1cc	3	int a1, int a2, ptr a3	void	0	code	
+560	BOTLIB_AI_LOAD_WEAPON_WEIGHTS	BOTLIB_AI_LOAD_WEAPON_WEIGHTS	560	same	0x821335C0	botlib export +0x1d0	2	int a1, ptr a2	int	0	code	
+561	BOTLIB_AI_ALLOC_WEAPON_STATE	BOTLIB_AI_ALLOC_WEAPON_STATE	561	same	0x821335EC	botlib export +0x1d4	0	void	int	0	code	
+562	BOTLIB_AI_FREE_WEAPON_STATE	BOTLIB_AI_FREE_WEAPON_STATE	562	same	0x82133608	botlib export +0x1d8	1	int a1	void	1	code	
+563	BOTLIB_AI_RESET_WEAPON_STATE	BOTLIB_AI_RESET_WEAPON_STATE	563	same	0x8213362C	botlib export +0x1dc	1	int a1	void	1	code	
+564	BOTLIB_AI_GENETIC_PARENTS_AND_CHILD_SELECTION	BOTLIB_AI_GENETIC_PARENTS_AND_CHILD_SELECTION	564	same	0x82133650	botlib export +0x1e0	5	int a1, ptr a2, ptr a3, ptr a4, ptr a5	int	1	code	
+565	BOTLIB_AI_INTERBREED_GOAL_FUZZY_LOGIC	BOTLIB_AI_INTERBREED_GOAL_FUZZY_LOGIC	565	same	0x82133268	botlib export +0x184	3	int a1, int a2, int a3	void	1	code	
+566	BOTLIB_AI_MUTATE_GOAL_FUZZY_LOGIC	BOTLIB_AI_MUTATE_GOAL_FUZZY_LOGIC	566	same	0x821332C4	botlib export +0x18c	2	int a1, float a2	void	0	code	
+567	BOTLIB_AI_GET_NEXT_CAMP_SPOT_GOAL	BOTLIB_AI_GET_NEXT_CAMP_SPOT_GOAL	567	same	0x82133124	botlib export +0x164	2	int a1, ptr a2	int	0	code	
+568	BOTLIB_AI_GET_MAP_LOCATION_GOAL	BOTLIB_AI_GET_MAP_LOCATION_GOAL	568	same	0x82133150	botlib export +0x168	2	ptr a1, ptr a2	int	0	code	
+569	BOTLIB_AI_NUM_INITIAL_CHATS	BOTLIB_AI_NUM_INITIAL_CHATS	569	same	0x82132B50	botlib export +0xf0	2	int a1, ptr a2	int	1	code	
+570	BOTLIB_AI_GET_CHAT_MESSAGE	BOTLIB_AI_GET_CHAT_MESSAGE	570	same	0x82132C74	botlib export +0x100	3	int a1, ptr a2, int a3	void	77	code	
+571	BOTLIB_AI_REMOVE_FROM_AVOID_GOALS	BOTLIB_AI_REMOVE_FROM_AVOID_GOALS	571	same	0x82132E7C	botlib export +0x12c	2	int a1, int a2	void	1	code	
+572	BOTLIB_AI_PREDICT_VISIBLE_POSITION	BOTLIB_AI_PREDICT_VISIBLE_POSITION	572	same	0x821334AC	botlib export +0x1b4	5	ptr a1, int a2, ptr a3, int a4, ptr a5	int	0	code	
+573	BOTLIB_AI_SET_AVOID_GOAL_TIME	BOTLIB_AI_SET_AVOID_GOAL_TIME	573	same	0x821331AC	botlib export +0x170	3	int a1, int a2, float a3	void	1	code	
+574	BOTLIB_AI_ADD_AVOID_SPOT	BOTLIB_AI_ADD_AVOID_SPOT	574	same	0x82133354	botlib export +0x1c4	4	int a1, ptr a2, float a3, int a4	void	2	code	
+575	BOTLIB_AAS_ALTERNATIVE_ROUTE_GOAL	BOTLIB_AAS_ALTERNATIVE_ROUTE_GOAL	575	same	0x82132088	botlib export +0x4c	8	ptr a1, int a2, ptr a3, int a4, int a5, ptr a6, int a7, int a8	int	4	code	
+576	BOTLIB_AAS_PREDICT_ROUTE	BOTLIB_AAS_PREDICT_ROUTE	576	same	0x821323C0	botlib export +0x48	11	ptr a1, int a2, ptr a3, int a4, int a5, int a6, int a7, int a8, int a9, int a10, int a11	int	1	code	
+577	BOTLIB_AAS_POINT_REACHABILITY_AREA_INDEX	BOTLIB_AAS_POINT_REACHABILITY_AREA_INDEX	577	same	0x821321B0	botlib export +0x14	1	ptr a1	int	0	code	
+578	BOTLIB_PC_LOAD_SOURCE	BOTLIB_PC_LOAD_SOURCE	578	same	0x82131D20	botlib export +0x1f8	1	ptr a1	int	0	code	
+579	BOTLIB_PC_FREE_SOURCE	BOTLIB_PC_FREE_SOURCE	579	same	0x82131D44	botlib export +0x1fc	1	int a1	int	0	code	
+580	BOTLIB_PC_READ_TOKEN	BOTLIB_PC_READ_TOKEN	580	same	0x82131D64	botlib export +0x200	2	int a1, ptr a2	int	0	code	
+581	BOTLIB_PC_SOURCE_FILE_AND_LINE	BOTLIB_PC_SOURCE_FILE_AND_LINE	581	same	0x82131D90	botlib export +0x204	3	int a1, ptr a2, ptr a3	int	0	code	
