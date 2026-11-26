@@ -17,42 +17,67 @@ python tools/recomp/build.py --package <package>
 ```
 
 `<package>` is the STFS package, the zip that holds it, or a folder with
-the extracted `qagameXe.dll` and `cgameXe.dll`. Everything goes to
-`build/recomp/` (ignored by git):
+the extracted files. Everything goes to `build/recomp/` (ignored by git):
 
 | Path | What |
 |---|---|
-| `input/` | modules extracted from an STFS package (read-only copies) |
+| `input/` | `qagameXe.dll`, `cgameXe.dll` and `default.xex` extracted from an STFS package (read-only copies) |
 | `xenonrecomp/src`, `xenonrecomp/build` | patched XenonRecomp and its build |
 | `<module>/<module>.toml`, `<module>_switch.toml` | generated XenonRecomp configs |
 | `<module>/<module>_analysis.json` | analysis report: imports, exports, functions, jump tables, SEH, problems |
 | `<module>/xenonrecomp.log`, `<module>_xenonanalyse.toml` | recompiler output and XenonAnalyse's own scan |
 | `<module>/ppc/` | generated C++ |
-| `<module>/glue/` | generated glue and the decoded image it embeds |
-| `native/bin/` | `qaa_qagame.dll`, `qaa_cgame.dll`, `qaa_gate.exe`, `qaa_guest_tests.exe` |
+| `<module>/glue/` | generated glue, the decoded image and the module's XEX header it embeds |
+| `qaa_default_xex_header.bin` | `default.xex`'s XEX header, for the runtime |
+| `native/bin/` | the module libraries, `qaa_gate`, `qaa_guest_tests`, the synthetic test module, and a copy of the header |
 | `summary.json` | per-module counts and every warning |
 
 Requirements: Python 3 with `cryptography`, git, CMake, Ninja and clang
-(clang-cl and lld-link on Windows; clang 19 or later for `#embed`).
-`--strict` fails the build on any analysis problem or recompiler warning;
-`--skip-native` stops after generating C++. **observed** A first full
-build takes a few minutes on a 20-thread machine, almost all of it
-compiling the generated C++; analysis and recompilation take seconds.
+(clang-cl and lld-link on Windows). The glue uses `#embed` where the
+compiler has it (clang 19 and later) and a generated initializer list
+otherwise. `--strict` fails the build on any analysis problem or
+recompiler warning; `--skip-native` stops after generating C++. **observed**
+A first full build takes a few minutes on a 20-thread machine, almost all
+of it compiling the generated C++; analysis and recompilation take
+seconds.
+
+**verified** Windows (clang-cl 20) and Linux (Ubuntu clang 18, under WSL)
+both build the pipeline end to end, pass the unit tests and run both gates
+to completion.
 
 Tests, all headless:
 
 ```sh
 python tools/recomp/tests/test_analyse.py        # analysis, synthetic PowerPC
-build/recomp/native/bin/qaa_guest_tests          # runtime, synthetic module
+build/recomp/native/bin/qaa_guest_tests build/recomp/native/bin/qaa_synthetic_module.dll
 build/recomp/native/bin/qaa_gate build/recomp/native/bin/qaa_qagame.dll 0 12345 0
 build/recomp/native/bin/qaa_gate --server build/recomp/native/bin/qaa_qagame.dll \
     build/recomp/native/bin/qaa_cgame.dll 0 0 0
 ```
 
+On Linux the libraries are `libqaa_qagame.so` and so on.
+
+### Meson
+
+The engine builds with Meson. `code/guest/meson.build` is written to be
+included from the top-level build:
+
+```meson
+qaa_xenonrecomp_src = meson.project_source_root() / 'build/recomp/xenonrecomp/src'
+subdir('code/guest')
+# then link qaa_guest_dep
+```
+
+It defines `qaa_guest_dep`, `qaa_gate` and `qaa_guest_tests`, and registers
+the unit tests with `meson test`. **verified** It builds and passes with
+clang-cl on Windows. It needs clang, and builds the runtime as C++20
+whatever the project's standard is. The module libraries still come from
+`build.py`.
+
 ## The pipeline
 
-1. **Inputs.** `build.py` finds the modules in the package (STFS through
-   `tools/stfs.py`). Retail files are only read.
+1. **Inputs.** `build.py` finds the modules and `default.xex` in the
+   package (STFS through `tools/stfs.py`). Retail files are only read.
 2. **XenonRecomp.** The commit pinned in
    [tools/recomp/xenonrecomp.json](../tools/recomp/xenonrecomp.json)
    (`ddd128b`, MIT) is exported with `git archive` from a local checkout
@@ -65,8 +90,8 @@ build/recomp/native/bin/qaa_gate --server build/recomp/native/bin/qaa_qagame.dll
    Its warnings, `// ERROR` lines in the output and any function it adds
    beyond the analysis are collected into `summary.json`.
 5. **Glue** (`tools/recomp/glue.py`): one C++ file per module with the
-   kernel import thunks, the module descriptor and the decoded image
-   (embedded with `#embed`).
+   kernel import thunks, the module descriptor, the exception-dispatch
+   tables, the decoded image and the module's XEX header.
 6. **Native build** (`tools/recomp/CMakeLists.txt`): the runtime
    (`code/guest`), one shared library per module, the gate and the tests.
 
@@ -120,12 +145,23 @@ qagame has 13 tables and cgame 18; every other `bctr` is an import thunk
 or a tail call through a loaded pointer (qagame 6, cgame 11), and none is
 left unresolved.
 
+**Exception sites** (`[[seh_site]]` entries; see "Exceptions" below). The
+analysis finds every function that can reach `RtlRaiseException` through
+calls, and every `__except` scope that encloses such a call. It then marks
+each call site between them where an exception may unwind or resume:
+qagame 23 sites, cgame 21. For each function that may be popped it also
+records, from its prologue, where non-volatile registers were saved
+(qagame 10 functions, cgame 10, all decoded). It decodes `std`/`stfd`
+saves and the `__savegprlr`/`__savefpr` helpers relative to the caller's
+stack pointer, using the prologue length in `.pdata`.
+
 ### XenonRecomp patches
 
 | Patch | Change |
 |---|---|
 | `0001-xex-map-full-basic-compressed-image` | allocate the whole image for basic compression; do not map section headers past the image |
 | `0002-recompiler-instructions-switch-fallthrough-traps` | see below |
+| `0003-recompiler-seh-resume-sites` | `[[seh_site]]` config entries: after such a call, emit a `PPC_SEH_RESUME(site)` check that returns from the function (1) or jumps to the given `__except` label (2) |
 
 0002:
 
@@ -151,6 +187,14 @@ left unresolved.
 **verified** With the patches, neither module produces any recompiler
 warning (`summary.json`).
 
+**XenonRecomp's optimisations stay off**, by decision rather than as a
+gap. They turn registers into C locals (`non_volatile_as_local`,
+`cr_as_local` and so on). That is only sound when every guest function is
+one C function. Here the analysis splits code at references and
+fall-through calls continue in the next piece, so a register live across a
+split would be lost. Exception unwinding also restores registers into the
+context. Both need every register in `PPCContext`.
+
 ## The guest runtime
 
 `code/guest/` holds the runtime (C++20, built as a static library). Its
@@ -160,15 +204,15 @@ knows nothing about the engine.
 ### Modules
 
 A module library exports one function, `qaa_module_describe`. It returns
-the image (base, size, entry point, embedded data), the recompiler's
-function mappings, the imports with their slot and thunk addresses, the
-exports, and a `bind` hook
-([qaa_module_abi.h](../code/guest/include/qaa_module_abi.h)). Module
-libraries link nothing from the runtime. Kernel calls, the indirect-call
-table and trap reporting arrive through `bind`, so one runtime hosts both
-modules in one address space. The runtime checks the module's ABI version
-and `sizeof(PPCContext)` and XenonRecomp's layout switches (all
-optimisations are off, so the context keeps every register).
+the image (base, size, entry point, embedded data), the module's XEX
+header, the recompiler's function mappings, the imports with their slot
+and thunk addresses, the exports, the exception-dispatch tables, and a
+`bind` hook ([qaa_module_abi.h](../code/guest/include/qaa_module_abi.h),
+ABI 3). Module libraries link nothing from the runtime. Kernel calls, the
+indirect-call table, trap reporting and SEH resumption arrive through
+`bind`, so one runtime hosts both modules in one address space. The
+runtime checks the module's ABI version and `sizeof(PPCContext)` and
+XenonRecomp's layout switches.
 
 `qaa_module_load` does the following:
 
@@ -179,7 +223,8 @@ optimisations are off, so the context keeps every register).
   `__imp__` function);
 - binds the module;
 - runs the entry point, `_DllMainCRTStartup(hModule, DLL_PROCESS_ATTACH,
-  0)`, where `hModule` is a fake `LDR_DATA_TABLE_ENTRY`.
+  0)`, where `hModule` is an `LDR_DATA_TABLE_ENTRY` whose XEX header is
+  the module's own.
 
 **Exports.** **code** Ordinal 1 is `vmMain` and ordinal 2 is `dllEntry`,
 the reverse of the guess in FORMATS.md: qagame's 0x88042158 starts a
@@ -206,13 +251,29 @@ arguments r4 to r10, nine stack slots (read at r1 + 0x54 + 8k, the low
 word), f1 to f13 and the call site. The value it returns goes to r3. The
 callback may call back into the guest, or call `qaa_guest_abort` to
 abandon the guest call, as `Com_Error` does.
-`qaa_module_host_function` makes more such addresses, for the function
-tables the engine passes (see the gate).
+`qaa_module_host_function` makes more such addresses, for the engine
+function tables the modules take through `vmMain`.
+
+**Executable header.** `qaa_guest_set_executable_header` loads
+`default.xex`'s XEX header (the build writes it to
+`qaa_default_xex_header.bin`). The modules reach it through
+`XexExecutableModuleHandle` and `RtlImageXexHeaderField`. **code** The CRT
+asks for key 0x20401 (default heap size). **verified** `default.xex` has no
+such header, so the answer, 0, is the console's, and the CRT uses its
+built-in default.
 
 **Memory helpers:** translation (`qaa_guest_translate`, `qaa_guest_base`),
 big-endian loads and stores of 8, 16, 32 and 64 bits and of floats,
 copies, `strnlen`, a mapped check, and a guest heap for the host
 (`qaa_guest_alloc`).
+
+**Threads.** Recompiled code uses one native frame per guest frame, often
+larger than the guest's, so guest-created threads get a 16 MiB (reserved)
+host stack. A host thread that calls into the guest should have a stack of
+that order too. On Windows that means linking the engine with a larger
+`/STACK`, or calling from a thread created with one.
+`qaa_guest_destroy` leaves the guest allocated, with a warning, while a
+guest thread is still running (cgame's worker parks for good).
 
 ### Guest memory map
 
@@ -223,8 +284,8 @@ host `base + a`. Pages are committed on use.
 |---|---|
 | `00000000-0000FFFF` | never mapped (null guard) |
 | `40000000-6FFFFFFF` | `NtAllocateVirtualMemory` arena: 64 KiB reservations, 4 KiB commits |
-| `70000000-7DFFFFFF` | thread stacks: 1 MiB for host threads, the requested size (at least 256 KiB) for guest threads, with 64 KiB unmapped guards |
-| `7E000000-7FFFFFFF` | kernel pool: PCRs, KTHREADs, LDR entries, kernel variables, string buffers, `qaa_guest_alloc` |
+| `70000000-7DFFFFFF` | guest thread stacks: 1 MiB for host threads, the requested size (at least 256 KiB) for guest threads, with 64 KiB unmapped guards |
+| `7E000000-7FFFFFFF` | kernel pool: PCRs, KTHREADs, LDR entries, XEX headers, kernel variables, string buffers, `qaa_guest_alloc` |
 | `80000000-8FFFFFFF` | module images at their bases: cgame `86000000-863A0000`, qagame `88000000-881C0000` (`82000000` is free for `default.xex` later) |
 | `9F000000-9F0FFFFF` | host-call addresses (never mapped; reached only by indirect calls) |
 
@@ -237,15 +298,22 @@ guest call by name.
 - **Files** (`NtCreateFile`, `NtOpenFile`, `NtReadFile`, `NtWriteFile`,
   `NtQueryInformationFile`, `NtSetInformationFile`,
   `NtQueryFullAttributesFile`, `NtQueryVolumeInformationFile`,
-  `NtFlushBuffersFile`, `NtClose`, `NtDuplicateObject`) go through the
-  `qaa_host` callbacks (`file_open`, `file_stat`, `file_read`,
-  `file_write`, `file_size`, `file_close`). Guest paths are passed
-  unchanged, for the engine to map onto its filesystem. The runtime keeps
-  each handle's file position. **code** The modules reach these functions
-  only through a CRT dispatch table in `.data` (qagame `0x88071044`), never
-  with a direct call.
+  `NtQueryDirectoryFile`, `NtFlushBuffersFile`, `NtClose`,
+  `NtDuplicateObject`) go through the `qaa_host` callbacks: `file_open`,
+  `file_stat`, `file_read`, `file_write`, `file_size`, `file_set_size`,
+  `file_close`, and `dir_entry` for listings. The runtime matches the
+  guest's wildcard pattern and returns one `FILE_DIRECTORY_INFORMATION` per
+  call. Guest paths are passed unchanged, for the engine to map onto its
+  filesystem; the runtime keeps each handle's file position. **code** The
+  modules reach these functions only through a CRT dispatch table in
+  `.data` (qagame `0x88071044`), never with a direct call.
+  `NtReadFileScatter` is the one file call not implemented; it is listed in
+  that table but nothing calls it.
 - **Memory**: `NtAllocateVirtualMemory`, `NtFreeVirtualMemory` and
   `NtQueryVirtualMemory` over the arena. `MEM_TOP_DOWN` is honoured.
+  **observed** The modules' own CRT heap runs on it: `malloc`, `realloc`
+  growth and shrinking work, and a 1 GiB `realloc` fails cleanly with NULL
+  (`qaa_gate --call`).
 - **Threads**: `ExCreateThread` runs a host thread with its own guest
   stack, PCR and KTHREAD. It calls the XAPI start-up routine (or the start
   address) and honours `CREATE_SUSPENDED` and `NtResumeThread`.
@@ -273,19 +341,15 @@ guest call by name.
   TSC's, measured at start-up. `KeGetCurrentProcessType` returns 1 (title).
 - **Variables**: `XboxHardwareInfo` (6 hardware threads, hard disk
   present), `KeDebugMonitorData` (none), `ExThreadObjectType` and
-  `XexExecutableModuleHandle`. The last points to a fake executable entry
-  whose XEX header has no optional headers. **code** The CRT asks
-  `RtlImageXexHeaderField` for key 0x20401 (default heap size), and with no
-  answer uses its built-in default.
-- **Errors**: `KeBugCheck`, `KeBugCheckEx` and `RtlRaiseException`
-  abandon the guest call with the code (see below).
+  `XexExecutableModuleHandle` (see "Executable header").
+- **Errors**: `KeBugCheck` and `KeBugCheckEx` abandon the guest call with
+  their code. `RtlRaiseException` dispatches the exception (next section).
 
 Set `QAA_TRACE_KERNEL=1` to log every kernel call.
 
 ### Exceptions
 
-XenonRecomp cannot dispatch guest exceptions: there is no unwinder over
-recompiled frames. What the modules need from SEH:
+What the modules use SEH for:
 
 - **verified** The SEH functions (qagame 19, cgame 18) all lie in the last
   part of `.text`, around the CRT entry point: qagame 0x880553F8 to
@@ -293,100 +357,169 @@ recompiled frames. What the modules need from SEH:
   0x86044800). That is the statically linked runtime, not game code (an
   inference from their placement and the calls below).
 - **verified** 14 of qagame's and 13 of cgame's have only `__finally`
-  scopes (target 0); 5 in each have an `__except` scope. **code** The
-  compiler emits `__finally` handlers as funclets, which the normal path
-  calls with `bl` (the chunks above), so the normal path is recompiled and
-  runs correctly.
+  scopes; 5 in each have an `__except` scope. **code** The compiler emits
+  `__finally` handlers as funclets, which the normal path calls with `bl`
+  (the chunks above).
 - **code** The only `RtlRaiseException` calls (qagame 2, cgame 1) raise
-  `STATUS_NO_MEMORY` (0xC0000017) after a failed allocation when the heap
+  `STATUS_NO_MEMORY` (0xC0000017) after a failed heap allocation when heap
   flag 0x4 (`HEAP_GENERATE_EXCEPTIONS`) is set.
+- **code** The `__except` filters come in four kinds:
+  - catch-all (`li r3, 1`): qagame 0x8805A89C, 0x88062A44 and 0x88063F18;
+    cgame 0x860484B4 and 0x8604F624;
+  - `code == STATUS_NO_MEMORY`: qagame 0x8805A520, cgame 0x86048200;
+  - `code != STATUS_NO_MEMORY`: qagame 0x88063EF4;
+  - calls into a CRT filter routine: qagame 0x880556C0, cgame 0x860447D0
+    and 0x860519B4.
+- **code** The reallocator at qagame `0x88063648` wraps its own raise, and
+  its call to the allocator `0x88062A58` (which holds the other raise), in
+  an `__except` with the `!=` filter. Faults while it walks the heap get
+  NULL as the result (handler 0x88063E6C), but its own `STATUS_NO_MEMORY`
+  goes on up. No frame above any raise site accepts it, so on the console
+  an out-of-memory raise would be unhandled.
 - **code** Neither module imports `RtlUnwind` or has a `setjmp`/`longjmp`,
   so XenonRecomp's setjmp redirection is not needed.
 
-The runtime's behaviour is as follows:
+The runtime dispatches guest exceptions the way the Xbox kernel does, in
+two phases over the guest stack.
 
-- `RtlRaiseException` ends the current guest call with the exception code
-  (MSVC's thread-naming exception 0x406D1388 is ignored).
-- `__C_specific_handler` is never expected to run, and fails if it does.
-- Hardware faults in guest code (access violations, division faults) are
-  caught with SEH (Windows; `sigsetjmp` and signals elsewhere). The call
-  that faulted returns `QAA_ERROR` with the guest address and the nearest
-  recompiled function.
-- Trap instructions do the same through `PPC_TRAP`.
+- **Search.** It walks the frames from the raise. Each frame's return
+  address is the LR its callee saved at (caller SP - 8), and its caller's
+  SP is the back chain at 0(SP). For every `__except` scope around a
+  frame's call, innermost first, it runs the filter funclet with r3 =
+  `EXCEPTION_POINTERS` and r12 = the frame's caller SP (the establisher
+  frame, as the compiled code passes it).
+- **Unwind.** Once a filter accepts, it runs the `__finally` funclets of
+  the frames being left (abnormal termination, r3 = 1), restores the
+  non-volatile registers their prologues saved, and sets r1 to the handler
+  frame's.
+- **Resume.** The patch-0003 checks after each call on the way out return
+  from every unwound frame and `goto` the handler label in the handler's
+  frame.
 
-Guest state after such a failure is whatever the guest left. On the Xbox
-these cases would crash the game.
+`EXCEPTION_CONTINUE_EXECUTION` returns from the raise. A raise that no
+filter accepts fails the guest call as "unhandled", as the title would
+crash on the console. The filters really run: whether an exception is
+caught is the retail code's decision, not a table's. **verified** The unit
+tests cover the full sequence on a synthetic three-frame stack: filter,
+`__finally` with its establisher frame, register restore, handler, and an
+unhandled raise.
+
+Two limits remain:
+
+- A resume site knows one handler label, its innermost `__except`. If an
+  inner filter declines and an outer scope in the same function accepts,
+  the dispatch fails as unsupported. No such nesting is on the raise paths
+  found.
+- **observed** No run so far raises a real exception: the CRT paths
+  exercised do not set `HEAP_GENERATE_EXCEPTIONS`.
+
+Outside this, a hardware fault in guest code (an access violation, a
+division fault) or a trap instruction fails the current guest call. The
+error names the guest address and the nearest recompiled function. Faults
+are caught with SEH on Windows and with signals elsewhere. They are not
+offered to guest `__except` filters (see the known gaps).
 
 ## The gate (M3)
 
 `qaa_gate` (`code/guest/tests/gate.cpp`) is headless. It loads a module,
-calls `dllEntry` with a stub engine that logs every trap with its
-arguments, calls `vmMain(INIT)` and reports which traps were called before
-it returned or failed. Stubs return 0. String-buffer traps get "", and
-`MILLISECONDS` returns real time. The game's entity-token trap serves one
-synthetic `worldspawn`, and with `--server` cgame's gamestate trap serves
-the configstrings that qagame's INIT set. Run with these stubs, both
-inits return.
+passes the engine function table the module takes through `vmMain`, calls
+`dllEntry` with a stub engine that logs every trap with its arguments, and
+calls `vmMain(INIT)`. It then reports which traps and table entries were
+called before INIT returned or failed.
 
-**observed** qagame, `vmMain(0 = GAME_INIT, 0, 12345, 0)`, returns 0
-after 93 calls:
+Trap numbers in the stubs are QAA's, from the ABI recovery
+([ABI.md](ABI.md); the gate prints their names when it finds the
+`data/abi` tables, or use `--abi DIR`). The stub engine does the following:
 
-| Order | Trap | Calls | Seen as |
-|---|---|---|---|
-| 1 | 0 | 6 | print: init banner, game name and date, team and item counts |
-| 2 | 3 | 57 | cvar register (vmCvar_t *, name, default, flags) |
-| 3 | 19 | 1 | get configstring (num, buffer, 1024) |
-| 4 | 18 | 9 | set configstring (num, string) |
-| 5 | 7 | 1 | cvar string buffer ("session", buffer, 1024) |
-| 6 | 15 | 9 | locate game data (gentities, count, size, clients, size) |
-| 7 | 38 | 5 | get entity token (buffer, 1024): Quake III has this as 37 |
-| 8 | table +0x14 | 3 | cvar set (name, value) |
-| 9 | table +0x18 | 2 | (name, ...): cvar query, by its arguments |
+- returns 0 for every call unless listed here;
+- writes "" into string-buffer traps;
+- fills the `vmCvar_t` (0x110 bytes) on cvar registration with the
+  default value and answers cvar queries from what was registered or set;
+- returns real time for `MILLISECONDS`;
+- serves one synthetic `worldspawn` through the entity-token trap;
+- fails file opens;
+- with `--server`, gives cgame's gamestate trap the configstrings that
+  qagame's INIT set.
 
-**observed** cgame, `vmMain(0 = CG_INIT, 0, 0, 0)` after qagame, returns 0
-after 690 calls. First-call order: 3 (cvar register, x118), 7
-(`r_widescreen`), 5 (cvar set), 6 (cvar string buffer), 16 (add command,
-x78), 52 (glconfig), 53 (gamestate), 19 (load map), table +0x04 (register
-sound, x170), table +0x00 (x70), 42, 18, 38, table +0x14 (x89), table
-+0x0C (x120), table +0x18 (x9), 50 (x12), 20, 37, 82 (x8), 31.
+`--call ADDR:ARG...` calls module functions directly after INIT, for
+probing.
 
-What the runs show about QAA's engine interface (input for M4):
+**observed** qagame, `vmMain(GAME_INIT, 0, 12345, 0)`, returns 0 after 95
+calls. In first-call order:
 
-- **observed** Traps 0 to 6 follow Quake III's legacy numbers in both
-  modules. After that they differ: qagame's entity-token trap is 38 (Q3
-  37); in cgame, 7 is a cvar query, add command is 16 (Q3 15) and load map
-  is 19 (Q3 18).
-- **code** Besides the syscall pointer, each module takes an engine
-  function table through `vmMain`. qagame's command 9 stores its argument
-  at 0x881B0710; cgame's command 12 stores it at 0x8627D824. Init calls
-  through these tables (cvar set, sound registration and more), so the
-  engine must pass the table before INIT. The gate passes 128 logging
-  stubs.
-- **code** cgame's `gameState_t` holds 1024 string offsets, with string
-  data at +0x1000.
-- **observed** Neither init opens a file through the kernel, and cgame's
-  helper thread is not started during init.
+| Trap | Calls | |
+|---|---|---|
+| 0 `G_PRINT` | 6 | init banner, game name and date, team and item counts |
+| 3 `G_CVAR_REGISTER` | 57 | |
+| 19 `G_GET_CONFIGSTRING` | 1 | |
+| 18 `G_SET_CONFIGSTRING` | 10 | |
+| 22 `G_GET_SERVERINFO` | 1 | |
+| 7 `G_CVAR_VARIABLE_STRING_BUFFER` | 1 | `session` |
+| 15 `G_LOCATE_GAME_DATA` | 9 | |
+| 38 `G_GET_ENTITY_TOKEN` | 5 | |
+| table +0x14 `Cvar_Set` | 3 | |
+| table +0x18 `Cvar_VariableIntegerValue` | 2 | |
+
+**observed** cgame, `vmMain(CG_INIT, 0, 0, 0)` after qagame in the same
+guest, returns 0 after 690 calls. First-call order:
+
+- 3 `CG_CVAR_REGISTER` (x118)
+- 7 `QAA_CG_CVAR_VARIABLEVALUE`
+- 5 `CG_CVAR_SET`
+- 6 `CG_CVAR_VARIABLESTRINGBUFFER`
+- 16 `CG_ADDCOMMAND` (x78)
+- 52 `CG_GETGLCONFIG`
+- 53 `CG_GETGAMESTATE`
+- 19 `CG_CM_LOADMAP`
+- table +0x04 `S_RegisterSound(name, 1)` (x170)
+- table +0x00 `S_RegisterSound(name, 0)` (x70)
+- 42 `CG_R_CLEARSCENE`
+- 18 `CG_UPDATESCREEN`
+- 38 `CG_R_LOADWORLDMAP`
+- table +0x14 `RegisterShader` (x89)
+- table +0x0C `RegisterModel` (x120)
+- table +0x18 `RegisterShaderNoMip` (x9)
+- 50 `CG_R_MODELBOUNDS` (x12)
+- 20 `CG_CM_NUMINLINEMODELS`
+- 37 `CG_S_STARTBACKGROUNDTRACK`
+- 82 `CG_R_REMAP_SHADER` (x8)
+- 31 `CG_S_CLEARLOOPINGSOUNDS`
+
+**observed** At the end of INIT, cgame starts its model-loading worker,
+because `cg_asyncModelLoading` defaults to 1:
+
+- `ExCreateThread` (XAPI start-up 0x86051958, entry 0x8601E650) creates
+  it suspended;
+- `KeSetAffinityThread` moves it to hardware thread 2, and
+  `NtResumeThread` resumes it;
+- the thread runs its CRT thread set-up, then parks in
+  `NtWaitForMultipleObjectsEx` on its 64 request events (wait-any,
+  alertable).
+
+That is its idle state until the cgame queues a load. Neither init opens a
+file through the kernel.
+
+What this shows about QAA's engine interface, consistent with the ABI
+recovery: traps 0 to 6 follow Quake III's legacy numbers, and later ones
+are offset. Each module also takes an engine function table through
+`vmMain` (qagame command 9, stored at 0x881B0710; cgame command 12, at
+0x8627D824) before INIT. cgame's `gameState_t` holds 1024 string offsets,
+with string data at +0x1000.
 
 ## Known gaps
 
-- **Trap and function-table numbering** is only what the gate observed.
-  The real tables are M4's work (with the ABI recovery in `docs/ABI.md`).
-- **Directory listing**: `NtQueryDirectoryFile` returns no entries, and
-  the host interface has no directory callback yet. `NtReadFileScatter` is
-  not implemented, and writes cannot resize a file through the host
-  interface. The modules call none of these at init.
-- **XEX header queries** get no answer, because `default.xex` is not
-  loaded, so the CRT uses its defaults (heap size). Real values could come
-  from the decoded `default.xex` headers.
-- **Exceptions**: no guest SEH dispatch (above). An out-of-memory raise or
-  a fault ends the call instead of running a guest handler.
-- **POSIX**: the runtime has a POSIX path (mmap, dlopen, signals) but has
-  only been built and run on Windows.
-- **Performance**: XenonRecomp's optimisations (`skip_lr`, registers as
-  locals) are off. They would also change `PPCContext`'s layout, and the
-  runtime checks that layout at load.
-- **Threads in the gate**: the unit tests cover `ExCreateThread`, events and
-  waits on the synthetic module. The gate has not run cgame's helper
-  thread.
-- **Host stack**: guest recursion runs on the host stack (one native frame
-  per guest frame).
+- **The trap bridge** is M4. The gate's stubs are just enough for both
+  inits to run and return.
+- **Hardware faults are not guest exceptions.** An access violation in
+  guest code fails the call. It is not offered to an `__except` filter.
+  Resuming means continuing a recompiled function in the middle of the
+  faulting statement, which the generated code cannot do. On the console
+  the catch-all and CRT filters listed above could catch such a fault.
+  **code** The catch-all scopes are small regions of the heap code
+  (qagame 0x880624F0 to 0x88062510 and 0x88063CC4 to 0x88063CE4). Judging
+  by where they are, they guard reads of caller-supplied heap blocks, so
+  only a corrupted heap or a bad pointer from the game would fault there.
+- **Unwinding** supports the GPR and FPR saves this compiler emits. A
+  prologue that saves vector registers (none on the exception paths found)
+  makes the analysis report a problem.
+- **`NtReadFileScatter`** is not implemented (never called).
