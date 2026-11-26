@@ -1,0 +1,32 @@
+diff --git a/XenonUtils/xex.cpp b/XenonUtils/xex.cpp
+index 4e79042..cb024a9 100644
+--- a/XenonUtils/xex.cpp
++++ b/XenonUtils/xex.cpp
+@@ -180,7 +180,15 @@ Image Xex2LoadImage(const uint8_t* data, size_t dataSize)
+                 imageSize += blocks[i].dataSize + blocks[i].zeroSize;
+             }
+ 
++            // openQAA: the blocks can stop short of the image size (BSS and
++            // the .edata/.idata headers lie beyond them); keep the whole
++            // image addressable and zero-filled so every section maps.
++            const size_t storedSize = imageSize;
++            if (imageSize < security->imageSize)
++                imageSize = security->imageSize;
++
+             result = std::make_unique<uint8_t[]>(imageSize);
++            memset(result.get() + storedSize, 0, imageSize - storedSize);
+             auto* destData = result.get();
+ 
+             for (size_t i = 0; i < numBlocks; i++)
+@@ -284,6 +292,11 @@ Image Xex2LoadImage(const uint8_t* data, size_t dataSize)
+         const auto& section = sections[i];
+         uint8_t flags{};
+ 
++        // openQAA: DLL modules list .edata/.idata headers past the image;
++        // they are not loaded, so do not map them onto memory we do not own.
++        if (section.VirtualAddress >= image.size)
++            continue;
++
+         if (section.Characteristics & IMAGE_SCN_CNT_CODE)
+         {
+             flags |= SectionFlags_Code;

@@ -1,0 +1,256 @@
+diff --git a/XenonRecomp/recompiler.cpp b/XenonRecomp/recompiler.cpp
+index fa91527..773d386 100644
+--- a/XenonRecomp/recompiler.cpp
++++ b/XenonRecomp/recompiler.cpp
+@@ -560,6 +560,15 @@ bool Recompiler::Recompile(
+         println("{};", static_cast<int32_t>(insn.operands[2] << 16));
+         break;
+ 
++    case PPC_INST_ADDME:
++        // openQAA: rD = rA + CA - 1, carry out of rA + CA + 0xFFFFFFFF
++        println("\t{}.s64 = {}.s64 + {}.ca - 1;", temp(), r(insn.operands[1]), xer());
++        println("\t{}.ca = {}.ca | ({}.u32 != 0);", xer(), xer(), r(insn.operands[1]));
++        println("\t{}.s64 = {}.s64;", r(insn.operands[0]), temp());
++        if (strchr(insn.opcode->name, '.'))
++            println("\t{}.compare<int32_t>({}.s32, 0, {});", cr(0), r(insn.operands[0]), xer());
++        break;
++
+     case PPC_INST_ADDZE:
+         println("\t{}.s64 = {}.s64 + {}.ca;", temp(), r(insn.operands[1]), xer());
+         println("\t{}.ca = {}.u32 < {}.u32;", xer(), temp(), r(insn.operands[1]));
+@@ -609,7 +618,8 @@ bool Recompiler::Recompile(
+     case PPC_INST_BCTR:
+         if (switchTable != config.switchTables.end())
+         {
+-            println("\tswitch ({}.u64) {{", r(switchTable->second.r));
++            // openQAA: the bounds check is a 32-bit cmplwi; the upper word may hold anything
++            println("\tswitch ({}.u32) {{", r(switchTable->second.r));
+ 
+             for (size_t i = 0; i < switchTable->second.labels.size(); i++)
+             {
+@@ -663,10 +673,28 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_BDNZF:
+-        // NOTE: assuming eq here as a shortcut because all the instructions in the game do that
++    case PPC_INST_BDZF:
++    {
++        // openQAA: decode BI (cr field and bit) instead of assuming eq, and add bdzf.
++        // The Xbox 360 compiler emits `mtctr rX; cmpwi crN, rX, 0; bdzf crN.eq, case1;
++        // bdzf crN.eq, case2; ...` as a compact switch.
++        static const char* bits[] = { "lt", "gt", "eq", "so" };
++        const char* cond = id == PPC_INST_BDZF ? "==" : "!=";
+         println("\t--{}.u64;", ctr());
+-        println("\tif ({}.u32 != 0 && !{}.eq) goto loc_{:X};", ctr(), cr(insn.operands[0] / 4), insn.operands[1]);
++        if (insn.operands[1] < fn.base || insn.operands[1] >= fn.base + fn.size)
++        {
++            println("\tif ({}.u32 {} 0 && !{}.{}) {{", ctr(), cond, cr(insn.operands[0] / 4), bits[insn.operands[0] % 4]);
++            print("\t");
++            printFunctionCall(insn.operands[1]);
++            println("\t\treturn;");
++            println("\t}}");
++        }
++        else
++        {
++            println("\tif ({}.u32 {} 0 && !{}.{}) goto loc_{:X};", ctr(), cond, cr(insn.operands[0] / 4), bits[insn.operands[0] % 4], insn.operands[1]);
++        }
+         break;
++    }
+ 
+     case PPC_INST_BEQ:
+         printConditionalBranch(false, "eq");
+@@ -1088,6 +1116,15 @@ bool Recompiler::Recompile(
+         println("\t{}.f64 = double({}.f32);", f(insn.operands[0]), temp());
+         break;
+ 
++    case PPC_INST_LFSU:
++        // openQAA
++        printSetFlushMode(false);
++        println("\t{} = {} + {}.u32;", ea(), int32_t(insn.operands[1]), r(insn.operands[2]));
++        println("\t{}.u32 = PPC_LOAD_U32({});", temp(), ea());
++        println("\t{}.f64 = double({}.f32);", f(insn.operands[0]), temp());
++        println("\t{}.u32 = {};", r(insn.operands[2]), ea());
++        break;
++
+     case PPC_INST_LFSX:
+         printSetFlushMode(false);
+         print("\t{}.u32 = PPC_LOAD_U32(", temp());
+@@ -1118,6 +1155,13 @@ bool Recompiler::Recompile(
+         println("{});", int32_t(insn.operands[1]));
+         break;
+ 
++    case PPC_INST_LHZU:
++        // openQAA
++        println("\t{} = {} + {}.u32;", ea(), int32_t(insn.operands[1]), r(insn.operands[2]));
++        println("\t{}.u64 = PPC_LOAD_U16({});", r(insn.operands[0]), ea());
++        println("\t{}.u32 = {};", r(insn.operands[2]), ea());
++        break;
++
+     case PPC_INST_LHZX:
+         print("\t{}.u64 = PPC_LOAD_U16(", r(insn.operands[0]));
+         if (insn.operands[1] != 0)
+@@ -1325,6 +1369,13 @@ bool Recompiler::Recompile(
+             println("\t{}.compare<int32_t>({}.s32, 0, {});", cr(0), r(insn.operands[0]), xer());
+         break;
+ 
++    case PPC_INST_EQV:
++        // openQAA
++        println("\t{}.u64 = ~({}.u64 ^ {}.u64);", r(insn.operands[0]), r(insn.operands[1]), r(insn.operands[2]));
++        if (strchr(insn.opcode->name, '.'))
++            println("\t{}.compare<int32_t>({}.s32, 0, {});", cr(0), r(insn.operands[0]), xer());
++        break;
++
+     case PPC_INST_NAND:
+         println("\t{}.u64 = ~({}.u64 & {}.u64);", r(insn.operands[0]), r(insn.operands[1]), r(insn.operands[2]));
+         break;
+@@ -1556,6 +1607,15 @@ bool Recompiler::Recompile(
+         println("{}, {}.u32);", int32_t(insn.operands[1]), temp());
+         break;
+ 
++    case PPC_INST_STFSU:
++        // openQAA
++        printSetFlushMode(false);
++        println("\t{} = {} + {}.u32;", ea(), int32_t(insn.operands[1]), r(insn.operands[2]));
++        println("\t{}.f32 = float({}.f64);", temp(), f(insn.operands[0]));
++        println("\tPPC_STORE_U32({}, {}.u32);", ea(), temp());
++        println("\t{}.u32 = {};", r(insn.operands[2]), ea());
++        break;
++
+     case PPC_INST_STFSX:
+         printSetFlushMode(false);
+         println("\t{}.f32 = float({}.f64);", temp(), f(insn.operands[0]));
+@@ -1572,6 +1632,13 @@ bool Recompiler::Recompile(
+         println("{}, {}.u16);", int32_t(insn.operands[1]), r(insn.operands[0]));
+         break;
+ 
++    case PPC_INST_STHU:
++        // openQAA
++        println("\t{} = {} + {}.u32;", ea(), int32_t(insn.operands[1]), r(insn.operands[2]));
++        println("\tPPC_STORE_U16({}, {}.u16);", ea(), r(insn.operands[0]));
++        println("\t{}.u32 = {};", r(insn.operands[2]), ea());
++        break;
++
+     case PPC_INST_STHBRX:
+         print("{}", mmioStore() ? "\tPPC_MM_STORE_U16(" : "\tPPC_STORE_U16(");
+         if (insn.operands[1] != 0)
+@@ -1705,6 +1772,15 @@ bool Recompiler::Recompile(
+             println("\t{}.compare<int32_t>({}.s32, 0, {});", cr(0), r(insn.operands[0]), xer());
+         break;
+ 
++    case PPC_INST_SUBFZE:
++        // openQAA: rD = ~rA + CA, carry out only when rA == 0 and CA is set
++        println("\t{}.s64 = ~{}.s64 + {}.ca;", temp(), r(insn.operands[1]), xer());
++        println("\t{}.ca = {}.ca & ({}.u32 == 0);", xer(), xer(), r(insn.operands[1]));
++        println("\t{}.s64 = {}.s64;", r(insn.operands[0]), temp());
++        if (strchr(insn.opcode->name, '.'))
++            println("\t{}.compare<int32_t>({}.s32, 0, {});", cr(0), r(insn.operands[0]), xer());
++        break;
++
+     case PPC_INST_SUBFIC:
+         println("\t{}.ca = {}.u32 <= {};", xer(), r(insn.operands[1]), insn.operands[2]);
+         println("\t{}.s64 = {} - {}.s64;", r(insn.operands[0]), int32_t(insn.operands[2]), r(insn.operands[1]));
+@@ -1715,24 +1791,46 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_TDLGEI:
+-        // no op
+-        break;
+-
+     case PPC_INST_TDLLEI:
+-        // no op
+-        break;
+-
+     case PPC_INST_TWI:
+-        // no op
+-        break;
+-
+     case PPC_INST_TWLGEI:
+-        // no op
+-        break;
+-
+     case PPC_INST_TWLLEI:
+-        // no op
++    {
++        // openQAA: TO bits 16 lt, 8 gt, 4 eq, 2 ltu, 1 gtu
++        uint32_t to, ra;
++        int32_t imm;
++        if (id == PPC_INST_TWI)
++        {
++            to = insn.operands[0]; ra = insn.operands[1]; imm = int32_t(insn.operands[2]);
++        }
++        else
++        {
++            to = (id == PPC_INST_TDLGEI || id == PPC_INST_TWLGEI) ? 5 : 6;
++            ra = insn.operands[0]; imm = int32_t(insn.operands[1]);
++        }
++        const bool dword = id == PPC_INST_TDLGEI || id == PPC_INST_TDLLEI;
++        const char* s = dword ? "s64" : "s32";
++        const char* u = dword ? "u64" : "u32";
++        std::string cond;
++        auto term = [&](const std::string& t) { if (!cond.empty()) cond += " || "; cond += t; };
++        if ((to & 0x1F) == 0x1F)
++            cond = "true";
++        else
++        {
++            if (to & 16) term(fmt::format("{}.{} < {}", r(ra), s, imm));
++            if (to & 8) term(fmt::format("{}.{} > {}", r(ra), s, imm));
++            if (to & 4) term(fmt::format("{}.{} == {}", r(ra), s, imm));
++            if (to & 2) term(fmt::format("{}.{} < {}u", r(ra), u, dword ? uint64_t(int64_t(imm)) : uint64_t(uint32_t(imm))));
++            if (to & 1) term(fmt::format("{}.{} > {}u", r(ra), u, dword ? uint64_t(int64_t(imm)) : uint64_t(uint32_t(imm))));
++        }
++        if (!cond.empty())
++        {
++            println("#ifdef PPC_TRAP");
++            println("\tif ({}) PPC_TRAP(0x{:X});", cond, base);
++            println("#endif");
++        }
+         break;
++    }
+ 
+     case PPC_INST_VADDFP:
+     case PPC_INST_VADDFP128:
+@@ -2438,10 +2536,40 @@ bool Recompiler::Recompile(const Function& fn)
+         ++data;
+     }
+ 
+-#if 0
+-    if (insn.opcode == nullptr || (insn.opcode->id != PPC_INST_B && insn.opcode->id != PPC_INST_BCTR && insn.opcode->id != PPC_INST_BLR))
+-        fmt::println("Function at {:X} ends prematurely with instruction {} at {:X}", fn.base, insn.opcode != nullptr ? insn.opcode->name : "INVALID", base - 4);
+-#endif
++    // openQAA: if control can fall off the end of the function, continue in
++    // the function that starts there, as the guest would.
++    {
++        const uint32_t last = ByteSwap(*(data - 1));
++        const bool terminates =
++            (PPC_OP(last) == PPC_OP_B && !PPC_BL(last)) ||
++            last == 0x4E800020 || last == 0x4E800420 || // blr, bctr
++            insn.opcode == nullptr;
++        if (!terminates)
++        {
++            auto next = image.symbols.find(end);
++            const auto* nextWord = reinterpret_cast<const uint32_t*>(image.Find(end));
++            if (next != image.symbols.end() && next->address == end && next->type == Symbol_Function)
++            {
++                println("\t// openQAA: falls through to 0x{:X}", end);
++                println("\t{}(ctx, base);", next->name);
++            }
++            else if (nextWord != nullptr && *nextWord == 0)
++            {
++                // A call that does not return (exit, abort) followed by
++                // padding: the hardware would execute the zero word and
++                // take an illegal-instruction exception.
++                println("\t// openQAA: ends in padding at 0x{:X}", end);
++                println("#ifdef PPC_TRAP");
++                println("\tPPC_TRAP(0x{:X});", end);
++                println("#endif");
++            }
++            else
++            {
++                fmt::println("WARNING: function at {:X} falls through to {:X}, which is not a function", fn.base, end);
++                println("\t// WARNING: falls through to 0x{:X}", end);
++            }
++        }
++    }
+ 
+     println("}}\n");
+ 
