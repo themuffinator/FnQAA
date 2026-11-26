@@ -11,6 +11,8 @@ This file is part of openQAA, licensed under the GNU GPL v2 or later.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -86,6 +88,19 @@ int QAA_IoOpenFile( const char *path, qaaIo_t *io ) {
 	if ( !f->file ) {
 		free( f );
 		return -1;
+	}
+	/* only regular files: glibc's fopen also opens directories */
+	{
+#ifdef _WIN32
+		struct _stat64 st;
+		if ( _fstat64( _fileno( f->file ), &st ) != 0 || !( st.st_mode & _S_IFREG ) ) {
+#else
+		struct stat st;
+		if ( fstat( fileno( f->file ), &st ) != 0 || !S_ISREG( st.st_mode ) ) {
+#endif
+			QAA_FileClose( f );
+			return -1;
+		}
 	}
 #ifdef _WIN32
 	if ( _fseeki64( f->file, 0, SEEK_END ) != 0 ) {

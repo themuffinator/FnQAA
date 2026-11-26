@@ -190,6 +190,15 @@ static uint8_t *MakePackage( size_t *size, uint8_t *bpk, size_t *bpkSize ) {
 	return package;
 }
 
+static void TestHostFile( void ) {
+	qaaIo_t io;
+
+	/* a directory is not a readable file, on every platform */
+	CHECK( QAA_IoOpenFile( ".", &io ) != 0 );
+	CHECK( QAA_IoOpenFile( "", &io ) != 0 );
+	CHECK( QAA_IoOpenFile( "no-such-file.qaa", &io ) != 0 );
+}
+
 static void TestCrc32( void ) {
 	CHECK( QAA_Crc32( 0, "123456789", 9 ) == 0xCBF43926u );
 	CHECK( QAA_Crc32( QAA_Crc32( 0, "1234", 4 ), "56789", 5 ) == 0xCBF43926u );
@@ -317,6 +326,7 @@ static void TestNameLines( void ) {
 }
 
 int main( void ) {
+	TestHostFile();
 	TestCrc32();
 	TestStfsAndBpk();
 	TestNameLines();
