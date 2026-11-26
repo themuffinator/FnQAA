@@ -545,14 +545,47 @@ void H_S_StartLocalSound( void *, qaa_hook_call *c ) {
 	}
 }
 
+/* FgApi.setGameState's value (0x82190CF0): 1 while the start-up movies
+ * play, 2 at the title, 3 in the menus. */
+namespace gamestate {
+constexpr uint32_t ADDRESS = 0x82C01C48;
+constexpr uint32_t STARTUP = 1, TITLE = 2;
+}
+
+/* On the console a game cannot start before the title; on the PC it can,
+ * from the command line (+map, +devmap) while the start-up movies still
+ * play. */
+bool GameStartedBeforeTitle() {
+	return cls.state == CA_ACTIVE && QAA_LoadU32( gamestate::ADDRESS ) <= gamestate::TITLE;
+}
+
 /* 0x82173470(intro, loop): the background track, as the "playmusic"
  * fscommand starts it (the menus' music; the files are XMA2 .xma beside
- * the .wav names, FORMATS.md). */
+ * the .wav names, FORMATS.md). PC deviation: the title's music is not
+ * started over a game that began before the title, whose own music plays. */
 void H_S_StartBackgroundTrack( void *, qaa_hook_call *c ) {
 	const std::string intro = GStr( R( c, 0 ) ), loop = GStr( R( c, 1 ) );
+	if ( GameStartedBeforeTitle() ) {
+		return;
+	}
 	if ( !intro.empty() || !loop.empty() ) {
 		S_StartBackgroundTrack( intro.c_str(), loop.c_str() );
 	}
+}
+
+/* PC deviation, for a game started before the title: the first snapshot's
+ * HUD scene (QAA_UI_EnterGame) was asked for while the start-up movie had
+ * no scene manager to take it, and the title then loads over the game.
+ * When the front end reaches the title with a game running, it is asked
+ * again, as when a map is started from the title. */
+void PollGameStartedBeforeTitle() {
+	static uint32_t last;
+	const uint32_t state = QAA_LoadU32( gamestate::ADDRESS );
+	if ( state == gamestate::TITLE && last != gamestate::TITLE && cls.state == CA_ACTIVE ) {
+		Com_DPrintf( "QAA ui: the game began before the title; showing the HUD\n" );
+		QAA_UI_EnterGame();
+	}
+	last = state;
 }
 
 /* The two-letter codes QAA builds its localisation paths from (0x82184DA8:
@@ -2249,6 +2282,7 @@ void QAA_UI_Frame( void ) {
 	PollDeviceSelection();
 	PollConfigOperation();
 	PollSessionEnd();
+	PollGameStartedBeforeTitle();
 	struct Collect {
 		~Collect() { CollectKeyCatchers(); }
 	} collect;

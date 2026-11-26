@@ -165,6 +165,8 @@ the bare name).
 | Profile settings in a save container (`startLoad` 0x8218BCE8, `startSave` 0x8218BDB0, completion `ConfigLoadComplete`/`ConfigSaveComplete`) | the settings are the engine's cvars and config; the container operations succeed with nothing to read or write | |
 | `exitGame` flags the Live session (bit 3 at +0x1FC); the session manager (0x82176370) ends it: disconnect, `gotoStackPath(..., "mainmenu")`, client state reset (0x82177AB0, 0x821779E0, 0x821771F0) | the flag is polled; FnQL's `disconnect`, then the same stack path and resets. The course-results path variant is not taken | |
 | `sys_titleFocused` from Guide focus notifications | follows the game window's focus; a windowless client is always focused | |
+| A game can only start from the menus, after the title | a game can also start from the command line (`+map`, `+devmap`) while the start-up movies play. The first snapshot's HUD request then finds no scene manager, and the title would load over the game. When the front end reaches the title (`setGameState(2)`, 0x82C01C48) with a game running, the HUD is requested again, and the title's music is not started over the game's | `PollGameStartedBeforeTitle`, `H_S_StartBackgroundTrack` |
+| (retail has no ui module to replace the front end) | FnQL's ui loader runs first (an FnQL-game or retail-named native ui); a `vm/ui.qvm` is never loaded unless `vm_allowQvm 1` is on the command line, so the front end starts when no native ui exists | `CL_InitUI`, `VM_LoadQVM` |
 | Update and render overlap on two threads | one thread | |
 | GPU replay | software rasteriser | |
 

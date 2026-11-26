@@ -37,6 +37,32 @@ From an "x64 Native Tools" prompt plain `meson` works the same way. The MSVC
 x64 build uses FnQL's portable C fallbacks instead of its MASM helpers.
 Tested with MSVC 19.44 (Visual Studio 2022).
 
+### VS Code
+
+`.vscode/` has build tasks and debugger launches in FnQL's style.
+`.vscode/build.ps1` imports the x64 developer environment itself, then sets
+up or reconfigures the build directory and builds the client, its renderer
+modules and the dedicated server. The recompile task and every launch use
+the STFS package at `ref/package/584108C8/000D0000/0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458`
+(the package's own path inside the XBLA zip, under the ignored `ref/`). Keep
+your package there, or set `QAA_PACKAGE` (as for the tests) for the tasks
+and edit `fs_qaaPackage` in `launch.json` for the debugger.
+
+| Task | What it does |
+|---|---|
+| `meson: build` (default, Ctrl+Shift+B) | Release build in `build/msvc` |
+| `meson: build debug` | Debug build in `build/msvc-debug` |
+| `meson: setup` | Configure `build/msvc` only |
+| `recomp: game modules and front end` | `tools/recomp/build.py --package <package>` into `build/recomp` |
+| `Build FnQAA Full` | The recompile, then the Release build |
+| `meson: test` | Build everything and run every test, headless |
+| `run: client (GLx)`, `run: dedicated server (q3dm6)` | Build, then run without the debugger (`.vscode/launch.ps1`) |
+
+The launch configurations (`cppvsdbg`) start the windowed client with GLx,
+Vulkan or RTX, the client straight into `q3dm6`, the Debug build (built
+first), and the dedicated server on `q3dm6`. Both build directories use the recompiled modules in
+`build/recomp/native/bin`.
+
 ## Linux
 
 Install GCC or Clang, Python 3, Meson, Ninja, pkg-config, and the X11 and

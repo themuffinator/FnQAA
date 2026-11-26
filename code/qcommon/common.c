@@ -4031,6 +4031,11 @@ void Com_Init( char *commandLine ) {
 	com_developer = Cvar_Get( "developer", "0", CVAR_TEMP );
 	Cvar_CheckRange( com_developer, NULL, NULL, CV_INTEGER );
 
+	// QAA: registered before the configs run, as vm_rtChecks is, so only the
+	// command line can allow QVM modules (vm.c, VM_LoadQVM)
+	Com_StartupVariable( "vm_allowQvm" );
+	Cvar_Get( "vm_allowQvm", "0", CVAR_INIT | CVAR_PROTECTED );
+
 	Com_StartupVariable( "vm_rtChecks" );
 	vm_rtChecks = Cvar_Get( "vm_rtChecks", "15", CVAR_INIT | CVAR_PROTECTED );
 	Cvar_CheckRange( vm_rtChecks, "0", "15", CV_INTEGER );

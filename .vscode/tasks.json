@@ -1,0 +1,167 @@
+{
+  "version": "2.0.0",
+  "options": {
+    "cwd": "${workspaceFolder}"
+  },
+  "tasks": [
+    {
+      "label": "meson: setup",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\.vscode\\build.ps1",
+        "-SetupOnly",
+        "-Configuration",
+        "Release",
+        "-BuildDir",
+        "build\\msvc"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "meson: build",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\.vscode\\build.ps1",
+        "-Configuration",
+        "Release",
+        "-BuildDir",
+        "build\\msvc",
+        "-Target",
+        "both",
+        "-Renderers",
+        "glx,vk,rtx"
+      ],
+      "problemMatcher": [
+        "$gcc",
+        "$msCompile"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "meson: build debug",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\.vscode\\build.ps1",
+        "-Configuration",
+        "Debug",
+        "-BuildDir",
+        "build\\msvc-debug",
+        "-Target",
+        "both",
+        "-Renderers",
+        "glx,vk,rtx"
+      ],
+      "problemMatcher": [
+        "$gcc",
+        "$msCompile"
+      ]
+    },
+    {
+      "label": "recomp: game modules and front end",
+      "detail": "tools/recomp/build.py on the package (ref/package/... or $QAA_PACKAGE): qagame, cgame and the Scaleform front end into build/recomp",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\.vscode\\build.ps1",
+        "-RecompOnly"
+      ],
+      "problemMatcher": [
+        "$gcc",
+        "$msCompile"
+      ]
+    },
+    {
+      "label": "Build FnQAA Full",
+      "detail": "Recompile the modules from the package, then build the engine",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "recomp: game modules and front end",
+        "meson: build"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "meson: test",
+      "detail": "Every test, headless (BUILD.md)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\.vscode\\build.ps1",
+        "-RunTests",
+        "-Configuration",
+        "Release",
+        "-BuildDir",
+        "build\\msvc"
+      ],
+      "problemMatcher": [
+        "$gcc",
+        "$msCompile"
+      ],
+      "group": "test"
+    },
+    {
+      "label": "run: client (GLx)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\.vscode\\launch.ps1",
+        "-Renderer",
+        "glx"
+      ],
+      "dependsOn": [
+        "meson: build"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "run: dedicated server (q3dm6)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\.vscode\\launch.ps1",
+        "-Target",
+        "dedicated",
+        "+map",
+        "q3dm6"
+      ],
+      "dependsOn": [
+        "meson: build"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

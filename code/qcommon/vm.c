@@ -219,6 +219,7 @@ const char *opname[ 256 ] = {
 };
 
 cvar_t	*vm_rtChecks;
+static cvar_t	*vm_allowQvm;	// QAA: QVM bytecode modules are off unless this is set
 
 #ifdef DEBUG
 int		vm_debugLevel;
@@ -456,6 +457,14 @@ void VM_Init( void ) {
 	Cvar_Get( "vm_cgame", "0", CVAR_ARCHIVE | CVAR_PROTECTED );	// Quake Live ships native cgame by default.
 #endif
 	Cvar_Get( "vm_game", "0", CVAR_ARCHIVE | CVAR_PROTECTED );
+	// QAA: init-only and registered before the configs (Com_Init), so neither
+	// a config nor a module can turn it on
+	vm_allowQvm = Cvar_Get( "vm_allowQvm", "0", CVAR_INIT | CVAR_PROTECTED );
+	Cvar_CheckRange( vm_allowQvm, "0", "1", CV_INTEGER );
+	Cvar_SetDescription( vm_allowQvm,
+		"Allow QVM bytecode modules (vm/*.qvm). Quake Arena Arcade has none, so "
+		"they are off: a stray QVM could otherwise replace the recompiled game "
+		"modules or the Scaleform menus. Set on the command line only." );
 	vm_provider[ VM_GAME ] = Cvar_Get( "vm_gameProvider", VM_GAME_PROVIDER_DEFAULT,
 		CVAR_ARCHIVE_ND | CVAR_PROTECTED );
 	Cvar_SetDescription( vm_provider[ VM_GAME ],
@@ -976,6 +985,19 @@ static vmHeader_t *VM_LoadQVM( vm_t *vm, qboolean alloc ) {
 
 	// load the image
 	Com_sprintf( filename, sizeof(filename), "vm/%s.qvm", vm->name );
+
+	// QAA: Quake Arena Arcade has no QVMs (its qagame and cgame are native
+	// modules, recompiled here, and its menus are the Scaleform front end).
+	// A stray vm/*.qvm from another game in a pk3 or loose file must not
+	// replace them, so QVM loading, explicit (vm_game/vm_cgame/vm_ui 1 or 2)
+	// or as FnQL's fallback when no native module loads, needs
+	// +set vm_allowQvm 1 on the command line.
+	if ( !vm_allowQvm || !vm_allowQvm->integer ) {
+		Com_Printf( "Not loading %s: QVM modules are off (vm_allowQvm 0).\n", filename );
+		VM_Free( vm );
+		return NULL;
+	}
+
 	Com_Printf( "Loading vm file %s...\n", filename );
 	length = FS_ReadFile( filename, (void **)&header );
 	if ( !header ) {

@@ -1,0 +1,66 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "GLx (QAA package / x64)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}\\build\\msvc\\fnqaa.exe",
+      "args": ["+set", "fs_qaaPackage", "${workspaceFolder}\\ref\\package\\584108C8\\000D0000\\0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458", "+set", "r_fullscreen", "0", "+set", "cl_renderer", "glx"],
+      "cwd": "${workspaceFolder}\\build\\msvc",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    },
+    {
+      "name": "Vulkan (QAA package / x64)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}\\build\\msvc\\fnqaa.exe",
+      "args": ["+set", "fs_qaaPackage", "${workspaceFolder}\\ref\\package\\584108C8\\000D0000\\0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458", "+set", "r_fullscreen", "0", "+set", "cl_renderer", "vk"],
+      "cwd": "${workspaceFolder}\\build\\msvc",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    },
+    {
+      "name": "RTX (QAA package / x64)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}\\build\\msvc\\fnqaa.exe",
+      "args": ["+set", "fs_qaaPackage", "${workspaceFolder}\\ref\\package\\584108C8\\000D0000\\0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458", "+set", "r_fullscreen", "0", "+set", "cl_renderer", "rtx"],
+      "cwd": "${workspaceFolder}\\build\\msvc",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    },
+    {
+      "name": "GLx q3dm6 (QAA package / x64)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}\\build\\msvc\\fnqaa.exe",
+      "args": ["+set", "fs_qaaPackage", "${workspaceFolder}\\ref\\package\\584108C8\\000D0000\\0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458", "+set", "r_fullscreen", "0", "+set", "cl_renderer", "glx", "+devmap", "q3dm6"],
+      "cwd": "${workspaceFolder}\\build\\msvc",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    },
+    {
+      "name": "GLx Debug (QAA package / x64)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}\\build\\msvc-debug\\fnqaa.exe",
+      "args": ["+set", "fs_qaaPackage", "${workspaceFolder}\\ref\\package\\584108C8\\000D0000\\0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458", "+set", "r_fullscreen", "0", "+set", "cl_renderer", "glx", "+set", "developer", "1"],
+      "cwd": "${workspaceFolder}\\build\\msvc-debug",
+      "preLaunchTask": "meson: build debug",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    },
+    {
+      "name": "Dedicated q3dm6 (QAA package / x64)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}\\build\\msvc\\fnqaa-ded.exe",
+      "args": ["+set", "fs_qaaPackage", "${workspaceFolder}\\ref\\package\\584108C8\\000D0000\\0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458", "+map", "q3dm6"],
+      "cwd": "${workspaceFolder}\\build\\msvc",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    }
+  ]
+}

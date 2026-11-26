@@ -75,6 +75,11 @@ package, recompiles the two game modules and the front end (SFUI and GFx in
 libraries under `build/recomp/` (never committed). The engine finds them
 there (or set `qaa_modulePath`) and runs them in place of a game module and
 the ui module; `+set qaa_game 0` and `+set qaa_ui 0` turn that off.
+Quake Arena Arcade has no QVMs, so the engine loads none: FnQL would
+otherwise fall back to `vm/*.qvm` whenever a native module is missing, and a
+stray QVM from another game could replace QAA's own modules or menus.
+`+set vm_allowQvm 1` on the command line (configs cannot set it) allows
+them again.
 [docs/RECOMP.md](docs/RECOMP.md) has the requirements, the tests and the
 guest runtime's design.
 
