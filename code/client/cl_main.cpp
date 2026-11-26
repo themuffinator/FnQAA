@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 extern "C" {
 #include "client.h"
+#include "cl_qaa_ui.h"
 }
 
 #include "client_cpp.h"
@@ -3832,6 +3833,10 @@ void CL_Frame( int msec, int realMsec ) {
 
 	oldViewYaw = cl.viewangles[YAW];
 	oldViewPitch = cl.viewangles[PITCH];
+
+	// QAA: one frame of the Scaleform front end's update thread (input,
+	// invokes, Advance) before the screen update draws it (cl_qaa_ui.cpp)
+	QAA_UI_Frame();
 
 	// update the screen
 	cls.framecount++;

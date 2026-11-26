@@ -21,6 +21,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 extern "C" {
 #include "client.h"
+#include "cl_qaa_ui.h"
 }
 
 #include "client_cpp.h"
@@ -1096,6 +1097,13 @@ void CL_KeyEvent( int key, qboolean down, unsigned time )
 	}
 	if ( key < 0 || key >= MAX_KEYS ) {
 		Com_DPrintf( "CL_KeyEvent: ignoring invalid key %d\n", key );
+		return;
+	}
+
+	// QAA: the Scaleform front end takes the keys while it holds
+	// KEYCATCH_UI, and Escape in a game (retail CL_KeyEvent 0x82106D20).
+	if ( QAA_UI_KeyEvent( key, down ? true : false, time ) ) {
+		keys[key].down = down;
 		return;
 	}
 

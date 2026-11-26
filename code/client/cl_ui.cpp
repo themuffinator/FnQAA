@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 extern "C" {
 #include "client.h"
+#include "cl_qaa_ui.h"
 
 #include "../botlib/botlib.h"
 }
@@ -2053,11 +2054,17 @@ void CL_InitUI( void ) {
 			uivm = VM_CreateNative( VM_UI, CL_UISystemCalls, UI_DllSyscall, interpret, ql_ui_imports, UI_QL_API_VERSION );
 		}
 		// QAA: Quake Arena Arcade ships no ui module (docs/PLAN.md): its
-		// menus are Scaleform GFx movies run by default.xex (milestone M6).
-		// The client runs without one instead of failing (FnQL's
-		// CL_UI_CREATE_FAILURE); every UI call site already checks uivm.
+		// menus, HUD and scoreboards are Scaleform GFx movies run by
+		// default.xex's SFUI layer, which openQAA recompiles and hosts
+		// (cl_qaa_ui.cpp, docs/UI.md). Without it the client runs with the
+		// console only instead of failing (FnQL's CL_UI_CREATE_FAILURE);
+		// every UI call site already checks uivm.
 		if ( !uivm ) {
-			Com_Printf( S_COLOR_YELLOW "No ui module: Quake Arena Arcade's menus are not implemented yet; "
+			if ( QAA_UI_Init() ) {
+				cls.uiStarted = qtrue;
+				return;
+			}
+			Com_Printf( S_COLOR_YELLOW "No ui module and no Scaleform front end (qaa_ui): "
 				"the client runs with the console only.\n" );
 			return;
 		}

@@ -43,9 +43,14 @@ def embedded(var, fname):
     ]
 
 
-def write_glue(out_dir, name, report, image_bytes, recompiler_id, xex_header=b""):
+def write_glue(out_dir, name, report, image_bytes, recompiler_id, xex_header=b"", hooks=(), run_entry=True):
     """report: the analysis JSON dict (tools/recomp/analyse.py);
-    xex_header: the module's XEX file header (its bytes up to the PE data)."""
+    xex_header: the module's XEX file header (its bytes up to the PE data);
+    hooks: guest functions the kept code calls but that were not recompiled
+    (a subset module, tools/recomp/subset.py): each gets a stub that hands
+    the call to the runtime, which passes it to the host's hook for that
+    address; run_entry: False for an image whose entry point must not run
+    (default.xex's is the engine's mainCRTStartup)."""
     os.makedirs(out_dir, exist_ok=True)
     for fname, data in (("image.bin", image_bytes), ("xex_header.bin", xex_header or b"\0")):
         write_if_changed(os.path.join(out_dir, fname), data)
@@ -77,6 +82,10 @@ def write_glue(out_dir, name, report, image_bytes, recompiler_id, xex_header=b""
         if imp["thunk"]:
             lines.append("PPC_FUNC(__imp__%s) { qaa_kernel_call(%d, 0x%03X, ctx, base); }" % (
                 imp["name"], libs.get(imp["library"], 2), imp["ordinal"]))
+    if hooks:
+        lines += ["", "// Functions the host provides (docs/RECOMP.md, \"Subset modules\")."]
+        for a in sorted(hooks):
+            lines.append("PPC_FUNC(sub_%08X) { qaa_module_indirect_miss(ctx, base, 0x%08X); }" % (a, a))
     lines += [""] + embedded("qaa_image", "image.bin")
     lines += [""] + embedded("qaa_xex_header", "xex_header.bin")
     lines += ["", "static const qaa::ModuleImport qaa_imports[] = {"]
@@ -140,7 +149,7 @@ def write_glue(out_dir, name, report, image_bytes, recompiler_id, xex_header=b""
         "\t\t%s," % c_string(recompiler_id),
         "\t\t0x%08X," % report["base"],
         "\t\t0x%08X," % report["image_size"],
-        "\t\t0x%08X," % (report["entry"] or 0),
+        "\t\t0x%08X," % ((report["entry"] or 0) if run_entry else 0),
         "\t\t(uint32_t)sizeof(qaa_image),",
         "\t\tqaa_image,",
         "\t\treinterpret_cast<const qaa::FuncMapping *>(PPCFuncMappings),",

@@ -1,0 +1,56 @@
+{
+  "comment": "Front-end module recompiled from default.xex (docs/UI.md). Addresses are in default.xex; see tools/recomp/select_funcs.py.",
+  "roots": [
+    [
+      "0x8218DF98",
+      "0x821A46F0"
+    ],
+    [
+      "0x82166900",
+      "0x821687F0"
+    ]
+  ],
+  "libraries": [
+    [
+      "0x8212A000",
+      "0x8212C000"
+    ],
+    [
+      "0x821D29D0",
+      "0x821F4000"
+    ],
+    [
+      "0x825E0000",
+      "0x82740000"
+    ],
+    [
+      "0x82788000",
+      "0x82789CB8"
+    ]
+  ],
+  "root_tables": [
+    [
+      "0x82790000",
+      "0x82790100"
+    ]
+  ],
+  "recompile": {
+    "0x8216C3C0": "array grow helper shared with GFx",
+    "0x8216C338": "array free helper",
+    "0x821437D0": "array delete helper (GFx free)",
+    "0x8218DEA8": "destructor of an SFUI object",
+    "0x821D9748": "CRT start-up: heap",
+    "0x821DF7B0": "CRT start-up: _mtinit",
+    "0x821D9520": "CRT start-up: pre-C initializers",
+    "0x821D9440": "CRT start-up: _cinit"
+  },
+  "hooks": {},
+  "switches": {
+    "0x82735620": {
+      "index": 10,
+      "count": 29,
+      "start": "0x827355FC",
+      "comment": "zlib inflate(): the state is checked at the bottom of its loop (0x82736920)"
+    }
+  }
+}

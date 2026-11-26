@@ -34,7 +34,10 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 
-MODULES = {"qagame": "qagameXe.dll", "cgame": "cgameXe.dll"}
+MODULES = {"qagame": "qagameXe.dll", "cgame": "cgameXe.dll", "ui": "default.xex"}
+# Modules recompiled from part of an image: the front end inside default.xex
+# (docs/UI.md). The config picks the functions (tools/recomp/select_funcs.py).
+SUBSETS = {"ui": os.path.join(ROOT, "data", "recomp", "ui.json")}
 # Files read from the package: the modules, and the title executable for its XEX header.
 INPUTS = dict(MODULES, executable="default.xex")
 EXE_HEADER = "qaa_default_xex_header.bin"
@@ -224,11 +227,21 @@ def recompile_module(mod, xex, out, xr_src, recomp_exe, analyse_exe, args):
     kernel_table = os.path.join(xr_src, "XenonUtils", "xbox", "xboxkrnl_table.inc")
     log("%s: analysing %s" % (mod, xex))
     img = ModuleImage(xex, kernel_table)
-    an = Analysis(img).run()
+    subset_cfg = None
+    overrides = {}
+    if mod in SUBSETS:
+        subset_cfg = SUBSETS[mod]
+        for k, v in json.load(open(subset_cfg)).get("switches", {}).items():
+            overrides[int(k, 16)] = {"index": int(v["index"]), "count": int(v["count"]), "start": int(v["start"], 16)}
+    an = Analysis(img, switch_overrides=overrides).run()
     rep = an.report()
     xex_rel = os.path.relpath(os.path.abspath(xex), mdir)
+    gen_dir = "ppc_full" if subset_cfg else "ppc"
+    if subset_cfg:
+        ppc_dir = os.path.join(mdir, gen_dir)
+        os.makedirs(ppc_dir, exist_ok=True)
     with open(os.path.join(mdir, mod + ".toml"), "w") as f:
-        f.write(an.config_toml(xex_rel, "ppc", mod + "_switch.toml", {}))
+        f.write(an.config_toml(xex_rel, gen_dir, mod + "_switch.toml", {}))
     with open(os.path.join(mdir, mod + "_switch.toml"), "w") as f:
         f.write(an.switch_toml())
 
@@ -268,8 +281,33 @@ def recompile_module(mod, xex, out, xr_src, recomp_exe, analyse_exe, args):
                 if "// ERROR" in line or "// WARNING" in line:
                     gen_errors.append(line.strip())
 
+    hooks = ()
+    selection = None
+    if subset_cfg:
+        from select_funcs import Selection
+        from subset import subset
+        code = [(sc.va, sc.va + sc.vsize) for sc in img.sections if sc.code]
+        data = [(sc.va, sc.va + min(sc.vsize, sc.rsize)) for sc in img.sections if not sc.code and sc.name != ".pdata"]
+        sel = Selection(img.data, img.base, [(b, n) for b, n, _ in an.all_functions()], code, data, subset_cfg).run()
+        kept, called, sub_errors = subset(ppc_dir, os.path.join(mdir, "ppc"), sel.include)
+        hooks = sorted(called)
+        unexpected = sorted(set(hooks) - sel.hooks)
+        selection = {"kept": len(kept), "kept_bytes": sum(sel.size[a] for a in kept), "hooks": ["%08X" % a for a in hooks],
+                     "hooks_not_selected": ["%08X" % a for a in unexpected]}
+        owner = sel.owner
+        warnings = [w for w in warnings if not re.search(r"0x([0-9A-F]{8})", w)
+                    or owner(int(re.search(r"0x([0-9A-F]{8})", w).group(1), 16)) in kept]
+        gen_errors = sub_errors
+        extra = [a for a in extra if a in kept]
+        xa_missing = [b for b in xa_missing if owner(b) in kept]
+        def problem_in_kept(p):
+            m = re.search(r"[0-9A-F]{8}", p)
+            return not m or owner(int(m.group(0), 16)) in kept
+        # (problem messages name the bctr or function address first)
+        rep["problems"] = [p for p in rep["problems"] if problem_in_kept(p)]
+        log("%s: kept %d of %d functions (%d bytes), %d hooks" % (mod, len(kept), len(funcs), selection["kept_bytes"], len(hooks)))
     write_glue(os.path.join(mdir, "glue"), mod, rep, img.data, recompiler_id(),
-               img.xex.raw[:img.xex.pe_offset])
+               img.xex.raw[:img.xex.pe_offset], hooks=hooks, run_entry=not subset_cfg)
 
     summary = {
         "module": mod,
@@ -286,6 +324,7 @@ def recompile_module(mod, xex, out, xr_src, recomp_exe, analyse_exe, args):
         "generated_errors": gen_errors,
         "xenonanalyse_tables": len(xa_bases),
         "xenonanalyse_tables_we_lack": ["%08X" % b for b in xa_missing],
+        "subset": selection,
     }
     rep["build"] = summary
     with open(os.path.join(mdir, mod + "_analysis.json"), "w") as f:
@@ -312,7 +351,7 @@ def main():
     ap.add_argument("--package", required=True, help="STFS package, a zip of it, or a folder with the extracted files")
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "recomp"), help="output directory")
     ap.add_argument("--xenonrecomp", help="XenonRecomp checkout (default: $QAA_XENONRECOMP or a sibling checkout)")
-    ap.add_argument("--modules", default="qagame,cgame")
+    ap.add_argument("--modules", default="qagame,cgame,ui")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--build-type", default="Release")
     ap.add_argument("--skip-native", action="store_true", help="stop after generating C++")

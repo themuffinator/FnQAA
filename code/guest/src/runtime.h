@@ -11,6 +11,7 @@
 #include "qaa_module_abi.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdarg>
 #include <map>
@@ -98,6 +99,8 @@ struct Thread {
 	uint32_t thread_id = 0;
 	uint32_t tls[TLS_SLOTS] = {};
 	int depth = 0;								/* nested calls into the guest */
+	const struct KObject *blocked_on = nullptr;	/* first object of the wait this thread is in (wait_lock) */
+	uint64_t waits_begun = 0;					/* waits entered so far (wait_lock) */
 	struct {									/* a guest exception being unwound */
 		bool active = false;
 		int frames_left = 0;					/* frames still to leave before the handler */
@@ -149,6 +152,11 @@ struct HostCall {
 	qaa_module *module = nullptr;
 };
 
+struct Hook {
+	qaa_hook_fn fn = nullptr;
+	void *user = nullptr;
+};
+
 } // namespace qaa
 
 struct qaa_module {
@@ -177,6 +185,13 @@ struct Guest {
 	std::mutex host_call_lock;
 	std::vector<std::unique_ptr<qaa_module>> modules;
 
+	/* host implementations of guest functions and imports (qaa_guest_set_hook) */
+	std::mutex hook_lock;
+	std::unordered_map<uint32_t, Hook> hooks;
+	Hook default_hook;
+	std::unordered_map<uint32_t, Hook> import_hooks;	/* library << 16 | ordinal */
+	Hook default_import_hook;
+
 	/* kernel state */
 	std::mutex handle_lock;
 	std::unordered_map<uint32_t, std::shared_ptr<KObject>> handles;
@@ -191,6 +206,10 @@ struct Guest {
 	bool trace_kernel = false;
 	uint32_t var_hardware_info = 0, var_debug_monitor = 0, var_thread_type = 0;
 	uint32_t var_exe_module = 0, exe_ldr_entry = 0, exe_xex_header = 0;
+	uint32_t var_time_stamp = 0, var_event_type = 0, var_krnl_version = 0;
+	std::map<uint32_t, uint32_t> var_blank;	/* imports with no meaning on the PC: zeroed blocks */
+	std::mutex var_lock;
+	std::chrono::steady_clock::time_point start_time;
 	double tsc_frequency = 0;
 
 	std::mutex error_lock;
@@ -238,10 +257,15 @@ uint32_t SehResume(PPCContext &ctx, uint8_t *base, uint32_t site);
 
 void StartGuestThread(Guest *g, std::shared_ptr<KThreadObject> obj);
 
+/* Run a host hook for the call the guest is making now (registers in ctx). */
+void RunHook(Guest *g, const Hook &h, uint32_t address, PPCContext &ctx);
+
 /* kernel.cpp */
 void KernelInit(Guest *g);
 void KernelCall(uint32_t library, uint32_t ordinal, PPCContext &ctx, uint8_t *base);
 uint32_t KernelVariable(Guest *g, const char *library, uint32_t ordinal, const char *name);
+/* Refresh KeTimeStampBundle, which the guest reads directly. */
+void UpdateTimeStamp(Guest *g);
 uint32_t MakeLdrEntry(Guest *g, uint32_t image_base, uint32_t image_size, uint32_t entry, const char *name,
 	const void *xex_header, size_t xex_header_size);
 uint32_t CopyXexHeader(Guest *g, const void *data, size_t size);

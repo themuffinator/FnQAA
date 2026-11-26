@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 extern "C" {
 #include "client.h"
+#include "cl_qaa_ui.h"
 }
 
 #include "../renderercommon/ql_font_text.h"
@@ -1230,6 +1231,9 @@ static void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 	if ( uiVisible && !browserSuppressUiRefresh ) {
 		VM_Call( uivm, 1, UI_REFRESH, cls.realtime );
 	}
+	// QAA: the Scaleform front end draws over everything but the console:
+	// menus, the HUD and the scoreboards are all its movies (cl_qaa_ui.cpp).
+	QAA_UI_Draw();
 
 	// Native connection and level-loading screens retain exclusive ownership of
 	// the frame even if a late browser callback leaves its overlay state armed.

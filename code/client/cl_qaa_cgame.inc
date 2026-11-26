@@ -573,10 +573,14 @@ static int64_t QAA_CgameSyscall( void *, qaa_module *, const qaa_syscall *call )
 		return 1;
 	}
 	default:
+		if ( t >= 116 && t <= 140 ) {
+			// the Scaleform front end: HUD data, scoreboards and menu events
+			// (cl_qaa_ui.cpp); the Live member queries in this range answer 0
+			return QAA_UI_CgameTrap( t, a );
+		}
 		if ( t >= 112 && t <= 142 ) {
-			// Rumble, achievements, Xbox Live and the Scaleform menus: the
-			// menus come in M6; without Live the member queries answer 0, as
-			// retail answers without a session.
+			// Rumble, achievements and Xbox Live: without Live the member
+			// queries answer 0, as retail answers without a session.
 			if ( !qaaCgameWarnedLive && ( t == 113 || t == 114 ) ) {
 				qaaCgameWarnedLive = true;
 				Com_DPrintf( "QAA: rumble and achievements are not on the PC yet\n" );

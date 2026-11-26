@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 extern "C" {
 #include "client.h"
+#include "cl_qaa_ui.h"
 
 #include "../botlib/botlib.h"
 }
@@ -2845,6 +2846,10 @@ void CL_InitCGame( void ) {
 
 	Com_Printf( "CL_InitCGame: %5.2f seconds\n", (t2-t1)/1000.0 );
 
+	// QAA: the front end's loading screen waits for this (retail CL_InitCGame
+	// 0x821023F8 fires "ClientLoadComplete")
+	QAA_UI_ClientLoadComplete();
+
 	// have the renderer touch all its images, so they are present
 	// on the card even if the driver does deferred loading
 	re.EndRegistration();
@@ -2981,6 +2986,10 @@ static void CL_FirstSnapshot( void ) {
 		return;
 	}
 	cls.state = CA_ACTIVE;
+
+	// QAA: the front end shows the HUD (retail 0x82102988 queues
+	// _global.sceneManager.gotoScene for the "hud" movie)
+	QAA_UI_EnterGame();
 
 	// clear old game so we will not switch back to old mod on disconnect
 	CL_ResetOldGame();

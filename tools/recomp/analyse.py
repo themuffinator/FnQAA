@@ -51,8 +51,9 @@ class Problem(Exception):
 
 
 class Analysis:
-    def __init__(self, img, extra_functions=()):
+    def __init__(self, img, extra_functions=(), switch_overrides=None):
         self.img = img
+        self.switch_overrides = switch_overrides or {}
         self.problems = []      # unresolved issues (fail the build when strict)
         self.notes = []         # resolved oddities worth reporting
         self.extra_functions = list(extra_functions)
@@ -316,6 +317,9 @@ class Analysis:
         return False
 
     def decode_switch(self, bctr):
+        ov = self.switch_overrides.get(bctr)
+        if ov:
+            return self.decode_switch_override(bctr, ov)
         # mtctr rX within the 4 preceding instructions
         mt = None
         for k in range(1, 5):
@@ -391,6 +395,20 @@ class Analysis:
             labels.append(ctr)
         return {"base": bctr, "cmp": cmp, "r": index_reg, "default": default, "labels": labels}
 
+    def decode_switch_override(self, bctr, ov):
+        """A table whose bounds check is not next to it (a state machine
+        that checks its state at the bottom of the loop): the config names
+        the index register, the case count and where the dispatch starts."""
+        index_reg, count, start = ov["index"], ov["count"], ov["start"]
+        labels = []
+        for i in range(count):
+            regs = {index_reg: i}
+            ctr = self.emulate(start, bctr, regs)
+            if ctr is None or not self.img.in_code(ctr) or ctr & 3:
+                raise Problem("override: case %d is not computable" % i)
+            labels.append(ctr)
+        return {"base": bctr, "cmp": start, "r": index_reg, "default": bctr + 4, "labels": labels}
+
     def emulate(self, start, end, regs, skip=None):
         """Run the straight-line code [start, end) with partially known
         registers; return the value moved to CTR, or None."""
@@ -456,6 +474,10 @@ class Analysis:
                     put(s_, None)
             elif ppc.is_b(w) or ppc.is_bc(w) or op == 19:
                 return None
+            elif op in (48, 50, 59, 63, 4):
+                pass  # lfs, lfd, FP arithmetic and VMX write no GPR
+            elif op in (49, 51):
+                put(s_, None)  # lfsu, lfdu update rA
             else:
                 # Anything else: assume it may write either register field.
                 if op not in (36, 37, 38, 39, 44, 45, 52, 53, 54, 55, 62, 10, 11):  # stores, compares

@@ -139,6 +139,9 @@ class ModuleImage:
     # ---- imports / exports ------------------------------------------------
     def _parse_imports(self, kernel_table):
         names = load_export_names(kernel_table) if kernel_table else {}
+        # XAM names from the table next to xboxkrnl's, as XenonRecomp names them
+        xam_table = os.path.join(os.path.dirname(kernel_table), "xam_table.inc") if kernel_table else None
+        xam_names = load_export_names(xam_table) if xam_table and os.path.exists(xam_table) else {}
         self.imports = []
         for lib, _ver, recs in self.xex.import_libraries():
             by_ord = {}
@@ -151,6 +154,8 @@ class ModuleImage:
                     self.imports.append(imp)
                     if lib == "xboxkrnl.exe" and ordinal in names:
                         imp.name, imp.kind = names[ordinal]
+                    elif lib == "xam.xex" and ordinal in xam_names:
+                        imp.name, imp.kind = xam_names[ordinal]
                 if kind == 0:
                     imp.slot = rec
                 else:

@@ -101,6 +101,9 @@ enum : uint32_t {
 	X(0x1A5, __C_specific_handler)
 
 enum : uint32_t {
+	ORD_ExEventObjectType = 0x00E,
+	ORD_KeTimeStampBundle = 0x0AD,
+	ORD_XboxKrnlVersion = 0x158,
 	ORD_ExThreadObjectType = 0x01B,
 	ORD_KeDebugMonitorData = 0x059,
 	ORD_XboxHardwareInfo = 0x156,
@@ -262,6 +265,8 @@ void KernelInit(Guest *g) {
 	m.W8(g->var_hardware_info + 4, 6);				/* hardware threads */
 	g->var_debug_monitor = g->pool.Alloc(0x10);		/* no debugger: zero */
 	g->var_thread_type = g->pool.Alloc(0x40);		/* OBJECT_TYPE: contents unused */
+	g->start_time = std::chrono::steady_clock::now();
+	g->var_time_stamp = g->pool.Alloc(0x20);
 	m.W32(g->var_thread_type + 0x10, 0x54687264);	/* pool tag 'Thrd' */
 	/* the executable's module handle: default.xex is not loaded, so its
 	 * header has no optional headers and the modules use their defaults */
@@ -288,8 +293,50 @@ uint32_t KernelVariable(Guest *g, const char *library, uint32_t ordinal, const c
 	case ORD_KeDebugMonitorData: return g->var_debug_monitor;
 	case ORD_ExThreadObjectType: return g->var_thread_type;
 	case ORD_XexExecutableModuleHandle: return g->var_exe_module;
-	default: return 0;
+	case ORD_ExEventObjectType: {
+		std::lock_guard<std::mutex> l(g->var_lock);
+		if (!g->var_event_type) {
+			g->var_event_type = g->pool.Alloc(0x40);
+			g->memory.W32(g->var_event_type + 0x10, 0x76657645);	/* pool tag 'Even' */
+		}
+		return g->var_event_type;
 	}
+	case ORD_KeTimeStampBundle:
+		UpdateTimeStamp(g);
+		return g->var_time_stamp;
+	case ORD_XboxKrnlVersion: {
+		std::lock_guard<std::mutex> l(g->var_lock);
+		if (!g->var_krnl_version) {
+			/* { u16 Major, Minor, Build, Qfe }: a late retail kernel */
+			g->var_krnl_version = g->pool.Alloc(8);
+			g->memory.W16(g->var_krnl_version + 0, 2);
+			g->memory.W16(g->var_krnl_version + 4, 17559);
+		}
+		return g->var_krnl_version;
+	}
+	default: {
+		/* The title executable imports variables that mean nothing on the
+		 * PC (the GPU device, ExLoadedCommandLine, certificate data): a
+		 * zeroed block, so code that reads one finds empty data. */
+		std::lock_guard<std::mutex> l(g->var_lock);
+		uint32_t &v = g->var_blank[ordinal];
+		if (!v)
+			v = g->pool.Alloc(0x100);
+		return v;
+	}
+	}
+}
+
+void UpdateTimeStamp(Guest *g) {
+	if (!g->var_time_stamp)
+		return;
+	/* KTIME_STAMP_BUNDLE { u64 InterruptTime; u64 SystemTime; u32 TickCount; }:
+	 * the guest reads it directly (GetTickCount) */
+	using namespace std::chrono;
+	uint64_t ms = (uint64_t)duration_cast<milliseconds>(steady_clock::now() - g->start_time).count();
+	g->memory.W64(g->var_time_stamp + 0x00, ms * 10000);
+	g->memory.W64(g->var_time_stamp + 0x08, ms * 10000);
+	g->memory.W32(g->var_time_stamp + 0x10, (uint32_t)ms);
 }
 
 /* ---- waits ------------------------------------------------------------------- */
@@ -298,10 +345,25 @@ static bool IsWaitable(const std::shared_ptr<KObject> &o) {
 	return o && (o->type == KObject::K_EVENT || o->type == KObject::K_THREAD);
 }
 
+static uint32_t WaitObjectsLocked(Guest *g, std::unique_lock<std::mutex> &l, std::vector<std::shared_ptr<KObject>> &objs,
+	bool wait_all, std::chrono::steady_clock::time_point deadline);
+
 static uint32_t WaitObjects(std::vector<std::shared_ptr<KObject>> &objs, bool wait_all, uint32_t timeout_ptr) {
 	Guest *g = G();
 	auto deadline = Deadline(timeout_ptr);
 	std::unique_lock<std::mutex> l(g->wait_lock);
+	/* qaa_guest_step_thread watches what each thread waits on */
+	Thread *t = tls_current_thread;
+	t->blocked_on = objs.empty() ? nullptr : objs[0].get();
+	t->waits_begun++;
+	g->wait_cv.notify_all();
+	uint32_t r = WaitObjectsLocked(g, l, objs, wait_all, deadline);
+	t->blocked_on = nullptr;
+	return r;
+}
+
+static uint32_t WaitObjectsLocked(Guest *g, std::unique_lock<std::mutex> &l, std::vector<std::shared_ptr<KObject>> &objs,
+	bool wait_all, std::chrono::steady_clock::time_point deadline) {
 	for (;;) {
 		if (wait_all) {
 			bool all = std::all_of(objs.begin(), objs.end(), [](auto &o) { return o->signaled; });
@@ -900,14 +962,32 @@ uint32_t SehResume(PPCContext &, uint8_t *, uint32_t site) {
 
 /* ---- the dispatcher ---------------------------------------------------------------------- */
 
+/* An import the runtime does not implement: the host's import hook, if any. */
+static bool RunImportHook(Guest *g, uint32_t library, uint32_t ordinal, PPCContext &ctx) {
+	Hook h;
+	{
+		std::lock_guard<std::mutex> l(g->hook_lock);
+		auto it = g->import_hooks.find(library << 16 | ordinal);
+		h = it != g->import_hooks.end() ? it->second : g->default_import_hook;
+	}
+	if (!h.fn)
+		return false;
+	RunHook(g, h, (library << 16) | ordinal, ctx);
+	return true;
+}
+
 void KernelCall(uint32_t library, uint32_t ordinal, PPCContext &ctx, uint8_t *base) {
 	Thread *t = tls_current_thread;
 	if (!t)
 		abort();	/* a module called the kernel outside a guest call */
 	Guest *g = t->guest;
+	UpdateTimeStamp(g);
 	Memory &m = g->memory;
-	if (library != 0)
+	if (library != 0) {
+		if (RunImportHook(g, library, ordinal, ctx))
+			return;
 		Fatal("call to unimplemented %s ordinal %u", "xam.xex", ordinal);
+	}
 	if (g->trace_kernel)
 		g->Log(QAA_LOG_DEBUG, "kernel: %s(%08X, %08X, %08X, %08X) lr %08X", KernelName(ordinal) ? KernelName(ordinal) : "?",
 			ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, (uint32_t)ctx.lr);
@@ -1383,6 +1463,8 @@ void KernelCall(uint32_t library, uint32_t ordinal, PPCContext &ctx, uint8_t *ba
 		Fatal("__C_specific_handler called directly");
 
 	default:
+		if (RunImportHook(g, library, ordinal, ctx))
+			return;
 		Fatal("call to unimplemented xboxkrnl ordinal 0x%03X", ordinal);
 	}
 	ctx.r3.u64 = r;

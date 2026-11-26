@@ -167,6 +167,61 @@ void qaa_guest_abort(qaa_guest *guest, const char *message);
 /* Call any guest function with up to 16 integer arguments. */
 int qaa_guest_call(qaa_guest *guest, uint32_t function, const int64_t *args, int nargs, int64_t *result);
 
+/* ---- hooks: guest functions the host implements --------------------------- */
+
+/*
+ * A module recompiled from part of an image (the front end inside
+ * default.xex, docs/UI.md) calls functions that were not recompiled: the
+ * engine code openQAA replaces. Each such call, direct or indirect, comes
+ * to the host's hook for that guest address with the guest's registers.
+ * The handler reads the arguments, does the work and writes the results.
+ * It may call into the guest again (qaa_guest_call*).
+ */
+typedef struct qaa_hook_call {
+	uint32_t address;			/* the guest function called */
+	uint32_t return_address;	/* guest LR: the call site */
+	uint32_t sp;				/* guest r1: stack arguments are the low words at sp + 0x54 + 8k */
+	uint64_t r[8];				/* r3..r10 on entry; r[0] (r3) is the result */
+	double f[13];				/* f1..f13 on entry; f[0] (f1) is the float result */
+} qaa_hook_call;
+
+typedef void (*qaa_hook_fn)(void *user, qaa_hook_call *call);
+
+/* Handle calls to address with fn (NULL removes the hook). */
+int qaa_guest_set_hook(qaa_guest *guest, uint32_t address, qaa_hook_fn fn, void *user);
+/* For calls to a non-recompiled address that has no hook; without one such a
+ * call is a fatal guest error. */
+void qaa_guest_set_default_hook(qaa_guest *guest, qaa_hook_fn fn, void *user);
+
+/*
+ * Kernel imports the runtime does not implement (the front end imports far
+ * more of xboxkrnl and XAM than the game modules): library is
+ * "xboxkrnl.exe" or "xam.xex". call->address is library << 16 | ordinal (0 xboxkrnl, 1 XAM). The default
+ * import hook takes every unimplemented import of every library.
+ */
+int qaa_guest_set_import_hook(qaa_guest *guest, const char *library, uint32_t ordinal, qaa_hook_fn fn, void *user);
+void qaa_guest_set_default_import_hook(qaa_guest *guest, qaa_hook_fn fn, void *user);
+
+/* Call a guest function with up to 8 integer and 13 float arguments. */
+int qaa_guest_call_regs(qaa_guest *guest, uint32_t function, const uint64_t *r, int nr, const double *f, int nf,
+	uint64_t *r3, double *f1);
+
+/*
+ * Lockstep with a guest worker thread: wait until the guest thread with
+ * the given thread handle is blocked waiting on the object behind
+ * event_handle (or has exited). Returns 0, or -1 on timeout (timeout_ms < 0
+ * waits forever) or for a bad handle. The front end's update thread runs
+ * one iteration per frame event; the engine signals it and waits here, so
+ * the engine and the thread never run at the same time.
+ */
+int qaa_guest_wait_thread_blocked(qaa_guest *guest, uint32_t thread_handle, uint32_t event_handle, int timeout_ms);
+/* One step of such a thread: it must be parked on event_handle; signal the
+ * event and wait until the thread enters its next wait on it (or exits).
+ * Returns 0, or -1 on timeout or a bad handle. */
+int qaa_guest_step_thread(qaa_guest *guest, uint32_t thread_handle, uint32_t event_handle, int timeout_ms);
+/* Signal an event handle the guest created (as NtSetEvent). */
+int qaa_guest_set_event(qaa_guest *guest, uint32_t event_handle);
+
 /* ---- guest memory ------------------------------------------------------- */
 
 /* Host address of guest address 0; guest address a is at base + a. */

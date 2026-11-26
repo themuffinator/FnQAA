@@ -344,6 +344,9 @@ client_src = [
   'code/client/cl_parse.cpp',
   'code/client/cl_scrn.cpp',
   'code/client/cl_ui.cpp',
+  # QAA: QAA's Scaleform front end, recompiled from default.xex (M6).
+  'code/client/cl_qaa_ui.cpp',
+  'code/client/cl_qaa_ui_raster.cpp',
   # QAA: no Awesomium WebUI; QAA's menus are Scaleform (M6).
   'code/qaa/qaa_null_webui.cpp',
   'code/client/audio/snd_main.cpp',

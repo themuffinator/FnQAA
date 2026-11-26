@@ -234,11 +234,16 @@ uint32_t VirtualArena::Allocate(uint32_t *address, uint32_t *size, uint32_t type
 		*size = want;
 		return STATUS_SUCCESS_;
 	}
-	/* commit (or re-reserve) inside an existing reservation */
+	/* commit (or re-reserve) inside an existing reservation. MEM_LARGE_PAGES
+	 * asks for the Xbox's 64 KiB pages: the range grows to whole 64 KiB
+	 * pages, which the title's NT heap (default.xex's CRT) relies on. */
 	if (a < begin || (uint64_t)a + want > end)
 		return STATUS_CONFLICTING_ADDRESSES_;
-	uint32_t first = a & ~(PAGE - 1);
-	uint32_t last = (uint32_t)(((uint64_t)a + want + PAGE - 1) & ~(uint64_t)(PAGE - 1));
+	const uint32_t page = (type & 0x20000000u) ? 0x10000u : PAGE;	/* MEM_LARGE_PAGES */
+	uint32_t first = a & ~(page - 1);
+	uint32_t last = (uint32_t)(((uint64_t)a + want + page - 1) & ~(uint64_t)(page - 1));
+	if (last > end)
+		last = end;
 	for (uint32_t p = first; p < last; p += PAGE)
 		if (pages[(p - begin) / PAGE] == FREE)
 			return STATUS_CONFLICTING_ADDRESSES_;
@@ -275,14 +280,15 @@ uint32_t VirtualArena::Free(uint32_t *address, uint32_t *size, uint32_t type) {
 		return STATUS_SUCCESS_;
 	}
 	if (type & MEM_DECOMMIT_) {
+		/* The pages stay committed. The title's NT heap (default.xex's CRT,
+		 * 0x821D47E8) decommits free space on 64 KiB boundaries and then
+		 * writes block headers that its arithmetic places inside the range
+		 * it just gave back; on the Xbox that worked because its heap runs
+		 * on 64 KiB pages. Keeping the memory costs only address space. */
 		uint32_t first = a & ~(PAGE - 1);
 		uint32_t last = (uint32_t)(((uint64_t)a + *size + PAGE - 1) & ~(uint64_t)(PAGE - 1));
 		if (last > end)
 			return STATUS_INVALID_PARAMETER_;
-		memory->Decommit(first, last - first);
-		for (uint32_t p = first; p < last; p += PAGE)
-			if (pages[(p - begin) / PAGE] == COMMITTED)
-				pages[(p - begin) / PAGE] = RESERVED;
 		*address = first;
 		*size = last - first;
 		return STATUS_SUCCESS_;
@@ -618,7 +624,8 @@ int RunGuarded(Guest *g, GuestFunc *fn, PPCContext &ctx, uint8_t *base, bool thr
 /* ==== calls into the guest ================================================================== */
 
 static int CallGuestEx(Guest *g, Thread *t, uint32_t function, const int64_t *args, int nargs, int64_t *result,
-	bool thread_entry, uint32_t *exit_code, const uint64_t *r12 = nullptr) {
+	bool thread_entry, uint32_t *exit_code, const uint64_t *r12 = nullptr,
+	const double *fargs = nullptr, int nfargs = 0, double *f1 = nullptr) {
 	GuestFunc *fn = g->Lookup(function);
 	if (!fn) {
 		char e[96];
@@ -660,12 +667,18 @@ static int CallGuestEx(Guest *g, Thread *t, uint32_t function, const int64_t *ar
 	}
 	for (int k = 0; k < nstack; k++)
 		g->memory.W64(sp + 0x50 + 8 * k, (uint64_t)args[8 + k]);
+	{
+		PPCRegister *fr = &ctx.f1;
+		for (int k = 0; k < nfargs && k < 13; k++)
+			fr[k].f64 = fargs[k];
+	}
 	ctx.r1.u64 = sp;
 	ctx.r13.u64 = t->pcr;
 	ctx.lr = 0;
 	if (r12)
 		ctx.r12.u64 = *r12;
 
+	UpdateTimeStamp(g);
 	unsigned host_csr = _mm_getcsr();
 	if (t->depth == 0)
 		ctx.fpscr.loadFromHost();
@@ -674,6 +687,8 @@ static int CallGuestEx(Guest *g, Thread *t, uint32_t function, const int64_t *ar
 	t->depth--;
 	if (r == 0 && result)
 		*result = ctx.r3.s64;
+	if (r == 0 && f1)
+		*f1 = ctx.f1.f64;
 	if (saved)
 		ctx = *saved;
 	_mm_setcsr(host_csr);
@@ -821,7 +836,37 @@ static void IndirectMiss(PPCContext &ctx, uint8_t *base, uint32_t target) {
 			return;
 		}
 	}
+	if (g) {
+		Hook h;
+		{
+			std::lock_guard<std::mutex> l(g->hook_lock);
+			auto it = g->hooks.find(target);
+			h = it != g->hooks.end() ? it->second : g->default_hook;
+		}
+		if (h.fn) {
+			RunHook(g, h, target, ctx);
+			return;
+		}
+	}
 	Fatal("indirect call to %08X, which is no recompiled function (lr %08X)", target, (uint32_t)ctx.lr);
+}
+
+void RunHook(Guest *g, const Hook &h, uint32_t address, PPCContext &ctx) {
+	UpdateTimeStamp(g);
+	qaa_hook_call call;
+	call.address = address;
+	call.return_address = (uint32_t)ctx.lr;
+	call.sp = ctx.r1.u32;
+	/* PPCContext keeps r3 first and r0..r2 after it: name each register */
+	PPCRegister *const regs[8] = { &ctx.r3, &ctx.r4, &ctx.r5, &ctx.r6, &ctx.r7, &ctx.r8, &ctx.r9, &ctx.r10 };
+	for (int k = 0; k < 8; k++)
+		call.r[k] = regs[k]->u64;
+	const PPCRegister *f = &ctx.f1;
+	for (int k = 0; k < 13; k++)
+		call.f[k] = f[k].f64;
+	h.fn(h.user, &call);
+	ctx.r3.u64 = call.r[0];
+	ctx.f1.f64 = call.f[0];
 }
 
 static void TrapHook(PPCContext &ctx, uint8_t *, uint32_t address) {
@@ -1110,6 +1155,116 @@ void qaa_guest_abort(qaa_guest *, const char *message) {
 
 int qaa_guest_call(qaa_guest *g, uint32_t function, const int64_t *args, int nargs, int64_t *result) {
 	return CallGuest(g, function, args, nargs, result) ? QAA_ERROR : QAA_OK;
+}
+
+int qaa_guest_call_regs(qaa_guest *g, uint32_t function, const uint64_t *r, int nr, const double *f, int nf,
+	uint64_t *r3, double *f1) {
+	Thread *t = g->CurrentThread();
+	if (!t) {
+		g->SetError("cannot create guest thread state");
+		return QAA_ERROR;
+	}
+	if (nr < 0 || nr > 8 || nf < 0 || nf > 13) {
+		g->SetError("too many register arguments");
+		return QAA_ERROR;
+	}
+	int64_t a[8] = {};
+	for (int k = 0; k < nr; k++)
+		a[k] = (int64_t)r[k];
+	int64_t res = 0;
+	int rc = CallGuestEx(g, t, function, a, nr, &res, false, nullptr, nullptr, f, nf, f1);
+	if (rc == 0 && r3)
+		*r3 = (uint64_t)res;
+	return rc ? QAA_ERROR : QAA_OK;
+}
+
+int qaa_guest_set_hook(qaa_guest *g, uint32_t address, qaa_hook_fn fn, void *user) {
+	std::lock_guard<std::mutex> l(g->hook_lock);
+	if (fn)
+		g->hooks[address] = { fn, user };
+	else
+		g->hooks.erase(address);
+	return QAA_OK;
+}
+
+void qaa_guest_set_default_hook(qaa_guest *g, qaa_hook_fn fn, void *user) {
+	std::lock_guard<std::mutex> l(g->hook_lock);
+	g->default_hook = { fn, user };
+}
+
+static uint32_t LibraryIndex(const char *library) {
+	return library && !strcmp(library, "xam.xex") ? 1 : 0;
+}
+
+int qaa_guest_set_import_hook(qaa_guest *g, const char *library, uint32_t ordinal, qaa_hook_fn fn, void *user) {
+	std::lock_guard<std::mutex> l(g->hook_lock);
+	uint32_t key = LibraryIndex(library) << 16 | (ordinal & 0xFFFF);
+	if (fn)
+		g->import_hooks[key] = { fn, user };
+	else
+		g->import_hooks.erase(key);
+	return QAA_OK;
+}
+
+void qaa_guest_set_default_import_hook(qaa_guest *g, qaa_hook_fn fn, void *user) {
+	std::lock_guard<std::mutex> l(g->hook_lock);
+	g->default_import_hook = { fn, user };
+}
+
+int qaa_guest_wait_thread_blocked(qaa_guest *g, uint32_t thread_handle, uint32_t event_handle, int timeout_ms) {
+	auto th = g->GetHandle(thread_handle);
+	auto ev = g->GetHandle(event_handle);
+	if (!th || th->type != KObject::K_THREAD || !ev)
+		return QAA_ERROR;
+	auto *kt = static_cast<KThreadObject *>(th.get());
+	std::unique_lock<std::mutex> l(g->wait_lock);
+	auto ready = [&] { return kt->signaled || (kt->thread && kt->thread->blocked_on == ev.get()); };
+	if (timeout_ms < 0) {
+		g->wait_cv.wait(l, ready);
+		return QAA_OK;
+	}
+	return g->wait_cv.wait_for(l, std::chrono::milliseconds(timeout_ms), ready) ? QAA_OK : QAA_ERROR;
+}
+
+int qaa_guest_step_thread(qaa_guest *g, uint32_t thread_handle, uint32_t event_handle, int timeout_ms) {
+	auto th = g->GetHandle(thread_handle);
+	auto ev = g->GetHandle(event_handle);
+	if (!th || th->type != KObject::K_THREAD || !ev || ev->type != KObject::K_EVENT)
+		return QAA_ERROR;
+	auto *kt = static_cast<KThreadObject *>(th.get());
+	std::unique_lock<std::mutex> l(g->wait_lock);
+	if (kt->signaled || !kt->thread)
+		return QAA_ERROR;
+	/* the thread must be parked on the event: signal it, then wait for it
+	 * to enter a new wait on the same event (or exit) */
+	auto parked = [&] { return kt->signaled || kt->thread->blocked_on == ev.get(); };
+	if (!g->wait_cv.wait_for(l, std::chrono::milliseconds(timeout_ms < 0 ? 600000 : timeout_ms), parked))
+		return QAA_ERROR;
+	if (kt->signaled)
+		return QAA_ERROR;
+	const uint64_t before = kt->thread->waits_begun;
+	ev->signaled = true;
+	g->wait_cv.notify_all();
+	auto back = [&] {
+		return kt->signaled || (kt->thread->waits_begun > before && kt->thread->blocked_on == ev.get());
+	};
+	if (timeout_ms < 0) {
+		g->wait_cv.wait(l, back);
+		return QAA_OK;
+	}
+	return g->wait_cv.wait_for(l, std::chrono::milliseconds(timeout_ms), back) ? QAA_OK : QAA_ERROR;
+}
+
+int qaa_guest_set_event(qaa_guest *g, uint32_t event_handle) {
+	auto ev = g->GetHandle(event_handle);
+	if (!ev || ev->type != KObject::K_EVENT)
+		return QAA_ERROR;
+	{
+		std::lock_guard<std::mutex> l(g->wait_lock);
+		ev->signaled = true;
+	}
+	g->wait_cv.notify_all();
+	return QAA_OK;
 }
 
 uint8_t *qaa_guest_base(const qaa_guest *g) { return g->memory.base; }
