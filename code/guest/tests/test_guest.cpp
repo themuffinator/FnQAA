@@ -9,8 +9,9 @@
 #include <cstring>
 #include <string>
 
+/* The synthetic module library: argv[1], or the path the build defines. */
 #ifndef QAA_SYNTHETIC_MODULE
-#error "QAA_SYNTHETIC_MODULE must name the synthetic module library"
+#define QAA_SYNTHETIC_MODULE nullptr
 #endif
 
 static int failures = 0, checks = 0;
@@ -33,7 +34,22 @@ static void HostLog(void *, int level, const char *msg) {
 		fprintf(stderr, "  [guest log %d] %s\n", level, msg);
 }
 
+static int HostDirEntry(void *, const char *path, uint32_t index, char *name, size_t size, qaa_file_info *info) {
+	static const char *entries[] = { "a.txt", "b.cfg", "cc.txt" };
+	if (strcmp(path, "game:\\d") || index >= 3)
+		return -1;
+	snprintf(name, size, "%s", entries[index]);
+	info->size = 10 * (index + 1);
+	info->is_directory = 0;
+	return 0;
+}
+
 static int HostStat(void *, const char *path, qaa_file_info *info) {
+	if (!strcmp(path, "game:\\d")) {
+		info->size = 0;
+		info->is_directory = 1;
+		return 0;
+	}
 	if (strcmp(path, "game:\\test.txt"))
 		return -1;
 	info->size = sizeof(file_data) - 1;
@@ -57,6 +73,13 @@ static int64_t HostRead(void *, int64_t h, int64_t off, void *buf, uint32_t len)
 }
 
 static int64_t HostSize(void *, int64_t) { return sizeof(file_data) - 1; }
+static int64_t resized = -1;
+static int HostSetSize(void *, int64_t h, int64_t size) {
+	if (h != 7)
+		return -1;
+	resized = size;
+	return 0;
+}
 static int closes = 0;
 static void HostClose(void *, int64_t) { closes++; }
 
@@ -93,7 +116,12 @@ static int64_t Syscall(void *user, qaa_module *m, const qaa_syscall *c) {
 	}
 }
 
-int main() {
+int main(int argc, char **argv) {
+	const char *module_path = argc > 1 ? argv[1] : QAA_SYNTHETIC_MODULE;
+	if (!module_path) {
+		fprintf(stderr, "usage: qaa_guest_tests <synthetic module library>\n");
+		return 2;
+	}
 	qaa_host host = {};
 	host.log = HostLog;
 	host.file_stat = HostStat;
@@ -101,6 +129,8 @@ int main() {
 	host.file_read = HostRead;
 	host.file_size = HostSize;
 	host.file_close = HostClose;
+	host.dir_entry = HostDirEntry;
+	host.file_set_size = HostSetSize;
 	char err[512] = "";
 	qaa_guest *g = qaa_guest_create(&host, err, sizeof(err));
 	CHECK(g != nullptr);
@@ -134,8 +164,16 @@ int main() {
 	uint32_t c = qaa_guest_alloc(g, 32);
 	CHECK(c == a);	/* first fit reuses the freed block */
 
+	/* the executable's XEX header (made up): 0x20401 = 0x00300000 */
+	static const uint8_t exe_header[0x20] = {
+		'X', 'E', 'X', '2', 0, 0, 0, 0, 0, 0, 0, 0x20, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 1, 0, 0x02, 0x04, 0x01, 0x00, 0x30, 0x00, 0x00,
+	};
+	CHECK(qaa_guest_set_executable_header(g, "nope", 4) == QAA_ERROR);
+	CHECK(qaa_guest_set_executable_header(g, exe_header, sizeof(exe_header)) == QAA_OK);
+
 	/* load: maps the image, binds imports, runs the entry point */
-	qaa_module *m = qaa_module_load(g, QAA_SYNTHETIC_MODULE, err, sizeof(err));
+	qaa_module *m = qaa_module_load(g, module_path, err, sizeof(err));
 	CHECK(m != nullptr);
 	if (!m) {
 		fprintf(stderr, "load: %s\n", err);
@@ -210,6 +248,41 @@ int main() {
 	/* 10: indirect call to nothing */
 	CHECK(qaa_module_vm_main(m, 10, nullptr, 0, &r) == QAA_ERROR);
 	CHECK(strstr(qaa_guest_last_error(g), "82012000") != nullptr);
+
+	/* 12, 13: RtlImageXexHeaderField on the module's and the executable's header */
+	CHECK(qaa_module_vm_main(m, 12, nullptr, 0, &r) == QAA_OK);
+	CHECK(r == 0x00200000);
+	CHECK(qaa_module_vm_main(m, 13, nullptr, 0, &r) == QAA_OK);
+	CHECK(r == 0x00300000);
+
+	/* 14: directory listing with a wildcard: a.txt and cc.txt */
+	CHECK(qaa_module_vm_main(m, 14, nullptr, 0, &r) == QAA_OK);
+	CHECK(r == 206);
+
+	/* 16: NtSetInformationFile end of file goes to the host */
+	CHECK(qaa_module_vm_main(m, 16, nullptr, 0, &r) == QAA_OK);
+	CHECK(r == 0 && resized == 7);
+
+	/* 15: guest SEH. No raise: 5 + 100 + 1000. */
+	int32_t mode = 0;
+	CHECK(qaa_module_vm_main(m, 15, &mode, 1, &r) == QAA_OK);
+	CHECK(r == 1105);
+	CHECK(qaa_guest_load32(g, 0x82002304) == 0);
+	/* NO_MEMORY: the outer filter accepts; mid's __finally runs (abnormal,
+	 * with mid's caller SP); r31 comes back from mid's save; the handler runs */
+	mode = 1;
+	CHECK(qaa_module_vm_main(m, 15, &mode, 1, &r) == QAA_OK);
+	CHECK(r == 7000);
+	CHECK(qaa_guest_load32(g, 0x82002304) == 1);
+	CHECK(qaa_guest_load32(g, 0x82002308) == qaa_guest_load32(g, 0x82002310));
+	CHECK(qaa_guest_load32(g, 0x8200230C) == 1);
+	/* the filter rejects E0001234: unhandled, the call fails */
+	mode = 2;
+	CHECK(qaa_module_vm_main(m, 15, &mode, 1, &r) == QAA_ERROR);
+	CHECK(strstr(qaa_guest_last_error(g), "unhandled guest exception E0001234") != nullptr);
+	/* and dispatch still works afterwards */
+	mode = 1;
+	CHECK(qaa_module_vm_main(m, 15, &mode, 1, &r) == QAA_OK && r == 7000);
 
 	/* 11: the host aborts from a syscall */
 	CHECK(qaa_module_vm_main(m, 11, nullptr, 0, &r) == QAA_ERROR);

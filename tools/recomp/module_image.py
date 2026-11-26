@@ -109,6 +109,7 @@ class ModuleImage:
         self.code_sections = [x for x in self.sections if x.code]
         pd = self.section(".pdata")
         self.pdata = []
+        self.prolog = {}  # function begin -> prologue length in instructions
         if pd:
             for i in range(pd.vsize // 8):
                 begin, info = struct.unpack_from(">II", d, pd.va - self.base + 8 * i)
@@ -117,6 +118,7 @@ class ModuleImage:
                 # Xbox 360 .pdata: PrologLength:8, FunctionLength:22,
                 # ThirtyTwoBit:1, ExceptionFlag:1 (low to high bits).
                 self.pdata.append((begin, ((info >> 8) & 0x3FFFFF) * 4, bool(info >> 31)))
+                self.prolog[begin] = info & 0xFF
             self.pdata.sort()
 
     def section(self, name):

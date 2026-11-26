@@ -1,5 +1,6 @@
 """Generate a recompiled module's glue: kernel import stubs, the module
-descriptor the guest runtime reads, and the decoded image it maps.
+descriptor the guest runtime reads, and the decoded image and XEX header
+it maps.
 
 The glue is build output (it embeds the user's decoded image); it is
 written next to XenonRecomp's output, never into the repository.
@@ -11,13 +12,44 @@ def c_string(s):
     return '"%s"' % s.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def write_glue(out_dir, name, report, image_bytes, recompiler_id):
-    """report: the analysis JSON dict (tools/recomp/analyse.py)."""
+def write_if_changed(path, data):
+    """Write only on change, so the native build does not redo work."""
+    binary = isinstance(data, bytes)
+    if os.path.exists(path):
+        with open(path, "rb" if binary else "r") as f:
+            if f.read() == data:
+                return
+    with open(path, "wb" if binary else "w") as f:
+        f.write(data)
+
+
+def byte_array(data):
+    """The bytes as a C initializer list, for compilers without #embed."""
+    rows = [",".join(str(b) for b in data[i:i + 32]) + "," for i in range(0, len(data), 32)]
+    return "\n".join(rows) + "\n"
+
+
+def embedded(var, fname):
+    """A byte array from fname: #embed where the compiler has it (clang 19
+    and later), else the generated .inc initializer list."""
+    return [
+        "alignas(16) static const unsigned char %s[] = {" % var,
+        "#if defined(__has_embed)",
+        '#embed "%s"' % fname,
+        "#else",
+        '#include "%s.inc"' % fname,
+        "#endif",
+        "};",
+    ]
+
+
+def write_glue(out_dir, name, report, image_bytes, recompiler_id, xex_header=b""):
+    """report: the analysis JSON dict (tools/recomp/analyse.py);
+    xex_header: the module's XEX file header (its bytes up to the PE data)."""
     os.makedirs(out_dir, exist_ok=True)
-    img_path = os.path.join(out_dir, "image.bin")
-    if not os.path.exists(img_path) or open(img_path, "rb").read() != image_bytes:
-        with open(img_path, "wb") as f:
-            f.write(image_bytes)
+    for fname, data in (("image.bin", image_bytes), ("xex_header.bin", xex_header or b"\0")):
+        write_if_changed(os.path.join(out_dir, fname), data)
+        write_if_changed(os.path.join(out_dir, fname + ".inc"), byte_array(data))
 
     imports = report["imports"]
     exports = report["exports"]
@@ -45,14 +77,9 @@ def write_glue(out_dir, name, report, image_bytes, recompiler_id):
         if imp["thunk"]:
             lines.append("PPC_FUNC(__imp__%s) { qaa_kernel_call(%d, 0x%03X, ctx, base); }" % (
                 imp["name"], libs.get(imp["library"], 2), imp["ordinal"]))
-    lines += [
-        "",
-        "alignas(16) static const unsigned char qaa_image[] = {",
-        '#embed "image.bin"',
-        "};",
-        "",
-        "static const qaa::ModuleImport qaa_imports[] = {",
-    ]
+    lines += [""] + embedded("qaa_image", "image.bin")
+    lines += [""] + embedded("qaa_xex_header", "xex_header.bin")
+    lines += ["", "static const qaa::ModuleImport qaa_imports[] = {"]
     for imp in imports:
         lines.append("\t{ %s, 0x%03X, %s, 0x%08X, 0x%08X, %s }," % (
             c_string(imp["library"]), imp["ordinal"],
@@ -65,10 +92,38 @@ def write_glue(out_dir, name, report, image_bytes, recompiler_id):
         lines.append("\t0x%08X," % exports.get(str(o), 0))
     if not nexp:
         lines.append("\t0,")
+    lines.append("};")
+
+    # guest exception dispatch tables (docs/RECOMP.md, "Exceptions")
+    pdata_len = {b: n for b, n, k in report["function_list"] if k == "pdata"}
+    seh = sorted(report.get("seh", []), key=lambda s: s["function"])
+    scope_rows, func_rows = [], []
+    for s in seh:
+        f = s["function"]
+        func_rows.append("\t{ 0x%08X, 0x%08X, %du, %du }," % (f, f + pdata_len.get(f, 0), len(scope_rows), len(s["scopes"])))
+        for sc in s["scopes"]:
+            scope_rows.append("\t{ 0x%08X, 0x%08X, 0x%08X, 0x%08X }," % (sc["begin"], sc["end"], sc["handler"], sc["target"]))
+    site_rows = ["\t{ 0x%08X, 0x%08X }," % (a, t) for a, t in report.get("seh_sites", [])]
+    unwind_rows, save_rows = [], []
+    for u in report.get("unwind", []):
+        unwind_rows.append("\t{ 0x%08X, 0x%08X, %du, %du }," % (u["function"], u["end"], len(save_rows), len(u["saves"])))
+        for kind, reg, off in u["saves"]:
+            save_rows.append("\t{ %s, %du, %d }," % ("qaa::UNWIND_GPR" if kind == "gpr" else "qaa::UNWIND_FPR", reg, off))
+
+    def table(ctype, name, rows, empty):
+        return ["", "static const %s %s[] = {" % (ctype, name)] + (rows or ["\t" + empty + ","]) + ["};"]
+
+    lines += table("qaa::SehScope", "qaa_seh_scopes", scope_rows, "{ 0, 0, 0, 0 }")
+    lines += table("qaa::SehFunction", "qaa_seh_functions", func_rows, "{ 0, 0, 0, 0 }")
+    lines += table("qaa::SehSite", "qaa_seh_sites", site_rows, "{ 0, 0 }")
+    lines += table("qaa::UnwindFunction", "qaa_unwind_functions", unwind_rows, "{ 0, 0, 0, 0 }")
+    lines += table("qaa::UnwindSave", "qaa_unwind_saves", save_rows, "{ 0, 0, 0 }")
     lines += [
-        "};",
+        "",
+        "uint32_t (*qaa_module_seh_resume)(PPCContext &ctx, uint8_t *base, uint32_t site);",
         "",
         "static void qaa_bind(const qaa::ModuleHost *host) {",
+        "\tqaa_module_seh_resume = host->seh_resume;",
         "\tqaa_module_func_pages = host->func_pages;",
         "\tqaa_module_indirect_miss = host->indirect_miss;",
         "\tqaa_module_trap = host->trap;",
@@ -94,15 +149,21 @@ def write_glue(out_dir, name, report, image_bytes, recompiler_id):
         "\t\tqaa_exports,",
         "\t\t%du," % nexp,
         "\t\tqaa_bind,",
+        "\t\t%s," % ("qaa_xex_header" if xex_header else "nullptr"),
+        "\t\t%du," % (len(xex_header) if xex_header else 0),
+        "\t\tqaa_seh_functions,",
+        "\t\t%du," % len(func_rows),
+        "\t\tqaa_seh_scopes,",
+        "\t\tqaa_seh_sites,",
+        "\t\t%du," % len(site_rows),
+        "\t\tqaa_unwind_functions,",
+        "\t\t%du," % len(unwind_rows),
+        "\t\tqaa_unwind_saves,",
         "\t};",
         "\treturn &desc;",
         "}",
         "",
     ]
     path = os.path.join(out_dir, "qaa_module_glue.cpp")
-    text = "\n".join(lines)
-    old = open(path).read() if os.path.exists(path) else None
-    if old != text:
-        with open(path, "w") as f:
-            f.write(text)
+    write_if_changed(path, "\n".join(lines))
     return path

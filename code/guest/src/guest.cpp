@@ -14,7 +14,9 @@
 #endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <process.h>
 #else
+#include <pthread.h>
 #include <dlfcn.h>
 #include <setjmp.h>
 #include <signal.h>
@@ -403,10 +405,6 @@ Thread *Guest::NewThread(uint32_t stack_size) {
 
 Thread::~Thread() { delete ctx; }
 
-KThreadObject::~KThreadObject() {
-	if (host.joinable())
-		host.detach();
-}
 
 static thread_local std::vector<std::pair<Guest *, Thread *>> tls_host_threads;
 
@@ -620,7 +618,7 @@ int RunGuarded(Guest *g, GuestFunc *fn, PPCContext &ctx, uint8_t *base, bool thr
 /* ==== calls into the guest ================================================================== */
 
 static int CallGuestEx(Guest *g, Thread *t, uint32_t function, const int64_t *args, int nargs, int64_t *result,
-	bool thread_entry, uint32_t *exit_code) {
+	bool thread_entry, uint32_t *exit_code, const uint64_t *r12 = nullptr) {
 	GuestFunc *fn = g->Lookup(function);
 	if (!fn) {
 		char e[96];
@@ -665,6 +663,8 @@ static int CallGuestEx(Guest *g, Thread *t, uint32_t function, const int64_t *ar
 	ctx.r1.u64 = sp;
 	ctx.r13.u64 = t->pcr;
 	ctx.lr = 0;
+	if (r12)
+		ctx.r12.u64 = *r12;
 
 	unsigned host_csr = _mm_getcsr();
 	if (t->depth == 0)
@@ -688,6 +688,15 @@ int CallGuest(Guest *g, uint32_t function, const int64_t *args, int nargs, int64
 		return -1;
 	}
 	return CallGuestEx(g, t, function, args, nargs, result, false, nullptr) == 0 ? 0 : -1;
+}
+
+int CallGuestR12(Guest *g, uint32_t function, const int64_t *args, int nargs, int64_t *result, uint64_t r12) {
+	Thread *t = g->CurrentThread();
+	if (!t) {
+		g->SetError("cannot create guest thread state");
+		return -1;
+	}
+	return CallGuestEx(g, t, function, args, nargs, result, false, nullptr, &r12) == 0 ? 0 : -1;
 }
 
 /* Entry of a thread the guest created (ExCreateThread). */
@@ -728,8 +737,58 @@ static void GuestThreadMain(Guest *g, std::shared_ptr<KThreadObject> obj) {
 	tls_current_thread = nullptr;
 }
 
+/* Recompiled code takes one host frame per guest frame, often larger than
+ * the guest's, so guest threads get a generous host stack (reserved, not
+ * committed). Host threads that call into the guest need the same. */
+static constexpr size_t GUEST_THREAD_HOST_STACK = 16u << 20;
+
+struct ThreadStart {
+	Guest *g;
+	std::shared_ptr<KThreadObject> obj;
+};
+
+#ifdef _WIN32
+static unsigned __stdcall ThreadTrampoline(void *p) {
+	std::unique_ptr<ThreadStart> s((ThreadStart *)p);
+	GuestThreadMain(s->g, s->obj);
+	return 0;
+}
+#else
+static void *ThreadTrampoline(void *p) {
+	std::unique_ptr<ThreadStart> s((ThreadStart *)p);
+	GuestThreadMain(s->g, s->obj);
+	return nullptr;
+}
+#endif
+
 void StartGuestThread(Guest *g, std::shared_ptr<KThreadObject> obj) {
-	obj->host = std::thread(GuestThreadMain, g, obj);
+	auto *s = new ThreadStart{ g, obj };
+	bool ok;
+#ifdef _WIN32
+	HANDLE h = (HANDLE)_beginthreadex(nullptr, (unsigned)GUEST_THREAD_HOST_STACK, ThreadTrampoline, s,
+		STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+	ok = h != nullptr;
+	if (h)
+		CloseHandle(h);
+#else
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setstacksize(&attr, GUEST_THREAD_HOST_STACK);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	pthread_t t;
+	ok = pthread_create(&t, &attr, ThreadTrampoline, s) == 0;
+	pthread_attr_destroy(&attr);
+#endif
+	if (!ok) {
+		delete s;
+		g->Log(QAA_LOG_ERROR, "cannot start a host thread for guest thread %u", obj->thread->thread_id);
+		{
+			std::lock_guard<std::mutex> l(g->wait_lock);
+			obj->exit_code = 0xC0000017;	/* STATUS_NO_MEMORY */
+			obj->signaled = true;
+		}
+		g->wait_cv.notify_all();
+	}
 }
 
 /* ==== host calls and module callbacks ========================================================= */
@@ -796,6 +855,7 @@ qaa_guest *qaa_guest_create(const qaa_host *host, char *error, size_t error_size
 	g->module_host.func_pages = g->pages;
 	g->module_host.indirect_miss = IndirectMiss;
 	g->module_host.trap = TrapHook;
+	g->module_host.seh_resume = SehResume;
 	g->host_calls.reserve((QAA_GUEST_HOSTCALL_END - QAA_GUEST_HOSTCALL_BASE) / 4);
 	KernelInit(g);
 	return g;
@@ -804,11 +864,19 @@ qaa_guest *qaa_guest_create(const qaa_host *host, char *error, size_t error_size
 void qaa_guest_destroy(qaa_guest *g) {
 	if (!g)
 		return;
+	/* Guest threads are detached host threads. If one is still running (an
+	 * idle worker parked in a wait, like cgame's), freeing the guest would
+	 * pull its memory and wait state out from under it: leave the guest
+	 * allocated instead. The process exit reclaims it. */
 	{
-		std::lock_guard<std::mutex> l(g->threads_lock);
+		std::lock_guard<std::mutex> l(g->wait_lock);
+		size_t running = 0;
 		for (auto &t : g->threads)
-			if (t->host.joinable())
-				t->host.detach();	/* a guest thread still running keeps its state */
+			running += !t->signaled;
+		if (running) {
+			g->Log(QAA_LOG_WARNING, "qaa_guest_destroy: %zu guest thread(s) still running; the guest stays allocated", running);
+			return;
+		}
 	}
 	for (auto &m : g->modules) {
 #ifdef _WIN32
@@ -909,7 +977,8 @@ qaa_module *qaa_module_load(qaa_guest *g, const char *path, char *error, size_t 
 	m->library = lib;
 	m->desc = d;
 	m->name = d->name;
-	m->ldr_entry = MakeLdrEntry(g, d->image_base, d->image_size, d->entry_point, d->original_name);
+	m->ldr_entry = MakeLdrEntry(g, d->image_base, d->image_size, d->entry_point, d->original_name,
+		d->xex_header, d->xex_header_size);
 	qaa_module *mp = m.get();
 	g->modules.push_back(std::move(m));
 	g->Log(QAA_LOG_INFO, "%s: mapped %08X-%08X (%u bytes stored), %s", d->name, d->image_base,
@@ -1018,6 +1087,21 @@ int qaa_module_vm_main(qaa_module *m, int32_t command, const int32_t *args, int 
 	if (result)
 		*result = r;
 	return rc ? QAA_ERROR : QAA_OK;
+}
+
+int qaa_guest_set_executable_header(qaa_guest *g, const void *header, size_t size) {
+	if (!header || size < 0x18 || size > 0x100000 || memcmp(header, "XEX2", 4)) {
+		g->SetError("not a XEX2 header");
+		return QAA_ERROR;
+	}
+	uint32_t hdr = CopyXexHeader(g, header, size);
+	if (!hdr) {
+		g->SetError("out of kernel pool memory");
+		return QAA_ERROR;
+	}
+	g->exe_xex_header = hdr;
+	g->memory.W32(g->exe_ldr_entry + 0x58, hdr);
+	return QAA_OK;
 }
 
 void qaa_guest_abort(qaa_guest *, const char *message) {

@@ -9,22 +9,29 @@
  *                     module's gamestate trap (for cgame)
  *     --command N     vmMain command (default 0: GAME_INIT / CG_INIT)
  *     --stubs KIND    game, cgame or none (default: from the file name)
- *     --error-trap N  trap that ends the call as an engine error (default 1,
- *                     G_ERROR / CG_ERROR; -1 for none)
+ *     --abi DIR       trap and engine-table names from the data/abi tables
+ *                     (default: the repository's data/abi, if present)
+ *     --xex-header F  default.xex's XEX header (default: the build's
+ *                     qaa_default_xex_header.bin next to the module, if any)
+ *     --settle MS     after INIT, keep the process alive MS milliseconds
+ *                     for guest threads (default 1000)
+ *     --error-trap N  trap that ends the call as an engine error (default 1)
  *     --max-traps N   stop after N traps (default 100000)
  *     --print N       print the first N traps in full (default 400)
  *     --timeout S     give up after S seconds (default 60)
  *     --entities S    entity string for the game's entity-token trap
  *                     (default one worldspawn: synthetic, not from a map)
- *     --files DIR     serve guest file paths ("game:\x" -> DIR/x) read-only
+ *     --files DIR     serve guest paths ("game:\x" -> DIR/x) read-only,
+ *                     with directory listing
  *     --json FILE     write the trap sequence as JSON
+ *     --call SPEC     after INIT, call a guest function: ADDR[:ARG...], each
+ *                     ARG a number or @K, the result of the K-th --call
+ *                     (repeatable; for probing module code directly)
  *
- * Stubs: every trap returns 0, except as listed in the profiles below.
- * Trap numbers there are either Quake III's legacy numbers (FnQL's
- * g_public.h / cg_public.h), which QAA follows for the low traps, or
- * observed in the gate runs (docs/RECOMP.md). QAA's real tables are M4's
- * work. Buffers are only written when the argument points at mapped guest
- * memory and the size argument is plausible.
+ * Stubs: every trap and engine-table call returns 0 unless the profiles
+ * below say otherwise. Trap numbers are QAA's, from the ABI recovery
+ * (docs/ABI.md, data/abi game_traps.tsv and cgame_traps.tsv). Buffers are only written when the
+ * argument points at mapped guest memory and the size is plausible.
  */
 #include "qaa_guest.h"
 
@@ -34,58 +41,70 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
-/* ---- stub profiles ------------------------------------------------------------------- */
+#ifndef QAA_ABI_DIR
+#define QAA_ABI_DIR ""
+#endif
+
+/* ---- stub profiles (QAA's numbers, docs/ABI.md) --------------------------------------- */
 
 struct BufferStub {
 	int trap, buffer_arg, size_arg;	/* indices into qaa_syscall::args (args[0] = first argument) */
 };
 
+enum TableStub { T_NONE, T_CVAR_SET, T_CVAR_INTEGER, T_FS_FOPEN, T_FS_READ, T_WAIT };
+
 struct Profile {
 	const char *name;
-	std::vector<BufferStub> buffers;	/* traps that fill a string buffer: give "" */
-	int millis = -1;					/* MILLISECONDS: real time */
-	int fopen = -1;						/* FS_FOPEN_FILE(path, handle *, mode): *handle = 0, -1 */
-	int set_configstring = -1;			/* SET_CONFIGSTRING(num, string): recorded */
-	int entity_token = -1;				/* GET_ENTITY_TOKEN(buffer, size): from --entities */
-	int gamestate = -1;					/* GETGAMESTATE(gameState_t *): recorded configstrings */
-	int import_table_command = -1;		/* vmMain(N, table) before INIT */
+	const char *abi_module;					/* "game" / "cgame" in data/abi */
+	std::vector<BufferStub> buffers;		/* string-buffer traps: give "" */
+	int millis, cvar_register, fopen, set_configstring, entity_token, gamestate;
+	int engine_table_command;				/* vmMain(N, table) before INIT */
+	std::map<int, TableStub> table;			/* engine-table byte offset -> stub */
 };
 
-/* qagame. Q3 legacy: 2 MILLISECONDS, 7 CVAR_VARIABLE_STRING_BUFFER, 9 ARGV,
- * 10 FS_FOPEN_FILE, 18 SET_CONFIGSTRING, 19 GET_CONFIGSTRING,
- * 20 GET_USERINFO, 22 GET_SERVERINFO. Observed: 38 takes (buffer, size)
- * right before "SpawnEntities: no entities", so it is GET_ENTITY_TOKEN (Q3
- * 37); vmMain command 9 stores its argument as an engine function table. */
+/* G_MILLISECONDS 2, G_CVAR_REGISTER 3, G_CVAR_VARIABLE_STRING_BUFFER 7,
+ * G_ARGV 9, G_FS_FOPEN_FILE 10, G_SET_CONFIGSTRING 18, G_GET_CONFIGSTRING
+ * 19, G_GET_USERINFO 20, G_GET_SERVERINFO 22, G_GET_ENTITY_TOKEN 38;
+ * vmMain 9 = QAA_GAME_SET_ENGINE_TABLE; table +0x14 Cvar_Set, +0x18
+ * Cvar_VariableIntegerValue. */
 static const Profile game_profile = {
-	"game", { { 7, 1, 2 }, { 9, 1, 2 }, { 19, 1, 2 }, { 20, 1, 2 }, { 22, 0, 1 } },
-	2, 10, 18, 38, -1, 9,
+	"game", "game",
+	{ { 7, 1, 2 }, { 9, 1, 2 }, { 19, 1, 2 }, { 20, 1, 2 }, { 22, 0, 1 } },
+	2, 3, 10, 18, 38, -1, 9,
+	{ { 0x14, T_CVAR_SET }, { 0x18, T_CVAR_INTEGER } },
 };
 
-/* cgame. Q3 legacy: 2 MILLISECONDS, 6 CVAR_VARIABLESTRINGBUFFER (observed
- * with "sv_running", buffer, 1024), 10 FS_FOPENFILE. Observed: 53 fills a
- * gameState_t whose stringData starts at +0x1000 (1024 offsets); vmMain
- * command 12 stores its argument as an engine function table. */
+/* CG_MILLISECONDS 2, CG_CVAR_REGISTER 3, CG_CVAR_VARIABLESTRINGBUFFER 6,
+ * CG_ARGV 9, CG_ARGS 10, CG_FS_FOPENFILE 11, CG_GETGAMESTATE 53; vmMain 12
+ * = QAA_CG_SET_ENGINE_TABLE; table +0x20 FS_FOpenFileByMode, +0x24 FS_Read,
+ * +0x40 an engine event wait (used by the helper thread). */
 static const Profile cgame_profile = {
-	"cgame", { { 6, 1, 2 } },
-	2, 10, -1, -1, 53, 12,
+	"cgame", "cgame",
+	{ { 6, 1, 2 }, { 9, 1, 2 }, { 10, 0, 1 } },
+	2, 3, 11, -1, -1, 53, 12,
+	{ { 0x20, T_FS_FOPEN }, { 0x24, T_FS_READ }, { 0x40, T_WAIT } },
 };
 
-static const Profile no_profile = { "none", {}, -1, -1, -1, -1, -1, -1 };
+static const Profile no_profile = { "none", "", {}, -1, -1, -1, -1, -1, -1, -1, {} };
 
-/* ---- state -------------------------------------------------------------------------------- */
+/* ---- state ----------------------------------------------------------------------------- */
 
-enum { IMPORT_BASE = 100000 };	/* calls through the function table: IMPORT_BASE + byte offset */
+enum { IMPORT_BASE = 100000 };	/* engine-table calls: IMPORT_BASE + byte offset */
 
 struct Call {
 	int32_t trap;
 	int32_t args[QAA_SYSCALL_MAX_ARGS];
 	uint32_t lr;
+	bool other_thread;
 };
 
 struct Run {
@@ -111,6 +130,10 @@ struct Gate {
 	std::string entities = "{ \"classname\" \"worldspawn\" }";
 	size_t entity_pos = 0;
 	std::map<int, std::string> configstrings;
+	std::map<std::string, std::string> cvars;
+	std::map<std::string, std::string> trap_names;		/* "game:3" -> G_CVAR_REGISTER */
+	std::map<std::string, std::string> table_names;		/* "game:0x14" -> Cvar_Set ... */
+	std::thread::id main_thread = std::this_thread::get_id();
 	std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
 };
 
@@ -118,7 +141,7 @@ static Gate gate;
 
 static Run &Current() { return gate.runs.back(); }
 
-/* ---- helpers --------------------------------------------------------------------------------- */
+/* ---- helpers ------------------------------------------------------------------------------ */
 
 /* A printable NUL-terminated guest string at address, or empty. */
 static std::string GuestString(qaa_guest *g, uint32_t a, size_t max = 96) {
@@ -146,13 +169,22 @@ static std::string Escape(const std::string &s) {
 	return o;
 }
 
-static std::string TrapName(int32_t t) {
+static std::string TrapName(const Profile *p, int32_t t) {
 	char b[32];
-	if (t >= IMPORT_BASE)
+	std::string key, name;
+	if (t >= IMPORT_BASE) {
+		snprintf(b, sizeof(b), "0x%02X", t - IMPORT_BASE);
+		key = std::string(p->abi_module) + ":" + b;
+		auto it = gate.table_names.find(key);
+		name = it != gate.table_names.end() ? it->second : "";
 		snprintf(b, sizeof(b), "imp+0x%02X", t - IMPORT_BASE);
-	else
+	} else {
+		key = std::string(p->abi_module) + ":" + std::to_string(t);
+		auto it = gate.trap_names.find(key);
+		name = it != gate.trap_names.end() ? it->second : "";
 		snprintf(b, sizeof(b), "%d", t);
-	return b;
+	}
+	return name.empty() ? std::string(b) : std::string(b) + " " + name;
 }
 
 static std::string Describe(qaa_guest *g, const Call &c, int nshow) {
@@ -196,7 +228,8 @@ static std::string NextEntityToken() {
 	return tok;
 }
 
-static size_t Record(const Call &c) {
+static size_t Record(Call &c) {
+	c.other_thread = std::this_thread::get_id() != gate.main_thread;
 	std::lock_guard<std::mutex> l(gate.lock);
 	Run &r = Current();
 	r.calls.push_back(c);
@@ -205,21 +238,67 @@ static size_t Record(const Call &c) {
 	return r.calls.size();
 }
 
-/* ---- the stub engine ------------------------------------------------------------------------- */
+static void PrintCall(qaa_guest *g, const Call &c, size_t n) {
+	if ((int)n > gate.print)
+		return;
+	std::string label = (c.trap >= IMPORT_BASE ? "import " : "trap ") + TrapName(Current().profile, c.trap);
+	printf("  %s%-40s lr %08X  args%s\n", c.other_thread ? "[thread] " : "", label.c_str(), c.lr, Describe(g, c, 8).c_str());
+}
 
-static int64_t ImportCall(void *user, qaa_module *m, const qaa_syscall *sc) {
+/* vmCvar_t (QAA, 0x110 bytes): handle, modificationCount, value, integer, string[256] */
+static void FillVmCvar(qaa_guest *g, uint32_t vmcvar, const std::string &value, int handle) {
+	if (!vmcvar || !qaa_guest_is_mapped(g, vmcvar, 0x110))
+		return;
+	qaa_guest_store32(g, vmcvar + 0x0, (uint32_t)handle);
+	qaa_guest_store32(g, vmcvar + 0x4, 1);
+	qaa_guest_storef(g, vmcvar + 0x8, (float)atof(value.c_str()));
+	qaa_guest_store32(g, vmcvar + 0xC, (uint32_t)atoi(value.c_str()));
+	std::string v = value.substr(0, 255);
+	qaa_guest_write(g, vmcvar + 0x10, v.c_str(), v.size() + 1);
+}
+
+/* ---- the stub engine ------------------------------------------------------------------------ */
+
+static int64_t EngineTableCall(void *user, qaa_module *m, const qaa_syscall *sc) {
 	qaa_guest *g = qaa_module_guest(m);
+	int offset = 4 * (int)(intptr_t)user;
 	Call c;
-	c.trap = IMPORT_BASE + 4 * (int32_t)(intptr_t)user;
+	c.trap = IMPORT_BASE + offset;
 	c.args[0] = sc->trap;	/* a host function's first argument (r3) */
 	memcpy(c.args + 1, sc->args, sizeof(c.args) - sizeof(c.args[0]));
 	c.lr = sc->return_address;
 	size_t n = Record(c);
-	if ((int)n <= gate.print)
-		printf("  import +0x%02X  lr %08X  args%s\n", c.trap - IMPORT_BASE, c.lr, Describe(g, c, 8).c_str());
+	PrintCall(g, c, n);
 	if ((int)n >= gate.max_traps)
 		qaa_guest_abort(g, "trap limit reached");
-	return 0;
+	auto it = Current().profile->table.find(offset);
+	switch (it == Current().profile->table.end() ? T_NONE : it->second) {
+	case T_CVAR_SET: {		/* (name, value) */
+		std::string name = GuestString(g, (uint32_t)c.args[0], 256), value = GuestString(g, (uint32_t)c.args[1], 256);
+		std::lock_guard<std::mutex> l(gate.lock);
+		gate.cvars[name] = value;
+		return 0;
+	}
+	case T_CVAR_INTEGER: {	/* (name) */
+		std::string name = GuestString(g, (uint32_t)c.args[0], 256);
+		std::lock_guard<std::mutex> l(gate.lock);
+		auto v = gate.cvars.find(name);
+		return v == gate.cvars.end() ? 0 : atoi(v->second.c_str());
+	}
+	case T_FS_FOPEN: {		/* (path, fileHandle_t *, mode): not found */
+		uint32_t h = (uint32_t)c.args[1];
+		if (h && qaa_guest_is_mapped(g, h, 4))
+			qaa_guest_store32(g, h, 0);
+		return -1;
+	}
+	case T_FS_READ:
+		return 0;
+	case T_WAIT:			/* the helper thread's idle wait: do not spin */
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		return 0;
+	default:
+		return 0;
+	}
 }
 
 static int64_t Syscall(void *, qaa_module *m, const qaa_syscall *sc) {
@@ -230,8 +309,7 @@ static int64_t Syscall(void *, qaa_module *m, const qaa_syscall *sc) {
 	memcpy(c.args, sc->args, sizeof(c.args));
 	c.lr = sc->return_address;
 	size_t n = Record(c);
-	if ((int)n <= gate.print)
-		printf("  trap %4d  lr %08X  args%s\n", c.trap, c.lr, Describe(g, c, 8).c_str());
+	PrintCall(g, c, n);
 	if (c.trap == gate.error_trap) {
 		static char text[1200];
 		std::string msg = GuestString(g, (uint32_t)c.args[0], 1024);
@@ -251,6 +329,21 @@ static int64_t Syscall(void *, qaa_module *m, const qaa_syscall *sc) {
 	}
 	if (c.trap == p.millis)
 		return (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - gate.start).count();
+	if (c.trap == p.cvar_register) {	/* (vmCvar_t *, name, default, flags) */
+		std::string name = GuestString(g, (uint32_t)c.args[1], 256), def = GuestString(g, (uint32_t)c.args[2], 256);
+		std::string value;
+		int handle;
+		{
+			std::lock_guard<std::mutex> l(gate.lock);
+			auto it = gate.cvars.find(name);
+			if (it == gate.cvars.end())
+				it = gate.cvars.emplace(name, def).first;
+			value = it->second;
+			handle = (int)std::distance(gate.cvars.begin(), it) + 1;
+		}
+		FillVmCvar(g, (uint32_t)c.args[0], value, handle);
+		return 0;
+	}
 	if (c.trap == p.fopen) {
 		uint32_t handle = (uint32_t)c.args[1];
 		if (handle && qaa_guest_is_mapped(g, handle, 4))
@@ -295,7 +388,7 @@ static int64_t Syscall(void *, qaa_module *m, const qaa_syscall *sc) {
 	return 0;
 }
 
-/* ---- host services --------------------------------------------------------------------------- */
+/* ---- host services ------------------------------------------------------------------------------ */
 
 static void HostLog(void *, int level, const char *msg) {
 	static const char *names[] = { "debug", "info", "warning", "error" };
@@ -319,13 +412,30 @@ static int HostStat(void *, const char *path, qaa_file_info *info) {
 	gate.file_log.push_back(std::string("stat ") + path);
 	if (gate.files.empty())
 		return -1;
-	FILE *f = fopen(HostPath(path).c_str(), "rb");
-	if (!f)
+	std::error_code ec;
+	std::filesystem::path p = HostPath(path);
+	if (!std::filesystem::exists(p, ec))
 		return -1;
-	fseek(f, 0, SEEK_END);
-	info->size = ftell(f);
-	info->is_directory = 0;
-	fclose(f);
+	info->is_directory = std::filesystem::is_directory(p, ec);
+	info->size = info->is_directory ? 0 : (int64_t)std::filesystem::file_size(p, ec);
+	return 0;
+}
+
+static int HostDirEntry(void *, const char *path, uint32_t index, char *name, size_t size, qaa_file_info *info) {
+	if (index == 0)
+		gate.file_log.push_back(std::string("list ") + path);
+	if (gate.files.empty())
+		return -1;
+	std::error_code ec;
+	std::vector<std::filesystem::directory_entry> entries;
+	for (auto &e : std::filesystem::directory_iterator(HostPath(path), ec))
+		entries.push_back(e);
+	std::sort(entries.begin(), entries.end(), [](auto &a, auto &b) { return a.path().filename() < b.path().filename(); });
+	if (index >= entries.size())
+		return -1;
+	snprintf(name, size, "%s", entries[index].path().filename().string().c_str());
+	info->is_directory = entries[index].is_directory(ec);
+	info->size = info->is_directory ? 0 : (int64_t)entries[index].file_size(ec);
 	return 0;
 }
 
@@ -373,21 +483,64 @@ static void HostClose(void *, int64_t h) {
 	}
 }
 
-/* ---- report ------------------------------------------------------------------------------------ */
+/* ---- ABI names ------------------------------------------------------------------------------------ */
+
+static std::vector<std::vector<std::string>> ReadTsv(const std::string &path) {
+	std::vector<std::vector<std::string>> rows;
+	std::ifstream f(path);
+	std::string line;
+	std::getline(f, line);	/* header */
+	while (std::getline(f, line)) {
+		if (!line.empty() && line.back() == '\r')
+			line.pop_back();
+		std::vector<std::string> cols;
+		std::stringstream ss(line);
+		std::string col;
+		while (std::getline(ss, col, '\t'))
+			cols.push_back(col);
+		rows.push_back(cols);
+	}
+	return rows;
+}
+
+static bool LoadAbiNames(const std::string &dir) {
+	if (dir.empty() || !std::filesystem::exists(dir + "/game_traps.tsv"))
+		return false;
+	for (const char *m : { "game", "cgame" })
+		for (auto &r : ReadTsv(dir + "/" + m + "_traps.tsv"))	/* num, qaa_name, ... */
+			if (r.size() >= 2)
+				gate.trap_names[std::string(m) + ":" + r[0]] = r[1];
+	for (auto &r : ReadTsv(dir + "/engine_tables.tsv"))		/* module, table, offset, function */
+		if (r.size() >= 4) {
+			/* "S_RegisterSound(name, 0) 0x82174370": drop the engine address */
+			std::string fn = r[3];
+			size_t sp = fn.rfind(" 0x");
+			if (sp != std::string::npos && fn.find(' ', sp + 1) == std::string::npos)
+				fn.resize(sp);
+			gate.table_names[r[0] + ":" + r[2]] = fn;
+		}
+	return true;
+}
+
+/* ---- report ---------------------------------------------------------------------------------------- */
 
 static void Summary(FILE *out, const Run &r) {
-	fprintf(out, "%s: %zu calls, %zu distinct traps\n", r.module.c_str(), r.calls.size(), r.counts.size());
+	size_t threaded = std::count_if(r.calls.begin(), r.calls.end(), [](const Call &c) { return c.other_thread; });
+	fprintf(out, "%s: %zu calls (%zu from guest threads), %zu distinct\n", r.module.c_str(), r.calls.size(), threaded,
+		r.counts.size());
 	std::map<int32_t, bool> seen;
 	std::string order;
 	for (auto &c : r.calls) {
 		if (!seen[c.trap]) {
 			seen[c.trap] = true;
-			order += (order.empty() ? "" : " ") + TrapName(c.trap);
+			char b[32];
+			snprintf(b, sizeof(b), c.trap >= IMPORT_BASE ? "imp+0x%02X" : "%d", c.trap >= IMPORT_BASE ? c.trap - IMPORT_BASE : c.trap);
+			order += (order.empty() ? "" : " ") + std::string(b);
 		}
 	}
 	fprintf(out, "  first-call order: %s\n", order.c_str());
 	for (auto &kv : r.counts)
-		fprintf(out, "  %-9s x%-6d first from %08X\n", TrapName(kv.first).c_str(), kv.second, r.first_lr.at(kv.first));
+		fprintf(out, "  %-40s x%-6d first from %08X\n", TrapName(r.profile, kv.first).c_str(), kv.second, r.first_lr.at(kv.first));
 	fprintf(out, "  result: %s\n", r.result.c_str());
 }
 
@@ -402,7 +555,8 @@ static void WriteJson(const char *path) {
 			Escape(r.module).c_str(), r.profile->name, r.ok ? "true" : "false", Escape(r.result).c_str());
 		for (size_t i = 0; i < r.calls.size(); i++) {
 			const Call &c = r.calls[i];
-			fprintf(f, "   {\"trap\": \"%s\", \"lr\": \"%08X\", \"args\": [", TrapName(c.trap).c_str(), c.lr);
+			fprintf(f, "   {\"trap\": \"%s\", \"thread\": %s, \"lr\": \"%08X\", \"args\": [",
+				Escape(TrapName(r.profile, c.trap)).c_str(), c.other_thread ? "true" : "false", c.lr);
 			for (int k = 0; k < 8; k++)
 				fprintf(f, "%s%d", k ? ", " : "", c.args[k]);
 			std::string s = GuestString(gate.guest, (uint32_t)c.args[0], 256);
@@ -417,7 +571,7 @@ static void WriteJson(const char *path) {
 	fclose(f);
 }
 
-/* ---- running a module --------------------------------------------------------------------------- */
+/* ---- running a module ---------------------------------------------------------------------------------- */
 
 static const Profile *ProfileFor(const std::string &kind, const char *path) {
 	std::string k = kind;
@@ -448,16 +602,16 @@ static bool RunModule(const char *path, const Profile *profile, int command, con
 		printf("FAIL: %s\n", run.result.c_str());
 		return false;
 	}
-	if (profile->import_table_command >= 0) {
-		const int entries = 128;
+	if (profile->engine_table_command >= 0) {
+		const int entries = 32;
 		uint32_t table = qaa_guest_alloc(gate.guest, 4 * entries);
 		for (int i = 0; i < entries; i++)
-			qaa_guest_store32(gate.guest, table + 4 * (uint32_t)i, qaa_module_host_function(m, ImportCall, (void *)(intptr_t)i));
+			qaa_guest_store32(gate.guest, table + 4 * (uint32_t)i, qaa_module_host_function(m, EngineTableCall, (void *)(intptr_t)i));
 		int32_t a0 = (int32_t)table;
 		int64_t r = 0;
-		printf("vmMain(%d, %08X): function table of %d logging stubs\n", profile->import_table_command, table, entries);
-		if (qaa_module_vm_main(m, profile->import_table_command, &a0, 1, &r) != QAA_OK) {
-			run.result = std::string("vmMain(function table) failed: ") + qaa_guest_last_error(gate.guest);
+		printf("vmMain(%d, %08X): engine function table of %d stubs\n", profile->engine_table_command, table, entries);
+		if (qaa_module_vm_main(m, profile->engine_table_command, &a0, 1, &r) != QAA_OK) {
+			run.result = std::string("vmMain(engine table) failed: ") + qaa_guest_last_error(gate.guest);
 			printf("FAIL: %s\n", run.result.c_str());
 			return false;
 		}
@@ -479,13 +633,19 @@ static bool RunModule(const char *path, const Profile *profile, int command, con
 	return run.ok;
 }
 
+static std::vector<uint8_t> ReadFile(const std::string &path) {
+	std::ifstream f(path, std::ios::binary);
+	return std::vector<uint8_t>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
+
 int main(int argc, char **argv) {
-	int command = 0;
+	int command = 0, settle_ms = 1000;
 	double timeout = 60;
 	const char *json = nullptr;
 	const char *path = nullptr;
 	const char *server = nullptr;
-	std::string stubs = "auto";
+	std::string stubs = "auto", abi = QAA_ABI_DIR, xex_header;
+	std::vector<std::string> calls;
 	std::vector<int32_t> init_args;
 	for (int i = 1; i < argc; i++) {
 		std::string a = argv[i];
@@ -499,6 +659,9 @@ int main(int argc, char **argv) {
 		if (a == "--command") command = atoi(next());
 		else if (a == "--server") server = next();
 		else if (a == "--stubs") stubs = next();
+		else if (a == "--abi") abi = next();
+		else if (a == "--xex-header") xex_header = next();
+		else if (a == "--settle") settle_ms = atoi(next());
 		else if (a == "--error-trap") gate.error_trap = atoi(next());
 		else if (a == "--max-traps") gate.max_traps = atoi(next());
 		else if (a == "--print") gate.print = atoi(next());
@@ -506,6 +669,7 @@ int main(int argc, char **argv) {
 		else if (a == "--entities") gate.entities = next();
 		else if (a == "--files") gate.files = next();
 		else if (a == "--json") json = next();
+		else if (a == "--call") calls.push_back(next());
 		else if (!path) path = argv[i];
 		else init_args.push_back((int32_t)strtol(argv[i], nullptr, 0));
 	}
@@ -514,6 +678,12 @@ int main(int argc, char **argv) {
 		return 2;
 	}
 	setvbuf(stdout, nullptr, _IOLBF, 1 << 16);
+	printf("ABI names: %s\n", LoadAbiNames(abi) ? abi.c_str() : "none (data/abi not found)");
+	if (xex_header.empty()) {
+		std::filesystem::path p = std::filesystem::path(path).parent_path() / "qaa_default_xex_header.bin";
+		if (std::filesystem::exists(p))
+			xex_header = p.string();
+	}
 
 	std::atomic<bool> done{ false };
 	std::thread watchdog([&] {
@@ -541,12 +711,20 @@ int main(int argc, char **argv) {
 	host.file_read = HostRead;
 	host.file_size = HostSize;
 	host.file_close = HostClose;
+	host.dir_entry = HostDirEntry;
 	char err[1024] = "";
 	gate.guest = qaa_guest_create(&host, err, sizeof(err));
 	bool ok = false;
 	if (!gate.guest) {
 		printf("FAIL: %s\n", err);
 	} else {
+		if (!xex_header.empty()) {
+			std::vector<uint8_t> h = ReadFile(xex_header);
+			int rc = qaa_guest_set_executable_header(gate.guest, h.data(), h.size());
+			printf("executable XEX header: %s (%zu bytes)%s\n", xex_header.c_str(), h.size(), rc == QAA_OK ? "" : " REJECTED");
+		} else {
+			printf("executable XEX header: none\n");
+		}
 		bool server_ok = true;
 		if (server) {
 			server_ok = RunModule(server, &game_profile, 0, { 0, 12345, 0 });
@@ -554,14 +732,44 @@ int main(int argc, char **argv) {
 		}
 		if (server_ok)
 			ok = RunModule(path, ProfileFor(stubs, path), command, init_args);
+		std::vector<int64_t> results;
+		for (size_t ci = 0; ok && ci < calls.size(); ci++) {
+			std::vector<int64_t> v;
+			std::stringstream ss(calls[ci]);
+			std::string tok;
+			while (std::getline(ss, tok, ':')) {
+				if (!tok.empty() && tok[0] == '@') {
+					size_t k = (size_t)atoi(tok.c_str() + 1);
+					v.push_back(k < results.size() ? results[k] : 0);
+				} else {
+					v.push_back((int64_t)strtoll(tok.c_str(), nullptr, 0));
+				}
+			}
+			if (v.empty())
+				continue;
+			int64_t r = 0;
+			int rc = qaa_guest_call(gate.guest, (uint32_t)v[0], v.data() + 1, (int)v.size() - 1, &r);
+			results.push_back(r);
+			printf("call %zu: %s -> %s %lld (0x%llX)\n", ci, calls[ci].c_str(), rc == QAA_OK ? "returned" : "FAILED",
+				(long long)r, (unsigned long long)(uint32_t)r);
+			if (rc != QAA_OK)
+				printf("  %s\n", qaa_guest_last_error(gate.guest));
+		}
+		if (ok && settle_ms > 0) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(settle_ms));
+			printf("settled %d ms for guest threads\n", settle_ms);
+		}
 	}
 	done = true;
 	watchdog.join();
 	printf("\n");
-	for (auto &r : gate.runs)
-		Summary(stdout, r);
-	if (json)
-		WriteJson(json);
+	{
+		std::lock_guard<std::mutex> l(gate.lock);
+		for (auto &r : gate.runs)
+			Summary(stdout, r);
+		if (json)
+			WriteJson(json);
+	}
 	printf("GATE: %s\n", ok ? "vmMain returned" : "vmMain did not return");
 	fflush(stdout);
 	/* Guest threads may still run: leave without tearing the guest down under them. */

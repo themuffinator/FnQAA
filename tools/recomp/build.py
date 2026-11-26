@@ -35,6 +35,9 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 
 MODULES = {"qagame": "qagameXe.dll", "cgame": "cgameXe.dll"}
+# Files read from the package: the modules, and the title executable for its XEX header.
+INPUTS = dict(MODULES, executable="default.xex")
+EXE_HEADER = "qaa_default_xex_header.bin"
 PIN = json.load(open(os.path.join(HERE, "xenonrecomp.json")))
 
 
@@ -63,7 +66,7 @@ def find_modules(package, out):
     found = {}
     if os.path.isdir(package):
         names = {f.lower(): os.path.join(package, f) for f in os.listdir(package)}
-        for mod, fn in MODULES.items():
+        for mod, fn in INPUTS.items():
             if fn.lower() in names:
                 found[mod] = names[fn.lower()]
         return found
@@ -85,7 +88,7 @@ def find_modules(package, out):
     from stfs import Stfs
     pkg = Stfs(stfs_path)
     for e in pkg.entries:
-        for mod, fn in MODULES.items():
+        for mod, fn in INPUTS.items():
             if not e["dir"] and e["path"].lower() == fn.lower():
                 dst = os.path.join(inp, fn)
                 data = pkg.read_file(e)
@@ -170,7 +173,7 @@ def prepare_xenonrecomp(args, out):
         env = dict(os.environ, GIT_CEILING_DIRECTORIES=os.path.dirname(os.path.abspath(src)))
         for p in patch_files():
             log("applying %s" % os.path.basename(p))
-            run(["git", "apply", "--ignore-whitespace", "--whitespace=nowarn", "-v", p], cwd=src, env=env)
+            run(["git", "-c", "core.filemode=false", "apply", "--ignore-whitespace", "--whitespace=nowarn", "-v", p], cwd=src, env=env)
         for f in ("XenonRecomp/recompiler.cpp", "XenonUtils/xex.cpp"):
             if "openQAA" not in open(os.path.join(src, f), encoding="utf-8", errors="replace").read():
                 raise SystemExit("patches did not apply to %s" % f)
@@ -265,7 +268,8 @@ def recompile_module(mod, xex, out, xr_src, recomp_exe, analyse_exe, args):
                 if "// ERROR" in line or "// WARNING" in line:
                     gen_errors.append(line.strip())
 
-    write_glue(os.path.join(mdir, "glue"), mod, rep, img.data, recompiler_id())
+    write_glue(os.path.join(mdir, "glue"), mod, rep, img.data, recompiler_id(),
+               img.xex.raw[:img.xex.pe_offset])
 
     summary = {
         "module": mod,
@@ -326,6 +330,17 @@ def main():
     if missing:
         raise SystemExit("not in the package: %s" % ", ".join(MODULES[m] for m in missing))
 
+    # default.xex's XEX header, for the runtime's RtlImageXexHeaderField
+    exe_header = None
+    if "executable" in found:
+        from xex import Xex
+        x = Xex(found["executable"])
+        exe_header = os.path.join(out, EXE_HEADER)
+        with open(exe_header, "wb") as f:
+            f.write(x.raw[:x.pe_offset])
+    else:
+        log("default.xex is not in the package: modules will see no executable XEX header")
+
     xr_src, recomp_exe, analyse_exe = prepare_xenonrecomp(a, out)
     summaries = [recompile_module(m, found[m], out, xr_src, recomp_exe, analyse_exe, a) for m in mods]
     with open(os.path.join(out, "summary.json"), "w") as f:
@@ -345,6 +360,8 @@ def main():
         "-DQAA_MODULES=" + ";".join(mods),
     ], a.build_type)
     run(["cmake", "--build", bld, "--parallel", str(a.jobs)])
+    if exe_header:
+        shutil.copyfile(exe_header, os.path.join(bld, "bin", EXE_HEADER))
     log("libraries in %s" % os.path.join(bld, "bin"))
     return 0
 

@@ -18,7 +18,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define QAA_MODULE_ABI_VERSION 1
+#define QAA_MODULE_ABI_VERSION 3
 
 struct PPCContext;
 
@@ -59,6 +59,41 @@ struct ModuleHost {
 	GuestFunc *const *const *func_pages;
 	void (*indirect_miss)(PPCContext &ctx, uint8_t *base, uint32_t target);
 	void (*trap)(PPCContext &ctx, uint8_t *base, uint32_t address);
+	/* After a call at an SEH site: 0 carry on, 1 return (the frame is
+	 * being unwound), 2 resume at the site's __except handler. */
+	uint32_t (*seh_resume)(PPCContext &ctx, uint8_t *base, uint32_t site);
+};
+
+/*
+ * Guest exception dispatch (ABI 3). The tables come from the module's
+ * .pdata/scope tables and tools/recomp/analyse.py; see docs/RECOMP.md.
+ */
+struct SehScope {
+	uint32_t begin, end;	/* the __try range */
+	uint32_t handler;		/* filter funclet (or a constant), or the __finally funclet */
+	uint32_t target;		/* __except handler label; 0 for __finally */
+};
+
+struct SehFunction {		/* a function with a scope table */
+	uint32_t begin, end;
+	uint32_t first_scope, scope_count;	/* into seh_scopes, inner scopes first */
+};
+
+struct SehSite {			/* a call with a PPC_SEH_RESUME check after it */
+	uint32_t site;			/* the call instruction */
+	uint32_t target;		/* innermost __except label around it, or 0 */
+};
+
+enum UnwindRegKind : uint32_t { UNWIND_GPR = 0, UNWIND_FPR = 1 };
+
+struct UnwindSave {			/* a register the prologue saved */
+	uint32_t kind, reg;
+	int32_t offset;			/* from the caller's stack pointer */
+};
+
+struct UnwindFunction {		/* a function whose frame an exception may pop */
+	uint32_t begin, end;
+	uint32_t first_save, save_count;	/* into unwind_saves */
 };
 
 struct ModuleDesc {
@@ -79,6 +114,16 @@ struct ModuleDesc {
 	const uint32_t *exports;	/* exports[ordinal - 1] */
 	uint32_t export_count;
 	void (*bind)(const ModuleHost *host);
+	const uint8_t *xex_header;	/* the module's XEX file header (ABI 2), or null */
+	uint32_t xex_header_size;
+	const SehFunction *seh_functions;	/* ABI 3, sorted by begin */
+	uint32_t seh_function_count;
+	const SehScope *seh_scopes;
+	const SehSite *seh_sites;			/* sorted by site */
+	uint32_t seh_site_count;
+	const UnwindFunction *unwind_functions;	/* sorted by begin */
+	uint32_t unwind_function_count;
+	const UnwindSave *unwind_saves;
 };
 
 /* XenonRecomp optimisation switches change PPCContext's layout. */

@@ -31,5 +31,9 @@ static inline void qaa_call_indirect( PPCContext &ctx, uint8_t *base, uint32_t t
 	}
 }
 
+extern uint32_t ( *qaa_module_seh_resume )( PPCContext &ctx, uint8_t *base, uint32_t site );
+
 #define PPC_CALL_INDIRECT_FUNC( x ) qaa_call_indirect( ctx, base, ( x ) )
 #define PPC_TRAP( address ) qaa_module_trap( ctx, base, ( address ) )
+/* After a call at an SEH site (patch 0003): 0 go on, 1 return, 2 handler. */
+#define PPC_SEH_RESUME( site ) qaa_module_seh_resume( ctx, base, ( site ) )

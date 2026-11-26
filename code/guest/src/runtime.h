@@ -98,6 +98,11 @@ struct Thread {
 	uint32_t thread_id = 0;
 	uint32_t tls[TLS_SLOTS] = {};
 	int depth = 0;								/* nested calls into the guest */
+	struct {									/* a guest exception being unwound */
+		bool active = false;
+		int frames_left = 0;					/* frames still to leave before the handler */
+		uint32_t target = 0;					/* the __except handler label */
+	} seh;
 	bool guest_created = false;
 	std::shared_ptr<KObject> object;			/* for guest-created threads */
 
@@ -118,13 +123,12 @@ struct KObject {
 
 struct KThreadObject : KObject {
 	KThreadObject() : KObject(K_THREAD) {}
-	std::thread host;
-	Thread *thread = nullptr;
+	Thread *thread = nullptr;	/* runs on a detached host thread (StartGuestThread) */
 	uint32_t kthread = 0;
 	uint32_t exit_code = 0;
 	uint32_t start_address = 0, start_context = 0, xapi_startup = 0;
 	uint32_t suspend_count = 0;
-	~KThreadObject() override;
+
 };
 
 struct KFileObject : KObject {
@@ -133,6 +137,8 @@ struct KFileObject : KObject {
 	int64_t position = 0;
 	std::string path;
 	bool is_directory = false;
+	uint32_t dir_index = 0;		/* NtQueryDirectoryFile position */
+	std::string dir_pattern;
 };
 
 /* ---- modules ---------------------------------------------------------------- */
@@ -224,6 +230,11 @@ int RunGuarded(Guest *g, GuestFunc *fn, PPCContext &ctx, uint8_t *base, bool thr
 
 /* Call a guest function on the current thread. */
 int CallGuest(Guest *g, uint32_t function, const int64_t *args, int nargs, int64_t *result);
+/* The same with r12 set (SEH funclets take their establisher frame there). */
+int CallGuestR12(Guest *g, uint32_t function, const int64_t *args, int nargs, int64_t *result, uint64_t r12);
+
+/* kernel.cpp: guest exception dispatch */
+uint32_t SehResume(PPCContext &ctx, uint8_t *base, uint32_t site);
 
 void StartGuestThread(Guest *g, std::shared_ptr<KThreadObject> obj);
 
@@ -231,7 +242,9 @@ void StartGuestThread(Guest *g, std::shared_ptr<KThreadObject> obj);
 void KernelInit(Guest *g);
 void KernelCall(uint32_t library, uint32_t ordinal, PPCContext &ctx, uint8_t *base);
 uint32_t KernelVariable(Guest *g, const char *library, uint32_t ordinal, const char *name);
-uint32_t MakeLdrEntry(Guest *g, uint32_t image_base, uint32_t image_size, uint32_t entry, const char *name);
+uint32_t MakeLdrEntry(Guest *g, uint32_t image_base, uint32_t image_size, uint32_t entry, const char *name,
+	const void *xex_header, size_t xex_header_size);
+uint32_t CopyXexHeader(Guest *g, const void *data, size_t size);
 void ThreadSetup(Guest *g, Thread *t);
 
 } // namespace qaa

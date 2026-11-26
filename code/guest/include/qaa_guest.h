@@ -75,6 +75,15 @@ typedef struct qaa_host {
 	int64_t (*file_write)(void *user, int64_t handle, int64_t offset, const void *buffer, uint32_t length);
 	int64_t (*file_size)(void *user, int64_t handle);
 	void (*file_close)(void *user, int64_t handle);
+	/*
+	 * Directory listing (NtQueryDirectoryFile): the index-th entry of the
+	 * directory at path, in any stable order. Fill name (NUL-terminated,
+	 * no path) and info; return 0, or < 0 when index is past the end.
+	 * The runtime applies the guest's wildcard pattern itself.
+	 */
+	int (*dir_entry)(void *user, const char *path, uint32_t index, char *name, size_t name_size, qaa_file_info *info);
+	/* Truncate or extend an open file (NtSetInformationFile end of file); 0 or < 0. */
+	int (*file_set_size)(void *user, int64_t handle, int64_t size);
 } qaa_host;
 
 /*
@@ -100,6 +109,15 @@ typedef int64_t (*qaa_syscall_fn)(void *user, qaa_module *module, const qaa_sysc
 
 qaa_guest *qaa_guest_create(const qaa_host *host, char *error, size_t error_size);
 void qaa_guest_destroy(qaa_guest *guest);
+
+/*
+ * The XEX header of the title executable (default.xex: the file's first
+ * bytes up to its PE data offset). Modules read its optional headers
+ * through XexExecutableModuleHandle and RtlImageXexHeaderField (the CRT
+ * asks for the default heap size). Call before qaa_module_load; without
+ * it the header has no optional headers and the CRT uses its defaults.
+ */
+int qaa_guest_set_executable_header(qaa_guest *guest, const void *header, size_t size);
 
 /* What the last failed call into the guest hit (fault, trap, bug check). */
 const char *qaa_guest_last_error(const qaa_guest *guest);

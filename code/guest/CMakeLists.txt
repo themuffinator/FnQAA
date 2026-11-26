@@ -67,4 +67,5 @@ add_dependencies(qaa_guest_tests qaa_synthetic_module)
 # The M3 gate: load recompiled modules, call dllEntry and vmMain(INIT).
 add_executable(qaa_gate tests/gate.cpp)
 target_link_libraries(qaa_gate PRIVATE qaa_guest)
-target_compile_definitions(qaa_gate PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_definitions(qaa_gate PRIVATE _CRT_SECURE_NO_WARNINGS
+	QAA_ABI_DIR="${QAA_GUEST_DIR}/../../data/abi")

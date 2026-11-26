@@ -1,0 +1,73 @@
+diff --git a/XenonRecomp/recompiler.cpp b/XenonRecomp/recompiler.cpp
+index 773d386..dcc1f58 100644
+--- a/XenonRecomp/recompiler.cpp
++++ b/XenonRecomp/recompiler.cpp
+@@ -2408,6 +2408,11 @@ bool Recompiler::Recompile(const Function& fn)
+                 labels.emplace(label);
+         }
+ 
++        // openQAA: __except handler labels reached from SEH call sites
++        auto sehSite = config.sehSites.find(addr);
++        if (sehSite != config.sehSites.end() && sehSite->second != 0)
++            labels.emplace(sehSite->second);
++
+         auto midAsmHook = config.midAsmHooks.find(addr);
+         if (midAsmHook != config.midAsmHooks.end())
+         {
+@@ -2530,6 +2535,21 @@ bool Recompiler::Recompile(const Function& fn)
+                 fmt::println("Unrecognized instruction at 0x{:X}: {}", base, insn.opcode->name);
+                 allRecompiled = false;
+             }
++
++            // openQAA: after a call through which a guest exception may
++            // unwind, ask the runtime whether to leave this frame (1) or
++            // resume at the __except handler (2).
++            auto sehSite = config.sehSites.find(base);
++            if (sehSite != config.sehSites.end())
++            {
++                println("#ifdef PPC_SEH_RESUME");
++                println("\t{{ const uint32_t sehAction = PPC_SEH_RESUME(0x{:X});", base);
++                println("\t  if (sehAction == 1) return;");
++                if (sehSite->second != 0 && sehSite->second >= fn.base && sehSite->second < fn.base + fn.size)
++                    println("\t  if (sehAction == 2) goto loc_{:X};", sehSite->second);
++                println("\t}}");
++                println("#endif");
++            }
+         }
+ 
+         base += 4;
+diff --git a/XenonRecomp/recompiler_config.cpp b/XenonRecomp/recompiler_config.cpp
+index 81330a4..4316bb5 100644
+--- a/XenonRecomp/recompiler_config.cpp
++++ b/XenonRecomp/recompiler_config.cpp
+@@ -93,6 +93,16 @@ void RecompilerConfig::Load(const std::string_view& configFilePath)
+         }
+     }
+ 
++    // openQAA: [[seh_site]] address = <call instruction>, target = <__except handler label or 0>
++    if (auto sehArray = toml["seh_site"].as_array())
++    {
++        for (auto& entry : *sehArray)
++        {
++            auto& table = *entry.as_table();
++            sehSites.emplace(*table["address"].value<uint32_t>(), table["target"].value_or(0u));
++        }
++    }
++
+     if (auto midAsmHookArray = toml["midasm_hook"].as_array())
+     {
+         for (auto& entry : *midAsmHookArray)
+diff --git a/XenonRecomp/recompiler_config.h b/XenonRecomp/recompiler_config.h
+index 534e503..484d53b 100644
+--- a/XenonRecomp/recompiler_config.h
++++ b/XenonRecomp/recompiler_config.h
+@@ -52,6 +52,9 @@ struct RecompilerConfig
+     std::unordered_map<uint32_t, uint32_t> functions;
+     std::unordered_map<uint32_t, uint32_t> invalidInstructions;
+     std::unordered_map<uint32_t, RecompilerMidAsmHook> midAsmHooks;
++    // openQAA: call sites where a guest exception may unwind (return) or
++    // resume at an __except handler label (0 = return only).
++    std::unordered_map<uint32_t, uint32_t> sehSites;
+ 
+     void Load(const std::string_view& configFilePath);
+ };

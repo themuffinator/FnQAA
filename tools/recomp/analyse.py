@@ -74,7 +74,145 @@ class Analysis:
         self.partition()
         self.fix_branches()
         self.check()
+        self.seh_dispatch()
         return self
+
+    # ---- guest exception dispatch ---------------------------------------
+    def seh_dispatch(self):
+        """Where a guest exception can travel from RtlRaiseException to an
+        __except handler, and how to unwind the frames in between.
+
+        sites:  every call through which an exception may unwind in a
+                function between a raise and a handler (or a handler's own
+                function), with the innermost __except label around it
+                (0 when there is none). The patched recompiler emits a
+                PPC_SEH_RESUME check after each.
+        unwind: for the functions whose frames may be popped, where their
+                prologue saved non-volatile registers (offsets from the
+                caller's stack pointer)."""
+        self.seh_sites = {}
+        self.unwind = {}
+        raise_thunk = self.img.thunk_of("RtlRaiseException")
+        except_fns = {s["function"]: s for s in self.seh if any(sc["target"] for sc in s["scopes"])}
+        if not raise_thunk or not except_fns:
+            return
+        fns = [(b, n) for b, n, _ in self.img.pdata] + list(self.gap_functions)
+        fns.sort()
+        starts = [b for b, _ in fns]
+
+        def owner(a):
+            import bisect
+            i = bisect.bisect_right(starts, a) - 1
+            if i >= 0 and a < fns[i][0] + fns[i][1]:
+                return fns[i][0]
+            return None
+
+        calls = {}		# function -> [(site, target)]
+        for b, n in fns:
+            for x in range(b, b + n, 4):
+                w = self.word(x)
+                if ppc.is_b(w) and ppc.lk(w):
+                    calls.setdefault(b, []).append((x, ppc.b_target(w, x)))
+        # functions that can raise, directly or through calls
+        can_raise = {f for f, cs in calls.items() if any(t == raise_thunk for _, t in cs)}
+        changed = True
+        while changed:
+            changed = False
+            for f, cs in calls.items():
+                if f not in can_raise and any(t in can_raise for _, t in cs):
+                    can_raise.add(f)
+                    changed = True
+
+        def raising(t):
+            return t == raise_thunk or t in can_raise
+
+        def innermost_except(f, site):
+            s = except_fns.get(f)
+            if not s:
+                return 0
+            for sc in s["scopes"]:		# scope tables list inner scopes first
+                if sc["target"] and sc["begin"] <= site < sc["end"]:
+                    return sc["target"]
+            return 0
+
+        # frames an exception may unwind on its way to a handler: functions
+        # reached (through raising calls) from calls inside __except scopes
+        between = set()
+        work = []
+        for f, s in except_fns.items():
+            for site, t in calls.get(f, []):
+                if raising(t) and innermost_except(f, site) and t != raise_thunk:
+                    work.append(t)
+        while work:
+            f = work.pop()
+            if f in between:
+                continue
+            between.add(f)
+            work += [t for _, t in calls.get(f, []) if t in can_raise]
+        for f in between | set(except_fns):
+            for site, t in calls.get(f, []):
+                if raising(t):
+                    self.seh_sites[site] = innermost_except(f, site)
+        for f in between:
+            info = self.decode_prologue(f)
+            if info is None:
+                self.problems.append("SEH: cannot decode the prologue of %08X, which an exception may unwind" % f)
+            else:
+                end = next(b + n for b, n in fns if b == f)
+                self.unwind[f] = (end, info)
+
+    def decode_prologue(self, f):
+        """[(kind, reg, offset from the caller's SP)] for the registers the
+        prologue of f saves, or None if it uses a form we do not know."""
+        saves = []
+        n = self.img.prolog.get(f)
+        if not n:
+            # no .pdata prologue length: scan to the stack update
+            n = 16
+        helpers = {}
+        for name, (a, _) in self.helpers.items():
+            count = 18 if name.endswith("_14") else 64
+            step = 8 if "vmx" in name else 4
+            for i in range(count):
+                helpers[a + i * step] = (name, i)
+        frame = 0		# bytes the prologue has moved r1 down so far
+        r12 = None		# r12 = r1 + r12 (for __savefpr), relative to the caller's SP
+        for k in range(n):
+            x = f + 4 * k
+            w = self.word(x)
+            op = ppc.opcd(w)
+            if ppc.is_b(w) and ppc.lk(w):
+                t = ppc.b_target(w, x)
+                h = helpers.get(t)
+                if not h:
+                    return None
+                name, i = h
+                if name == "savegprlr_14":
+                    first = 14 + i
+                    saves += [("gpr", r, -frame - 8 * (32 - r) - 8) for r in range(first, 32)]
+                elif name == "savefpr_14":
+                    if r12 is None:
+                        return None
+                    first = 14 + i
+                    saves += [("fpr", r, r12 - 8 * (32 - r)) for r in range(first, 32)]
+                else:
+                    return None		# vector saves: not supported
+            elif op == 62 and (w & 3) == 0 and ppc.ra(w) == 1:		# std rS, d(r1)
+                saves.append(("gpr", ppc.rt(w), -frame + ppc.sext(w & 0xFFFC, 16)))
+            elif op == 54 and ppc.ra(w) == 1:						# stfd fS, d(r1)
+                saves.append(("fpr", ppc.rt(w), -frame + ppc.simm(w)))
+            elif op == 37 and ppc.rt(w) == 1 and ppc.ra(w) == 1:	# stwu r1, -N(r1)
+                frame -= ppc.simm(w)
+            elif op == 14 and ppc.rt(w) == 12 and ppc.ra(w) == 1:	# addi r12, r1, K
+                r12 = -frame + ppc.simm(w)
+            elif op == 31 and ppc.xo10(w) == 183 and ppc.rt(w) == 1:	# stwux r1, r1, rX: dynamic frame
+                frame = None
+                break
+        if frame is None:
+            # A dynamic frame: saves made before the update are still
+            # relative to the caller's SP; later ones are not supported.
+            return [s for s in saves] if saves else []
+        return saves
 
     # ---- helpers -------------------------------------------------------
     def find_helpers(self):
@@ -472,8 +610,20 @@ class Analysis:
     def fix_branches(self):
         """Every branch leaving its function must reach a function start.
         Targets inside gap code become new starts; targets inside a .pdata
-        function become overlapping 'chunk' functions running to its end."""
+        function become overlapping 'chunk' functions running to its end.
+        SEH filter and termination-handler funclets start chunks too: the
+        runtime calls them when it dispatches a guest exception."""
         self.chunks = []
+        pdata = [(b, n) for b, n, _ in self.img.pdata]
+        for s in self.seh:
+            for sc in s["scopes"]:
+                h = sc["handler"]
+                if h < 0x10000:		# a constant filter (EXCEPTION_EXECUTE_HANDLER)
+                    continue
+                owner = [(b, n) for b, n in pdata if b <= h < b + n]
+                if owner and h != owner[0][0]:
+                    self.chunks.append((h, owner[0][0] + owner[0][1] - h))
+        self.chunks = sorted(set(self.chunks))
         for _ in range(16):
             starts = self.symbol_starts()
             fns = self.all_functions()
@@ -566,6 +716,11 @@ class Analysis:
         if self.export_word is not None:
             lines.append("    { data = 0x%08X, size = %d }, # XEX export table" % (self.export_word, self.img.export_table[1]))
         lines.append("]")
+        for site in sorted(getattr(self, "seh_sites", {})):
+            lines.append("")
+            lines.append("[[seh_site]]")
+            lines.append("address = 0x%08X" % site)
+            lines.append("target = 0x%08X" % self.seh_sites[site])
         return "\n".join(lines) + "\n"
 
     def switch_toml(self):
@@ -603,6 +758,9 @@ class Analysis:
             "switches": len(self.switches),
             "indirect_jumps": self.indirect_jumps,
             "seh": self.seh,
+            "seh_sites": [[s, t] for s, t in sorted(getattr(self, "seh_sites", {}).items())],
+            "unwind": [{"function": f, "end": e, "saves": [list(s) for s in saves]}
+                       for f, (e, saves) in sorted(getattr(self, "unwind", {}).items())],
             "notes": self.notes,
             "problems": self.problems,
         }

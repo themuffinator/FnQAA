@@ -221,6 +221,55 @@ class BoundaryTests(unittest.TestCase):
         self.assertIn("{ data = 0x00000000, size = 4 }", toml)
 
 
+def std(rs, d): return (62 << 26) | (rs << 21) | (1 << 16) | (d & 0xFFFC)
+def stwu(d): return (37 << 26) | (1 << 21) | (1 << 16) | (d & 0xFFFF)
+MFLR_R12 = 0x7D8802A6
+
+
+class SehTests(unittest.TestCase):
+    def build(self):
+        # outer (pdata) : __try { bl mid } __except(...) handler at +0x20
+        # mid   (pdata) : std r31, -0x10(r1); stwu; bl raise thunk; blr
+        # thunk at the end: the RtlRaiseException import
+        outer, mid, thunk = TEXT, TEXT + 0x40, TEXT + 0x80
+        a = Asm(TEXT)
+        a.emit(MFLR_R12, stwu(-0x60))
+        site_outer = a.pc
+        a.b(mid, link=True)
+        a.emit(BLR)
+        while a.pc < TEXT + 0x20:
+            a.emit(NOP)
+        a.emit(li(3, 0), BLR)                    # handler label at +0x20
+        while a.pc < mid:
+            a.emit(NOP)
+        a.emit(MFLR_R12, std(31, -0x10), stwu(-0x80), std(30, 0x68))
+        site_mid = a.pc
+        a.b(thunk, link=True)
+        a.emit(BLR)
+        while a.pc < thunk:
+            a.emit(NOP)
+        a.emit(0, 0, mtctr(11), BCTR)            # thunk placeholder
+        img = make_image(a.words, pdata=[(outer, 0x40, True), (mid, 0x40, False)])
+        img.prolog = {outer: 2, mid: 4}
+        from module_image import Import
+        imp = Import("xboxkrnl.exe", 0x136)
+        imp.name, imp.kind, imp.thunk = "RtlRaiseException", "function", thunk
+        img.imports = [imp]
+        an = Analysis(img).run()
+        an.seh = [{"function": outer, "scope_table": 0,
+                   "scopes": [{"begin": site_outer, "end": site_outer + 4, "handler": 1, "target": TEXT + 0x20}]}]
+        an.seh_dispatch()
+        return an, site_outer, site_mid, mid
+
+    def test_sites_and_unwind(self):
+        an, site_outer, site_mid, mid = self.build()
+        self.assertEqual(an.seh_sites, {site_outer: TEXT + 0x20, site_mid: 0})
+        end, saves = an.unwind[mid]
+        self.assertEqual(saves, [("gpr", 31, -0x10), ("gpr", 30, -0x80 + 0x68)])
+        toml = an.config_toml("x.xex", "ppc", "x_switch.toml", {})
+        self.assertIn("[[seh_site]]\naddress = 0x%08X\ntarget = 0x%08X" % (site_outer, TEXT + 0x20), toml)
+
+
 class DecoderTests(unittest.TestCase):
     def test_branch_targets(self):
         self.assertEqual(ppc.b_target(0x4BFFFFFC, 0x1000), 0xFFC)

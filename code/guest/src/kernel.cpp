@@ -10,6 +10,7 @@
 #include "runtime.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -205,14 +206,28 @@ void ThreadSetup(Guest *g, Thread *t) {
 	t->ctx->r1.u64 = t->stack_base + t->stack_size - 0x100;
 }
 
-uint32_t MakeLdrEntry(Guest *g, uint32_t image_base, uint32_t image_size, uint32_t entry, const char *name) {
-	/* X_LDR_DATA_TABLE_ENTRY (the fields a module may read) and a minimal
-	 * XEX header with no optional headers for RtlImageXexHeaderField. */
-	uint32_t e = g->pool.Alloc(0x100);
-	uint32_t hdr = g->pool.Alloc(0x20);
+uint32_t CopyXexHeader(Guest *g, const void *data, size_t size) {
+	/* A copy of a XEX file header in guest memory, or (no data) a minimal
+	 * one with no optional headers, for RtlImageXexHeaderField. */
 	Memory &m = g->memory;
-	m.W32(hdr + 0x00, 0x58455832);	/* 'XEX2' */
-	m.W32(hdr + 0x14, 0);			/* optional header count */
+	if (!data || size < 0x18) {
+		uint32_t hdr = g->pool.Alloc(0x20);
+		m.W32(hdr + 0x00, 0x58455832);	/* 'XEX2' */
+		m.W32(hdr + 0x14, 0);			/* optional header count */
+		return hdr;
+	}
+	uint32_t hdr = g->pool.Alloc((uint32_t)size, 0x1000);
+	if (hdr)
+		memcpy(m.Ptr(hdr), data, size);
+	return hdr;
+}
+
+uint32_t MakeLdrEntry(Guest *g, uint32_t image_base, uint32_t image_size, uint32_t entry, const char *name,
+	const void *xex_header, size_t xex_header_size) {
+	/* X_LDR_DATA_TABLE_ENTRY: the fields a module may read */
+	uint32_t e = g->pool.Alloc(0x100);
+	uint32_t hdr = CopyXexHeader(g, xex_header, xex_header_size);
+	Memory &m = g->memory;
 	for (int i = 0; i < 3; i++) {	/* empty list links point at themselves */
 		m.W32(e + 8 * i, e + 8 * i);
 		m.W32(e + 8 * i + 4, e + 8 * i);
@@ -250,7 +265,7 @@ void KernelInit(Guest *g) {
 	m.W32(g->var_thread_type + 0x10, 0x54687264);	/* pool tag 'Thrd' */
 	/* the executable's module handle: default.xex is not loaded, so its
 	 * header has no optional headers and the modules use their defaults */
-	g->exe_ldr_entry = MakeLdrEntry(g, 0x82000000, 0, 0, "default.xex");
+	g->exe_ldr_entry = MakeLdrEntry(g, 0x82000000, 0, 0, "default.xex", nullptr, 0);
 	g->exe_xex_header = m.U32(g->exe_ldr_entry + 0x58);
 	g->var_exe_module = g->pool.Alloc(0x10);
 	m.W32(g->var_exe_module, g->exe_ldr_entry);
@@ -531,10 +546,18 @@ static uint32_t SetInformationFile(PPCContext &ctx) {
 	case 14:	/* FilePositionInformation */
 		f->position = (int64_t)M().U64(info);
 		break;
+	case 20: {	/* FileEndOfFileInformation: resize through the host */
+		Guest *g = G();
+		int64_t size = (int64_t)M().U64(info);
+		if (f->host_handle < 0 || !g->host.file_set_size || g->host.file_set_size(g->host.user, f->host_handle, size) != 0) {
+			IoStatus(iosb, STATUS_ACCESS_DENIED, 0);
+			return STATUS_ACCESS_DENIED;
+		}
+		break;
+	}
 	case 4:		/* FileBasicInformation: times and attributes, ignored */
 	case 13:	/* FileDispositionInformation: delete on close, ignored */
-	case 19:	/* FileAllocationInformation */
-	case 20:	/* FileEndOfFileInformation: the host interface cannot resize */
+	case 19:	/* FileAllocationInformation: a reservation hint, ignored */
 		G()->Log(QAA_LOG_DEBUG, "kernel: NtSetInformationFile class %u ignored for \"%s\"", cls, f->path.c_str());
 		break;
 	default:
@@ -544,6 +567,83 @@ static uint32_t SetInformationFile(PPCContext &ctx) {
 	}
 	IoStatus(iosb, STATUS_SUCCESS, 0);
 	return STATUS_SUCCESS;
+}
+
+/* Case-insensitive wildcard match with * and ?. */
+static bool WildMatch(const char *p, const char *s) {
+	for (; *p; p++, s++) {
+		if (*p == '*') {
+			while (p[1] == '*')
+				p++;
+			if (!p[1])
+				return true;
+			for (; *s; s++)
+				if (WildMatch(p + 1, s))
+					return true;
+			return false;
+		}
+		if (!*s)
+			return false;
+		if (*p != '?' && tolower((unsigned char)*p) != tolower((unsigned char)*s))
+			return false;
+	}
+	return !*s;
+}
+
+/* One X_FILE_DIRECTORY_INFORMATION per call:
+ *   0x00 NextEntryOffset, 0x04 FileIndex, 0x08..0x27 four times,
+ *   0x28 EndOfFile, 0x30 AllocationSize, 0x38 FileAttributes,
+ *   0x3C FileNameLength, 0x40 FileName (ANSI, not terminated) */
+static uint32_t QueryDirectoryFile(PPCContext &ctx) {
+	Guest *g = G();
+	uint32_t event = ctx.r4.u32, iosb = ctx.r7.u32, info = ctx.r8.u32, length = ctx.r9.u32;
+	uint32_t pattern = ctx.r10.u32;
+	bool restart = StackArg(ctx, 0) != 0;
+	auto f = FileHandle(ctx.r3.u32);
+	if (!f || !f->is_directory) {
+		IoStatus(iosb, STATUS_INVALID_HANDLE, 0);
+		return STATUS_INVALID_HANDLE;
+	}
+	if (restart || f->dir_pattern.empty()) {
+		f->dir_index = 0;
+		std::string p = pattern ? AnsiString(pattern) : std::string();
+		f->dir_pattern = p.empty() ? "*" : p;
+	}
+	bool first = f->dir_index == 0;
+	for (;;) {
+		char name[260];
+		qaa_file_info fi = {};
+		if (!g->host.dir_entry || g->host.dir_entry(g->host.user, f->path.c_str(), f->dir_index, name, sizeof(name), &fi) != 0) {
+			uint32_t st = first ? STATUS_NO_SUCH_FILE : STATUS_NO_MORE_FILES;
+			IoStatus(iosb, st, 0);
+			SignalEvent(event);
+			return st;
+		}
+		f->dir_index++;
+		name[sizeof(name) - 1] = 0;
+		if (!WildMatch(f->dir_pattern.c_str(), name))
+			continue;
+		uint32_t n = (uint32_t)strlen(name);
+		if (length < 0x40 + n) {
+			f->dir_index--;
+			IoStatus(iosb, STATUS_BUFFER_TOO_SMALL, 0);
+			return STATUS_BUFFER_TOO_SMALL;
+		}
+		Memory &m = M();
+		uint64_t now = FileTimeNow();
+		m.W32(info + 0x00, 0);
+		m.W32(info + 0x04, f->dir_index - 1);
+		for (int i = 0; i < 4; i++)
+			m.W64(info + 0x08 + 8 * i, now);
+		m.W64(info + 0x28, (uint64_t)fi.size);
+		m.W64(info + 0x30, (uint64_t)((fi.size + 0xFFF) & ~0xFFFll));
+		m.W32(info + 0x38, fi.is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL);
+		m.W32(info + 0x3C, n);
+		memcpy(m.Ptr(info + 0x40), name, n);
+		IoStatus(iosb, STATUS_SUCCESS, 0x40 + n);
+		SignalEvent(event);
+		return STATUS_SUCCESS;
+	}
 }
 
 /* ---- critical sections ------------------------------------------------------------------ */
@@ -601,6 +701,201 @@ static void CsLeave(uint32_t cs) {
 	}
 	if (wake)
 		g->cs_cv.notify_all();
+}
+
+/* ---- guest exceptions ------------------------------------------------------------------- */
+/*
+ * RtlRaiseException in two phases, as the Xbox kernel's dispatcher does,
+ * over the guest stack:
+ *
+ *  search  Walk the frames from the raise: each frame's return address is
+ *          the LR its callee saved at (caller SP - 8), the caller SP its
+ *          back chain at 0(SP). For every __except scope around a frame's
+ *          call, innermost first, run the filter funclet (r3 = the
+ *          EXCEPTION_POINTERS, r12 = the frame's caller SP). EXECUTE_HANDLER
+ *          picks the handler; CONTINUE_EXECUTION returns from the raise.
+ *  unwind  Run the __finally funclets of the frames being left (and of the
+ *          handler frame's scopes inside the chosen one), restore the
+ *          non-volatile registers their prologues saved, and set r1 to the
+ *          handler frame's. The recompiled code then leaves each unwound
+ *          frame and resumes at the handler label through the
+ *          PPC_SEH_RESUME checks after its calls (SehResume).
+ *
+ * A raise no filter accepts is unhandled: the guest call fails, as the
+ * title would crash on the console.
+ */
+
+static const SehFunction *FindSehFunction(Guest *g, uint32_t a, const ModuleDesc **mod) {
+	for (auto &m : g->modules) {
+		const ModuleDesc *d = m->desc;
+		for (uint32_t i = 0; i < d->seh_function_count; i++) {
+			const SehFunction &f = d->seh_functions[i];
+			if (f.begin <= a && a < f.end) {
+				*mod = d;
+				return &f;
+			}
+		}
+	}
+	return nullptr;
+}
+
+static const UnwindFunction *FindUnwind(Guest *g, uint32_t a, const ModuleDesc **mod) {
+	for (auto &m : g->modules) {
+		const ModuleDesc *d = m->desc;
+		for (uint32_t i = 0; i < d->unwind_function_count; i++) {
+			const UnwindFunction &f = d->unwind_functions[i];
+			if (f.begin <= a && a < f.end) {
+				*mod = d;
+				return &f;
+			}
+		}
+	}
+	return nullptr;
+}
+
+static bool FindSite(Guest *g, uint32_t site, uint32_t *target) {
+	for (auto &m : g->modules) {
+		const ModuleDesc *d = m->desc;
+		for (uint32_t i = 0; i < d->seh_site_count; i++) {
+			if (d->seh_sites[i].site == site) {
+				*target = d->seh_sites[i].target;
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+static int32_t CallFunclet(Guest *g, uint32_t fn, int64_t r3, uint32_t establisher, const char *what) {
+	int64_t result = 0;
+	if (CallGuestR12(g, fn, &r3, 1, &result, establisher))
+		Fatal("SEH %s funclet %08X failed: %s", what, fn, g->last_error.c_str());
+	return (int32_t)result;
+}
+
+void RaiseGuestException(PPCContext &ctx, uint32_t record) {
+	Thread *t = tls_current_thread;
+	Guest *g = t->guest;
+	Memory &m = g->memory;
+	const uint32_t code = m.U32(record), flags = m.U32(record + 4);
+	if (g->trace_kernel)
+		g->Log(QAA_LOG_DEBUG, "kernel: guest exception %08X raised from %08X", code, (uint32_t)ctx.lr - 4);
+
+	/* EXCEPTION_POINTERS { ExceptionRecord, ContextRecord }; the context is
+	 * left empty (no filter in the modules reads it). */
+	uint32_t ptrs = g->pool.Alloc(8 + 0x200);
+	m.W32(ptrs, record);
+	m.W32(ptrs + 4, ptrs + 8);
+
+	struct Frame {
+		uint32_t sp, site;
+	};
+	Frame frames[64];
+	int n = 0, found = -1;
+	SehScope hit = {};
+	uint32_t sp = ctx.r1.u32, ra = (uint32_t)ctx.lr;
+	for (; n < 64 && found < 0; n++) {
+		frames[n] = { sp, ra - 4 };
+		const ModuleDesc *d;
+		if (const SehFunction *f = FindSehFunction(g, ra - 4, &d)) {
+			for (uint32_t i = 0; i < f->scope_count; i++) {
+				const SehScope &sc = d->seh_scopes[f->first_scope + i];
+				if (!sc.target || ra - 4 < sc.begin || ra - 4 >= sc.end)
+					continue;
+				int32_t verdict = sc.handler < 0x10000 ? (int32_t)sc.handler
+					: CallFunclet(g, sc.handler, ptrs, m.U32(sp), "filter");
+				if (verdict > 0) {	/* EXCEPTION_EXECUTE_HANDLER */
+					found = n;
+					hit = sc;
+					break;
+				}
+				if (verdict < 0) {	/* EXCEPTION_CONTINUE_EXECUTION */
+					g->pool.Free(ptrs);
+					if (flags & 1)	/* EXCEPTION_NONCONTINUABLE */
+						Fatal("guest exception %08X is noncontinuable, but a filter continued it", code);
+					return;
+				}
+			}
+		}
+		if (found >= 0)
+			break;
+		uint32_t caller = m.U32(sp);
+		if (!caller || caller <= sp || !m.IsCommitted(caller - 8, 8))
+			break;
+		ra = m.U32(caller - 8);
+		sp = caller;
+		if (!ra)
+			break;
+	}
+	g->pool.Free(ptrs);
+	if (found < 0)
+		Fatal("unhandled guest exception %08X (raised from %08X): no __except filter accepted it",
+			code, frames[0].site);
+
+	/* every frame to leave must be able to leave, and the handler frame resume */
+	for (int j = 0; j <= found; j++) {
+		uint32_t target = 0;
+		const ModuleDesc *d;
+		if (!FindSite(g, frames[j].site, &target))
+			Fatal("guest exception %08X: the call at %08X has no SEH resume site", code, frames[j].site);
+		if (j < found && !FindUnwind(g, frames[j].site, &d))
+			Fatal("guest exception %08X: no unwind data for the frame calling at %08X", code, frames[j].site);
+		if (j == found && target != hit.target)
+			Fatal("guest exception %08X: the handler %08X is not the innermost at %08X", code, hit.target, frames[j].site);
+	}
+
+	/* termination handlers, innermost first */
+	for (int j = 0; j <= found; j++) {
+		const ModuleDesc *d;
+		const SehFunction *f = FindSehFunction(g, frames[j].site, &d);
+		if (!f)
+			continue;
+		for (uint32_t i = 0; i < f->scope_count; i++) {
+			const SehScope &sc = d->seh_scopes[f->first_scope + i];
+			if (sc.target || frames[j].site < sc.begin || frames[j].site >= sc.end)
+				continue;
+			if (j == found && !(hit.begin <= sc.begin && sc.end <= hit.end))
+				continue;	/* outside the chosen __try: it stays */
+			CallFunclet(g, sc.handler, 1 /* abnormal termination */, m.U32(frames[j].sp), "termination");
+		}
+	}
+
+	/* pop the frames: restore what each prologue saved, innermost first,
+	 * so the outer frames' saved values (the handler frame's) win */
+	for (int j = 0; j < found; j++) {
+		const ModuleDesc *d;
+		const UnwindFunction *u = FindUnwind(g, frames[j].site, &d);
+		uint32_t caller = m.U32(frames[j].sp);
+		for (uint32_t i = 0; i < u->save_count; i++) {
+			const UnwindSave &s = d->unwind_saves[u->first_save + i];
+			uint64_t v = m.U64(caller + (uint32_t)s.offset);
+			if (s.kind == UNWIND_GPR && s.reg >= 14 && s.reg <= 31)
+				(&ctx.r14)[s.reg - 14].u64 = v;
+			else if (s.kind == UNWIND_FPR && s.reg >= 14 && s.reg <= 31)
+				(&ctx.f14)[s.reg - 14].u64 = v;
+		}
+	}
+	ctx.r1.u64 = frames[found].sp;
+	t->seh.active = true;
+	t->seh.frames_left = found;
+	t->seh.target = hit.target;
+	if (g->trace_kernel)
+		g->Log(QAA_LOG_DEBUG, "kernel: guest exception %08X: handler %08X, %d frame(s) unwound", code, hit.target, found);
+}
+
+uint32_t SehResume(PPCContext &, uint8_t *, uint32_t site) {
+	Thread *t = tls_current_thread;
+	if (!t || !t->seh.active)
+		return 0;
+	if (t->seh.frames_left > 0) {
+		t->seh.frames_left--;
+		return 1;
+	}
+	uint32_t target = 0;
+	if (!FindSite(t->guest, site, &target) || target != t->seh.target)
+		Fatal("SEH resume at %08X does not lead to the handler %08X", site, t->seh.target);
+	t->seh.active = false;
+	return 2;
 }
 
 /* ---- the dispatcher ---------------------------------------------------------------------- */
@@ -872,10 +1167,8 @@ void KernelCall(uint32_t library, uint32_t ordinal, PPCContext &ctx, uint8_t *ba
 		}
 		break;
 	}
-	case 0x0E4:		/* NtQueryDirectoryFile: directory listing is not part of the host interface yet */
-		g->Log(QAA_LOG_WARNING, "kernel: NtQueryDirectoryFile(\"%s\") returns no entries", AnsiString(ctx.r10.u32).c_str());
-		IoStatus(ctx.r7.u32, STATUS_NO_MORE_FILES, 0);
-		r = STATUS_NO_MORE_FILES;
+	case 0x0E4:		/* NtQueryDirectoryFile(handle, event, apc, apc_context, iosb, info, length, pattern, restart) */
+		r = QueryDirectoryFile(ctx);
 		break;
 	case 0x0DB:		/* NtFlushBuffersFile(handle, iosb) */
 		IoStatus(ctx.r4.u32, STATUS_SUCCESS, 0);
@@ -1083,8 +1376,8 @@ void KernelCall(uint32_t library, uint32_t ordinal, PPCContext &ctx, uint8_t *ba
 		if (code == 0x406D1388) {	/* MSVC thread naming: no debugger to tell */
 			break;
 		}
-		Fatal("guest raised exception %08X (flags %08X, address %08X); the runtime does not dispatch guest SEH",
-			code, m.U32(rec + 4), m.U32(rec + 12));
+		RaiseGuestException(ctx, rec);
+		return;	/* registers are set for the resume (or the call continues) */
 	}
 	case 0x1A5:		/* __C_specific_handler: only the exception dispatcher calls it */
 		Fatal("__C_specific_handler called directly");
