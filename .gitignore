@@ -1,0 +1,11 @@
+# The user's game package, everything extracted or decoded from it, and
+# decompiler output. Never commit retail data or code derived from it.
+/ref/
+
+# Scratch and build output
+/.tmp/
+/.agents/tmp/
+/build*/
+/builddir*/
+__pycache__/
+*.pyc
