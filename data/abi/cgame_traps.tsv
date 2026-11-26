@@ -1,0 +1,136 @@
+num	qaa_name	fnql_name	fnql_num	vs_fnql	case_addr	engine_function	nargs	args	returns	module_call_sites	evidence	note
+0	CG_PRINT	CG_PRINT	0	same	0x82100B28	Com_Printf	1	ptr text	void	0	code	
+1	CG_ERROR	CG_ERROR	1	same	0x82100B4C	Com_Error	1	ptr text	noreturn	2	code	Com_Error(ERR_DROP, "%s", text).
+2	CG_MILLISECONDS	CG_MILLISECONDS	2	same	0x82100B74	Sys_Milliseconds 0x82185850	0	void	int	3	code	
+3	CG_CVAR_REGISTER	CG_CVAR_REGISTER	3	same	0x82100B80	Cvar_Register 0x82120A40	4	ptr vmCvar, ptr name, ptr defaultValue, int flags	void	0	code	
+4	CG_CVAR_UPDATE	CG_CVAR_UPDATE	4	same	0x82100BB4	Cvar_Update 0x82120AA8	1	ptr vmCvar	void	1	code	
+5	CG_CVAR_SET	CG_CVAR_SET	5	same	0x82100BCC	Cvar_Set2 0x8211F908	2	ptr name, ptr value	void	21	code	force = 1.
+6	CG_CVAR_VARIABLESTRINGBUFFER	CG_CVAR_VARIABLESTRINGBUFFER	6	same	0x82100BF4	Cvar_VariableStringBuffer 0x8211F668	3	ptr name, ptr buffer, int size	void	7	code	
+7	QAA_CG_CVAR_VARIABLEVALUE	-	-	qaa-only	0x82100C1C	Cvar_VariableValue 0x8211F5E0	1	ptr name	int-trunc	3	code	QAA only. Returns (int)value (fctiwz); the cgame wrapper (0x86031D98) converts the int back to float. Inserted here, so Quake III traps 7.. move up by one.
+8	CG_ARGC	CG_ARGC	7	renumbered	0x82100C3C	Cmd_Argc (inline)	0	void	int	1	code	
+9	CG_ARGV	CG_ARGV	8	renumbered	0x82100C50	Cmd_ArgvBuffer (inline)	3	int n, ptr buffer, int bufferLength	void	8	code	
+10	CG_ARGS	CG_ARGS	9	renumbered	0x82100CA8	Cmd_Args 0x82119EC8 + Q_strncpyz	2	ptr buffer, int bufferLength	void	4	code	
+11	CG_FS_FOPENFILE	CG_FS_FOPENFILE	10	renumbered	0x82100CD8	FS_FOpenFileByMode 0x82125360	3	ptr qpath, ptr f, int mode	int	0	code	Also cgame engine table +0x20.
+12	CG_FS_READ	CG_FS_READ	11	renumbered	0x82100CFC	FS_Read 0x82122278	3	ptr buffer, int len, int f	void	0	code	Also cgame engine table +0x24.
+13	CG_FS_WRITE	CG_FS_WRITE	12	renumbered	0x82100D1C	FS_Write 0x821223B8	3	ptr buffer, int len, int f	void	0	code	
+14	CG_FS_FCLOSEFILE	CG_FS_FCLOSEFILE	13	renumbered	0x82100D3C	FS_FCloseFile 0x82121B28	1	int f	void	0	code	Also cgame engine table +0x28.
+15	CG_SENDCONSOLECOMMAND	CG_SENDCONSOLECOMMAND	14	renumbered	0x82100D68	Cbuf_AddText 0x82119708	1	ptr text	void	21	code	
+16	CG_ADDCOMMAND	CG_ADDCOMMAND	15	renumbered	0x82100D80	Cmd_AddCommand 0x8211A158	1	ptr cmdName	void	1	code	Function pointer NULL.
+17	CG_SENDCLIENTCOMMAND	CG_SENDCLIENTCOMMAND	16	renumbered	0x82100DB4	CL_AddReliableCommand 0x82107378	1	ptr text	void	12	code	
+18	CG_UPDATESCREEN	CG_UPDATESCREEN	17	renumbered	0x82100DCC	SCR_UpdateScreen 0x8210EA48	0	void	void	1	code	
+19	CG_CM_LOADMAP	CG_CM_LOADMAP	18	renumbered	0x82100DDC	CL_CM_LoadMap -> 0x821125E8	1	ptr mapname	void	0	code	Second argument 1 (clientload).
+20	CG_CM_NUMINLINEMODELS	CG_CM_NUMINLINEMODELS	19	renumbered	0x82100DFC	CM_NumInlineModels (inline, 0x82E32A78)	0	void	int	0	code	
+21	CG_CM_INLINEMODEL	CG_CM_INLINEMODEL	20	renumbered	0x82100E10	CM_InlineModel (inline)	1	int index	int	3	code	Errors "CM_InlineModel: bad number".
+22	(CG_CM_LOADMODEL)	CG_CM_LOADMODEL	21	unhandled	-	none (default: "Bad cgame system trap")	0	void	error	0	code	Not handled, as in Quake III 1.32.
+23	CG_CM_TEMPBOXMODEL	CG_CM_TEMPBOXMODEL	22	renumbered	0x82100E4C	CM_TempBoxModel 0x82112AF0	2	ptr mins, ptr maxs	int	0	code	capsule = 0.
+24	CG_CM_POINTCONTENTS	CG_CM_POINTCONTENTS	23	renumbered	0x82100ECC	CM_PointContents 0x82117A88	2	ptr p, int model	int	10	code	
+25	CG_CM_TRANSFORMEDPOINTCONTENTS	CG_CM_TRANSFORMEDPOINTCONTENTS	24	renumbered	0x82100EE4	CM_TransformedPointContents 0x82117C50	4	ptr p, int model, ptr origin, ptr angles	int	0	code	
+26	CG_CM_BOXTRACE	CG_CM_BOXTRACE	25	renumbered	0x82100F14	CM_BoxTrace 0x82118CF0	7	ptr results, ptr start, ptr end, ptr mins, ptr maxs, int model, int brushmask	void	4	code	QAA's CM_BoxTrace takes an extra pointer (0x82C0194C) before brushmask, then capsule = 0 and a further 0.
+27	CG_CM_TRANSFORMEDBOXTRACE	CG_CM_TRANSFORMEDBOXTRACE	26	renumbered	0x82100FE8	CM_TransformedBoxTrace 0x82119338	9	ptr results, ptr start, ptr end, ptr mins, ptr maxs, int model, int brushmask, ptr origin, ptr angles	void	0	code	capsule = 0.
+28	CG_CM_MARKFRAGMENTS	CG_CM_MARKFRAGMENTS	27	renumbered	0x821010E0	re+0x70 MarkFragments	7	int numPoints, ptr points, ptr projection, int maxPoints, ptr pointBuffer, int maxFragments, ptr fragmentBuffer	int	0	code	
+29	CG_S_STARTSOUND	CG_S_STARTSOUND	28	renumbered	0x8210113C	S_StartSound 0x82173368	4	ptr origin, int entnum, int entchannel, int sfx	void	42	code	
+30	CG_S_STARTLOCALSOUND	CG_S_STARTLOCALSOUND	29	renumbered	0x82101160	S_StartLocalSound 0x82173418	2	int sfx, int channelNum	void	12	code	
+31	CG_S_CLEARLOOPINGSOUNDS	CG_S_CLEARLOOPINGSOUNDS	30	renumbered	0x82101178	S_ClearLoopingSounds (inline)	1	int killall	void	2	code	Marks every active loop (256 x 0x38) for removal under the sound lock; the argument is not read.
+32	CG_S_ADDLOOPINGSOUND	CG_S_ADDLOOPINGSOUND	31	renumbered	0x821011D8	S_AddLoopingSound 0x82173840	4	int entityNum, ptr origin, ptr velocity, int sfx	void	4	code	velocity is not passed on; only when the sound system is up (0x82A67F50).
+33	CG_S_UPDATEENTITYPOSITION	CG_S_UPDATEENTITYPOSITION	32	renumbered	0x82101298	S_UpdateEntityPosition 0x82173C00	2	int entityNum, ptr origin	void	0	code	Also cgame engine table +0x08.
+34	CG_S_RESPATIALIZE	CG_S_RESPATIALIZE	33	renumbered	0x821012B8	S_Respatialize 0x82173A40	4	int entityNum, ptr origin, ptr axis, int inwater	void	0	code	inwater not passed on.
+35	CG_S_REGISTERSOUND	CG_S_REGISTERSOUND	34	renumbered	0x821012F8	S_RegisterSound 0x82173DC0	1	ptr sample	int	0	code	compressed = 0; returns -1 when the sound system is down. Also cgame engine table +0x00 (0x82174370).
+36	QAA_CG_S_REGISTERSOUND_COMPRESSED	-	-	qaa-only	0x82101330	S_RegisterSound 0x82173DC0	1	ptr sample	void	0	code	QAA only. compressed = 1, result discarded (returns 0). Engine table +0x04 (0x82174390) is the same call returning the handle.
+37	CG_S_STARTBACKGROUNDTRACK	CG_S_STARTBACKGROUNDTRACK	35	renumbered	0x82101360	S_StartBackgroundTrack 0x82173470	2	ptr intro, ptr loop	void	1	code	
+38	CG_R_LOADWORLDMAP	CG_R_LOADWORLDMAP	36	renumbered	0x82101384	re+0x18 LoadWorld	1	ptr mapname	void	0	code	
+39	CG_R_REGISTERMODEL	CG_R_REGISTERMODEL	37	renumbered	0x821013AC	re+0x08 RegisterModel	1	ptr name	int	0	code	Also cgame engine table +0x0C.
+40	CG_R_REGISTERSKIN	CG_R_REGISTERSKIN	38	renumbered	0x821013D0	re+0x0C RegisterSkin	1	ptr name	int	0	code	Also cgame engine table +0x10.
+41	CG_R_REGISTERSHADER	CG_R_REGISTERSHADER	39	renumbered	0x821013F4	re+0x10 RegisterShader	1	ptr name	int	0	code	Also cgame engine table +0x14.
+42	CG_R_CLEARSCENE	CG_R_CLEARSCENE	40	renumbered	0x82101460	re+0x38 ClearScene	0	void	void	2	code	
+43	CG_R_ADDREFENTITYTOSCENE	CG_R_ADDREFENTITYTOSCENE	41	renumbered	0x82101AD4	re+0x3C AddRefEntityToScene	1	ptr re	void	28	code	
+44	CG_R_ADDPOLYTOSCENE	CG_R_ADDPOLYTOSCENE	42	renumbered	0x82101AFC	re+0x40 AddPolyToScene	3	int hShader, int numVerts, ptr verts	void	1	code	num = 1.
+45	CG_R_ADDLIGHTTOSCENE	CG_R_ADDLIGHTTOSCENE	43	renumbered	0x82101BB4	re+0x48 AddLightToScene	5	ptr org, float intensity, float r, float g, float b	void	2	code	
+46	CG_R_RENDERSCENE	CG_R_RENDERSCENE	44	renumbered	0x82101C24	re+0x50 RenderScene	1	ptr refdef	void	1	code	
+47	CG_R_SETCOLOR	CG_R_SETCOLOR	45	renumbered	0x82101C74	re+0x58 SetColor	1	ptr rgba	void	0	code	
+48	(removed)	-	-	unhandled	-	none (default: "Bad cgame system trap")	0	void	error	0	code	QAA leaves this number unhandled; Quake III 1.32 has CG_R_DRAWSTRETCHPIC here (46 + 2).
+49	CG_R_DRAWSTRETCHPIC	CG_R_DRAWSTRETCHPIC	46	renumbered	0x82101C9C	re+0x5C DrawStretchPic	9	float x, float y, float w, float h, float s1, float t1, float s2, float t2, int hShader	void	0	code	QAA flips y: the renderer gets y' = (float)H - y - h, with H the int at 0x82F88260 (glconfig_t field, see structs.tsv).
+50	CG_R_MODELBOUNDS	CG_R_MODELBOUNDS	47	renumbered	0x82101D18	re+0x78 ModelBounds	3	int model, ptr mins, ptr maxs	void	2	code	
+51	CG_R_LERPTAG	CG_R_LERPTAG	48	renumbered	0x82101D54	re+0x74 LerpTag	6	ptr tag, int mod, int startFrame, int endFrame, float frac, ptr tagName	int	0	code	Also cgame engine table +0x1C.
+52	CG_GETGLCONFIG	CG_GETGLCONFIG	49	renumbered	0x82101D94	memcpy from cls.glconfig 0x82F85634	1	ptr glconfig	void	2	code	Copies 0x2C54 bytes.
+53	CG_GETGAMESTATE	CG_GETGAMESTATE	50	renumbered	0x82101DC0	memcpy from cl.gameState 0x82E32DFC	1	ptr gamestate	void	1	code	Copies 0x4E84 bytes.
+54	CG_GETCURRENTSNAPSHOTNUMBER	CG_GETCURRENTSNAPSHOTNUMBER	51	renumbered	0x82101DE8	inline	2	ptr snapshotNumber, ptr serverTime	void	1	code	
+55	CG_GETSNAPSHOT	CG_GETSNAPSHOT	52	renumbered	0x82101E24	CL_GetSnapshot 0x82100000	2	int snapshotNumber, ptr snapshot	int	1	code	
+56	CG_GETSERVERCOMMAND	CG_GETSERVERCOMMAND	53	renumbered	0x82101E40	CL_GetServerCommand 0x82100380	1	int serverCommandNumber	int	1	code	
+57	CG_GETCURRENTCMDNUMBER	CG_GETCURRENTCMDNUMBER	54	renumbered	0x82101E50	inline (cl.cmdNumber 0x82E382F8)	0	void	int	2	code	
+58	CG_GETUSERCMD	CG_GETUSERCMD	55	renumbered	0x82101E64	CL_GetUserCmd (inline)	2	int cmdNumber, ptr ucmd	int	3	code	Copies 6 words (24 bytes) from cl.cmds[cmdNumber & 63]; CMD_BACKUP 64.
+59	CG_SETUSERCMDVALUE	CG_SETUSERCMDVALUE	56	renumbered	0x82101EE8	inline	2	int stateValue, float sensitivityScale	void	1	code	Stores cl.cgameUserCmdValue 0x82E37CF0 and a second word 0x82E37CF4 (the float's bits).
+60	CG_R_REGISTERSHADERNOMIP	CG_R_REGISTERSHADERNOMIP	57	renumbered	0x82101418	re+0x14 RegisterShaderNoMip	1	ptr name	int	0	code	Also cgame engine table +0x18.
+61	CG_MEMORY_REMAINING	CG_MEMORY_REMAINING	58	renumbered	0x82101F0C	Hunk_MemoryRemaining (inline)	0	void	int	1	code	
+62	CG_R_REGISTERFONT	CG_R_REGISTERFONT	59	renumbered	0x8210143C	re+0x7C RegisterFont	3	ptr fontName, int pointSize, ptr font	void	0	code	
+63	CG_KEY_ISDOWN	CG_KEY_ISDOWN	60	renumbered	0x82101F50	Key_IsDown (inline, keys[] stride 12)	1	int keynum	int	0	code	
+64	CG_KEY_GETCATCHER	CG_KEY_GETCATCHER	61	renumbered	0x82101F7C	Key_GetCatcher (inline, 0x82ED88C4)	0	void	int	0	code	
+65	CG_KEY_SETCATCHER	CG_KEY_SETCATCHER	62	renumbered	0x82101F90	Key_SetCatcher (inline)	1	int catcher	void	1	code	
+66	CG_KEY_GETKEY	CG_KEY_GETKEY	63	renumbered	0x82101FAC	Key_GetKey (inline)	1	ptr binding	int	0	code	
+67	CG_PC_ADD_GLOBAL_DEFINE	CG_PC_ADD_GLOBAL_DEFINE	64	renumbered	0x82102174	botlib PC_AddGlobalDefine (export +0x1F4)	1	ptr define	int	0	code	
+68	CG_PC_LOAD_SOURCE	CG_PC_LOAD_SOURCE	65	renumbered	0x82102198	botlib PC_LoadSourceHandle (+0x1F8)	1	ptr filename	int	2	code	
+69	CG_PC_FREE_SOURCE	CG_PC_FREE_SOURCE	66	renumbered	0x821021BC	botlib PC_FreeSourceHandle (+0x1FC)	1	int handle	int	0	code	
+70	CG_PC_READ_TOKEN	CG_PC_READ_TOKEN	67	renumbered	0x821021DC	botlib PC_ReadTokenHandle (+0x200)	2	int handle, ptr pc_token	int	44	code	
+71	CG_PC_SOURCE_FILE_AND_LINE	CG_PC_SOURCE_FILE_AND_LINE	68	renumbered	0x82102208	botlib PC_SourceFileAndLine (+0x204)	3	int handle, ptr filename, ptr line	int	1	code	
+72	CG_S_STOPBACKGROUNDTRACK	CG_S_STOPBACKGROUNDTRACK	69	renumbered	0x82102240	S_StopBackgroundTrack 0x821736E8	0	void	void	0	code	
+73	CG_REAL_TIME	CG_REAL_TIME	70	renumbered	0x82102250	Com_RealTime 0x8211B188	1	ptr qtime	int	0	code	
+74	CG_SNAPVECTOR	CG_SNAPVECTOR	71	renumbered	0x82102264	inline, floorf 0x821DC8C8	1	ptr v	void	1	code	Floors each component, as game trap 43.
+75	CG_REMOVECOMMAND	CG_REMOVECOMMAND	72	renumbered	0x82100D9C	Cmd_RemoveCommand 0x8211A2B8	1	ptr cmdName	void	0	code	
+76	CG_R_LIGHTFORPOINT	CG_R_LIGHTFORPOINT	73	renumbered	0x82101B6C	re+0x44 LightForPoint	4	ptr point, ptr ambientLight, ptr directedLight, ptr lightDir	int	0	code	
+77	CG_CIN_PLAYCINEMATIC	CG_CIN_PLAYCINEMATIC	74	renumbered	0x821023E8	none (returns 0)	0	void	int	0	code	Cinematics stubbed in QAA.
+78	CG_CIN_STOPCINEMATIC	CG_CIN_STOPCINEMATIC	75	renumbered	0x821023E8	none (returns 0)	0	void	int	0	code	Stubbed.
+79	CG_CIN_RUNCINEMATIC	CG_CIN_RUNCINEMATIC	76	renumbered	0x821023E8	none (returns 0)	0	void	int	0	code	Stubbed.
+80	CG_CIN_DRAWCINEMATIC	CG_CIN_DRAWCINEMATIC	77	renumbered	0x821023E8	none (returns 0)	0	void	int	0	code	Stubbed.
+81	CG_CIN_SETEXTENTS	CG_CIN_SETEXTENTS	78	renumbered	0x821023E8	none (returns 0)	0	void	int	0	code	Stubbed.
+82	CG_R_REMAP_SHADER	CG_R_REMAP_SHADER	79	renumbered	0x821022AC	re+0x80 RemapShader	3	ptr oldShader, ptr newShader, ptr timeOffset	void	0	code	
+83	CG_S_ADDREALLOOPINGSOUND	CG_S_ADDREALLOOPINGSOUND	80	renumbered	0x82101210	S_AddRealLoopingSound 0x821737B0 + S_StartSound 0x82173368	4	int entityNum, ptr origin, ptr velocity, int sfx	void	1	code	QAA plays it through S_StartSound(origin, entityNum, 0, sfx) after 0x821737B0(entityNum, sfx).
+84	CG_S_STOPLOOPINGSOUND	CG_S_STOPLOOPINGSOUND	81	renumbered	0x821023E8	none (returns 0)	1	int entityNum	void	1	code	No-op in QAA.
+85	CG_CM_TEMPCAPSULEMODEL	CG_CM_TEMPCAPSULEMODEL	82	renumbered	0x82100E70	CM_TempBoxModel (inline, capsule)	2	ptr mins, ptr maxs	int	0	code	Stores mins/maxs at 0x82E329C0 and returns CAPSULE_MODEL_HANDLE 254.
+86	CG_CM_CAPSULETRACE	CG_CM_CAPSULETRACE	83	renumbered	0x82100F7C	CM_BoxTrace 0x82118CF0	7	ptr results, ptr start, ptr end, ptr mins, ptr maxs, int model, int brushmask	void	0	code	capsule = 1.
+87	CG_CM_TRANSFORMEDCAPSULETRACE	CG_CM_TRANSFORMEDCAPSULETRACE	84	renumbered	0x82101064	CM_TransformedBoxTrace 0x82119338	9	ptr results, ptr start, ptr end, ptr mins, ptr maxs, int model, int brushmask, ptr origin, ptr angles	void	0	code	capsule = 1.
+88	CG_R_ADDADDITIVELIGHTTOSCENE	CG_R_ADDADDITIVELIGHTTOSCENE	85	renumbered	0x82101BEC	re+0x4C AddAdditiveLightToScene	5	ptr org, float intensity, float r, float g, float b	void	0	code	
+89	CG_GET_ENTITY_TOKEN	CG_GET_ENTITY_TOKEN	86	renumbered	0x821022EC	re+0x84 GetEntityToken	2	ptr buffer, int size	int	0	code	
+90	CG_R_ADDPOLYSTOSCENE	CG_R_ADDPOLYSTOSCENE	87	renumbered	0x82101B34	re+0x40 AddPolyToScene	4	int hShader, int numVerts, ptr verts, int num	void	0	code	
+91	CG_R_INPVS	CG_R_INPVS	88	renumbered	0x82102314	re+0x88 inPVS	2	ptr p1, ptr p2	int	0	code	
+92	CG_FS_SEEK	CG_FS_SEEK	89	renumbered	0x82100D50	FS_Seek 0x82122440	3	int f, int offset, int origin	int	0	code	
+93	QAA_CG_TURN_AROUND	-	-	qaa-only	0x82101AA4	inline	0	void	void	1	code	QAA only. Adds 180.0 (double at 0x820C1A78) to the float at cl+0x58C0 (0x82E38480), which is cl.viewangles[YAW] in Quake III clientActive_t layout (cl.cmdNumber is at cl+0x5738 here, as there). Called once by cgame (0x860162D0).
+100	CG_MEMSET	CG_MEMSET	100	same	0x82102018	memset 0x821D2BC0	3	ptr dest, int c, int count	void	0	code	
+101	CG_MEMCPY	CG_MEMCPY	101	same	0x82102038	memcpy 0x821D3058	3	ptr dest, ptr src, int count	void	0	code	
+102	CG_STRNCPY	CG_STRNCPY	102	same	0x82102060	strncpy 0x821DC868	3	ptr dest, ptr src, int count	ptr	0	code	
+103	CG_SIN	CG_SIN	103	same	0x82102084	sin 0x821DC648	1	float a	int-trunc	0	code	QAA truncates the result to int (fctiwz); Quake III returns the float's bits.
+104	CG_COS	CG_COS	104	same	0x821020A0	cos 0x821DC728	1	float a	int-trunc	0	code	As 103.
+105	CG_ATAN2	CG_ATAN2	105	same	0x821020BC	atan2 0x821DC518	2	float y, float x	int-trunc	0	code	As 103.
+106	CG_SQRT	CG_SQRT	106	same	0x821020DC	inline fsqrt	1	float a	int-trunc	0	code	As 103.
+107	CG_FLOOR	CG_FLOOR	107	same	0x821020F8	floor 0x821DC8C8	1	float a	int-trunc	0	code	As 103.
+108	CG_CEIL	CG_CEIL	108	same	0x82102114	ceil 0x821DC808	1	float a	int-trunc	0	code	As 103.
+111	CG_ACOS	CG_ACOS	111	same	0x82102130	acos 0x821DD208	1	float a	int-trunc	0	code	As 103. 109/110 (TESTPRINTINT/FLOAT) are not handled.
+112	QAA_CG_STOP_RUMBLE	-	-	qaa-only	0x821015C0	0x821837A0 (XamInputSetState)	0	void	void	0	code	QAA only. Stops controller vibration for the active user (zeroes both motor speeds). Not called by cgame (observed).
+113	QAA_CG_SET_RUMBLE	-	-	qaa-only	0x821015DC	0x82183C20 (XamInputGetCapabilities, XamInputSetState)	5	int userIndex, int leftPercent, int leftExtra, int rightPercent, int rightExtra	void	4	code	QAA only. Controller vibration (0x82183C20): when the controller is connected, sys_titleFocused is set and the profile allows vibration (bit 0x1000 of the 0x108-byte UI profile block clear), stores the motor speeds percent*0xFFFF/100 (percent clamped to 0..100) and the 16-bit a3 and a5 (probably durations) in the controller state (stride 0x84 at 0x82A6E8BC) and wakes the rumble code (0x821F2468). Used by CG_EntityEvent (0x8601C548).
+114	QAA_CG_AWARD_ACHIEVEMENT	-	-	qaa-only	0x82101478	0x82186B10 ("AchievementAwarded")	2	int userIndex, int achievementId	void	1	code	QAA only. Achievement award, as game trap 47. Used by the obituary code (0x8601B938).
+115	QAA_CG_ACTIVE_USER_INDEX	-	-	qaa-only	0x82101490	inline (session object 0x82A6EA58 +0x20)	0	void	int	8	code	QAA only. Returns the active user (controller) index. Used beside the cg_ach_* cvars.
+116	QAA_CG_UI_POSTGAME_PLAYER	-	-	qaa-only	0x821014A4	0x82181AD8 (reads g_gameType)	1	ptr record	void	1	code	QAA only. Hands one 0x48-byte scoreboard record to the post-game menus (0x82181AD8): record[0] is the slot 0..15; the record is stored at 0x82C43B88 + slot*0x50 under a lock with a float at +0x48 = record[1] / (record[16] / 60) (score per minute; divided again by record[15] when it is non-zero and g_gameType < 3). Called at cgame shutdown (0x8602F5D8) for each listed player.
+117	QAA_CG_UI_117	-	-	qaa-only	0x821014BC	memcpy to UI buffers 0x82A766F0/0x82A76B90, NtSetEvent x2	4	ptr a1, ptr a2, ptr a3, ptr a4	void	0	code	QAA only. Copies 16 x 0x48 bytes from a1 and 16 x 0x6B8 bytes from a2, stores a3 and a4, signals two worker events. Not called by cgame (observed).
+118	QAA_CG_UI_WAIT_BEGIN	-	-	qaa-only	0x82101570	UI event "WaitBegin" "%d %s" 0 "$loading_dots"	0	void	void	0	code	QAA only. Shows the wait/loading overlay. Not called by cgame (observed).
+119	QAA_CG_UI_HUD_DATA	-	-	qaa-only	0x82101600	Scaleform set "_global.hudData" (0x108 bytes)	1	ptr data	void	0	code	QAA only. Not called by cgame (observed).
+120	QAA_CG_UI_CACHE_SCORES	-	-	qaa-only	0x821016B4	0x8218E610 ("_global.cacheHostName", "_global.cacheScores")	2	ptr hostName, ptr scores	void	1	code	QAA only. Same call as game trap 69.
+121	QAA_CG_UI_SCOREBOARD	-	-	qaa-only	0x82101708	locked copy to 0x82CEAB00 (0x6B80 bytes) and 0x82CF5E20 (0x480 bytes)	4	int a1, ptr a2, int a3, ptr a4	void	1	code	QAA only. Hands scoreboard data to the UI. Used by 0x8602F8A8.
+122	QAA_CG_UI_EVENT	-	-	qaa-only	0x82101788	UI event 0x82190FE8 ("on%s")	1	ptr eventName	void	4	code	QAA only. Fires a UI event without arguments (e.g. "WeaponSwitch").
+123	QAA_CG_UI_ITEM_PICKUP	-	-	qaa-only	0x821017A0	UI event "ItemPickup" "%d %s"	2	int a1, ptr a2	void	0	code	QAA only. Not called by cgame (observed).
+124	QAA_CG_UI_OBITUARY	-	-	qaa-only	0x821017D4	UI event "Obituary" "%d %s %s"	3	int a1, ptr a2, ptr a3	void	0	code	QAA only. Not called by cgame (observed).
+125	QAA_CG_UI_KILLER_STATS	-	-	qaa-only	0x82101814	0x82196C68 ("_global.statsKillerName", "_global.statsKillerInfo")	2	ptr name, ptr info	void	0	code	QAA only. Not called by cgame (observed).
+126	QAA_CG_UI_EVENT_S	-	-	qaa-only	0x82101850	UI event 0x82191098 name, "%s"	2	ptr eventName, ptr s1	void	3	code	QAA only. E.g. "CenterPrint" "$fight".
+127	QAA_CG_UI_EVENT_SS	-	-	qaa-only	0x8210187C	UI event name, "%s %s"	3	ptr eventName, ptr s1, ptr s2	void	0	code	QAA only. Not called by cgame (observed).
+128	QAA_CG_UI_EVENT_SSDD	-	-	qaa-only	0x821018B4	UI event name, "%s %s %d %d"	5	ptr eventName, ptr s1, ptr s2, ptr a4, ptr a5	void	0	code	QAA only. a2..a5 are all converted with VMA although the format prints the last two with %d. Not called by cgame (observed).
+129	QAA_CG_UI_FOLLOWING_PLAYER	-	-	qaa-only	0x82101904	UI event "FollowingPlayer" "%s %d"	2	ptr name, int a2	void	1	code	QAA only. Fires only when a2 == 1.
+130	QAA_CG_UI_TOURNAMENT	-	-	qaa-only	0x82101944	0x821968E0 ("_global.tournamentC1Name", "_global.tournamentC2Name", "_global.tournamentData")	3	ptr c1Name, ptr c2Name, ptr data	void	2	code	QAA only.
+131	QAA_CG_UI_PLAYER_VOICE_INFO	-	-	qaa-only	0x821019C0	UI event "PlayerVoiceInfo" "%d %d %s"	3	int a1, int a2, ptr a3	void	1	code	QAA only. Used by the cgame vmMain 15 handler.
+132	QAA_CG_UI_SET_VALUE	-	-	qaa-only	0x82101A20	Scaleform set "_global.uiValues" slot a1	2	int index, int value	void	0	code	QAA only. Not called by cgame (observed).
+133	QAA_CG_LIVE_MEMBER_TEST	-	-	qaa-only	0x82101A70	0x82179D98	1	int member	int	1	code	QAA only. Returns session member a1's vtable +0x28 predicate, 0 without a member. The scoreboard cell callback (cgame vmMain 11) shows it in column 6. What the predicate tests is not identified.
+134	QAA_CG_LIVE_MEMBER_STATE	-	-	qaa-only	0x82101A88	0x8217A298, 0x8217CD58	1	int member	int	1	code	QAA only. Returns 3 if session member a1 is the active local user (member vtable +0x40), else 2 if its vtable +0x38 predicate holds, else 1 if +0x30 holds, else 0. Shown in column 8 of the scoreboard cell callback (cgame vmMain 11); the predicates are not identified.
+135	QAA_CG_UI_REWARD	-	-	qaa-only	0x821019F8	UI event "Reward" "%d %d"	2	int a1, int a2	void	0	code	QAA only. Not called by cgame (observed).
+136	QAA_CG_R_8C	-	-	qaa-only	0x82102344	re+0x8C	0	void	void	0	code	QAA only renderer entry. Not called by cgame (observed).
+137	QAA_CG_R_90	-	-	qaa-only	0x82102364	re+0x90	0	void	void	0	code	QAA only renderer entry. Not called by cgame (observed).
+138	QAA_CG_LIVE_SESSION_INFO_2	-	-	qaa-only	0x82102384	session info 0x82176AC8	0	void	int	0	code	QAA only. Word 2 of the session-info record. Not called by cgame (observed).
+139	QAA_CG_LIVE_SESSION_INFO_0	-	-	qaa-only	0x821023A4	session info 0x82176AC8	0	void	int	0	code	QAA only. Word 0. Not called by cgame (observed).
+140	QAA_CG_UI_140	-	-	qaa-only	0x821016D8	0x8218E670 (cvar "name")	3	ptr a1, ptr a2, ptr a3	void	0	code	QAA only. Not called by cgame (observed).
+141	QAA_CG_GET_SCOREBOARD	-	-	qaa-only	0x821023C4	0x821823D0 (NtClearEvent)	1	ptr buffer	int	1	code	QAA only. Receiving end of game trap 72. In Live state 4 a newly received peer packet (0x240 bytes at 0x82C02114, event 0x82C02594) is first copied into the mailbox. If the mailbox flag 0x82A6E83C is set, copies 0x240 bytes to buffer, clears the flag and returns 1; otherwise returns 0. Polled by the DRAW_ACTIVE_FRAME handler (0x86033B30).
+142	QAA_CG_R_RENDER_54	-	-	qaa-only	0x82101C4C	re+0x54 (0x82140300)	1	ptr a1	void	1	code	QAA only renderer entry: queues render command 9 with a 0x1EC-byte copy of renderer state; the callee ignores the pointer. Used by 0x860175C0 (CG_DrawActive).

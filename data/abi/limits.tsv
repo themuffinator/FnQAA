@@ -1,0 +1,24 @@
+name	qaa_value	fnql_value	evidence	source_address	note
+MAX_GENTITIES	1024	1024	code	0x82137DF8 SV_LinkEntity; qagame 0x88042A48 G_InitGame	number < 0x400; gentities memset 0xD2000 = 1024 x 0x348
+ENTITYNUM_WORLD / ENTITYNUM_NONE	1022 / 1023	1022 / 1023	code	0x82138788 SV_Trace	
+MAX_CLIENTS	16	64	code	0x82133D60 sv_maxclients clamp; qagame 0x88042BD8 clients memset 0x3600	the engine clamps sv_maxclients to 16; the module clients array is 16 x 0x360
+sizeof(gentity_t)	0x348	-	code	qagame 0x88051758 G_LOCATE_GAME_DATA	module-private beyond sharedEntity_t (0x204)
+sizeof(gclient_t)	0x360	-	code	qagame 0x88051758 G_LOCATE_GAME_DATA	starts with playerState_t (0x1D8)
+MAX_CONFIGSTRINGS	1024	1024	code	0x821315A8 G_GET_CONFIGSTRING	index checked 0..0x3FF
+MAX_GAMESTATE_CHARS	16000	16000	code	0x82101DC0 GETGAMESTATE	gameState_t 0x4E84
+MAX_ENTITIES_IN_SNAPSHOT	256	256	code	0x82100000 CL_GetSnapshot	
+PACKET_BACKUP	32	32	code	0x82100000 CL_GetSnapshot	snapshot index masked with 31
+MAX_PARSE_ENTITIES	2048	8192	code	0x82100000 CL_GetSnapshot	parse index masked with 2047 (Quake III value); FnQL uses PACKET_BACKUP x 256
+CMD_BACKUP	64	64	code	0x82101E64 CL_GetUserCmd	masked with 63; older than 64 rejected
+MAX_STATS / MAX_PERSISTANT / MAX_POWERUPS / MAX_WEAPONS	16 each	16 each	code	0x821278A0 MSG_WriteDeltaPlayerstate	
+MAX_PS_EVENTS	2	2	verified	netfield table 0x827EF3B0	events[0..1]
+MAX_MAP_AREA_BYTES	32	32	code	0x82100000 CL_GetSnapshot	
+MAX_QPATH	64	64	code	0x82156A58 skin name check; 0x8213C310 VM_Create name	
+MAX_STRING_CHARS	1024	1024	code	0x82126A34 MSG_WriteString	
+MAX_INFO_STRING	1024	1024	code	0x8212B394 Info_SetValueForKey	
+BIG_INFO_STRING	8192	8192	code	0x8212B5BC Info_SetValueForKey_Big	
+MAX_CVAR_VALUE_STRING	256	256	code	0x82120AA8 Cvar_Update	vmCvar_t.string
+MAX_REFENTITIES (renderer)	1022	-	code	0x821484E0 RE_AddRefEntityToScene	count checked < 0x3FE
+RT_MAX_REF_ENTITY_TYPE	8	-	code	0x821484E0 RE_AddRefEntityToScene	reType must be 0..7
+MAX_VM	3	-	code	0x8213C310 VM_Create	vm_t array of 3 x 0xCC
+sizeof(client_t) (engine)	0x2CB78	-	code	0x82130438 game trap 30; 0x8212E8B8	svs.clients stride; engine-internal

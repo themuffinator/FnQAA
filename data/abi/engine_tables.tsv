@@ -1,0 +1,29 @@
+module	table_addr	offset	engine_function	same_as_trap	signature	evidence	note
+game	0x82E19DE0	0x00	SV_UnlinkEntity 0x82137D10	32 G_UNLINKENTITY	void (ptr ent)	code	Filled by 0x82133858, passed by game vmMain 9.
+game	0x82E19DE0	0x04	SV_LinkEntity 0x82137DF8	31 G_LINKENTITY	void (ptr ent)	code
+game	0x82E19DE0	0x08	SV_Trace 0x82138788	24/44 G_TRACE/G_TRACECAPSULE	void (ptr results, ptr start, ptr mins, ptr maxs, ptr end, int passEntityNum, int contentmask, int capsule)	code	The module supplies capsule itself.
+game	0x82E19DE0	0x0C	SV_PointContents 0x82138990	25 G_POINT_CONTENTS	int (ptr point, int passEntityNum)	code
+game	0x82E19DE0	0x10	Cvar_Update 0x82120AA8	4 G_CVAR_UPDATE	void (ptr vmCvar)	code
+game	0x82E19DE0	0x14	Cvar_Set 0x8211FBE0	5 G_CVAR_SET	void (ptr name, ptr value)	code	Tail-calls Cvar_Set2(name, value, 1).
+game	0x82E19DE0	0x18	Cvar_VariableIntegerValue 0x8211F628	6 G_CVAR_VARIABLE_INTEGER_VALUE	int (ptr name)	code
+game	0x82E19DE0	0x1C	botlib export +0x24 AAS_PointContents	309 BOTLIB_AAS_POINT_CONTENTS	int (ptr point)	code	Value copied from the botlib export table when the table is filled.
+game	0x82E19DE0	0x20	botlib export +0x04 AAS_Initialized	304 BOTLIB_AAS_INITIALIZED	int (void)	code
+game	0x82E19DE0	0x24	botlib export +0x210 BotLibUpdateEntity	207 BOTLIB_UPDATENTITY	int (int ent, ptr state)	code
+cgame	0x8300C7C0	0x00	S_RegisterSound(name, 0) 0x82174370	35 CG_S_REGISTERSOUND	int (ptr name)	code	Filled by CL_InitCGame 0x821023F8 (0x48 bytes), passed by cgame vmMain 12. Returns -1 while the sound system is down.
+cgame	0x8300C7C0	0x04	S_RegisterSound(name, 1) 0x82174390	36 QAA_CG_S_REGISTERSOUND_COMPRESSED	int (ptr name)	code	Returns the handle (trap 36 discards it).
+cgame	0x8300C7C0	0x08	S_UpdateEntityPosition 0x82173C00	33 CG_S_UPDATEENTITYPOSITION	void (int entityNum, ptr origin)	code
+cgame	0x8300C7C0	0x0C	re+0x08 RegisterModel	39 CG_R_REGISTERMODEL	int (ptr name)	code	re = client refexport copy at 0x82E32B20 (GetRefAPI 0x82140360).
+cgame	0x8300C7C0	0x10	re+0x0C RegisterSkin	40 CG_R_REGISTERSKIN	int (ptr name)	code
+cgame	0x8300C7C0	0x14	re+0x10 RegisterShader	41 CG_R_REGISTERSHADER	int (ptr name)	code
+cgame	0x8300C7C0	0x18	re+0x14 RegisterShaderNoMip	60 CG_R_REGISTERSHADERNOMIP	int (ptr name)	code
+cgame	0x8300C7C0	0x1C	re+0x74 LerpTag	51 CG_R_LERPTAG	int (ptr tag, int model, int startFrame, int endFrame, float frac, ptr tagName)	code
+cgame	0x8300C7C0	0x20	FS_FOpenFileByMode 0x82125360	11 CG_FS_FOPENFILE	int (ptr qpath, ptr f, int mode)	code
+cgame	0x8300C7C0	0x24	FS_Read 0x82122278	12 CG_FS_READ	void (ptr buffer, int len, int f)	code
+cgame	0x8300C7C0	0x28	FS_FCloseFile 0x82121B28	14 CG_FS_FCLOSEFILE	void (int f)	code
+cgame	0x8300C7C0	0x2C	re+0x1C 0x8215CAF8 (RtlEnterCriticalSection on 0x8297FD38)	-	void (void)	code	QAA only; no trap. The cgame brackets player-model loading with +0x2C/+0x30 (0x86028490).
+cgame	0x8300C7C0	0x30	re+0x20 0x8215CB08 (RtlLeaveCriticalSection on 0x8297FD38)	-	void (void)	code	QAA only.
+cgame	0x8300C7C0	0x34	re+0x24 0x8215A900 (if 0x82C01A98 set, 0x82C01AFC = 1)	-	void (void)	code	QAA only; used by 0x8601E770 and 0x8601E978.
+cgame	0x8300C7C0	0x38	re+0x28 0x8215A8E0 (0x82C01B00 = 1)	-	void (void)	code	QAA only; with +0x3C brackets the weapon tag lookups (0x86038330).
+cgame	0x8300C7C0	0x3C	re+0x2C 0x8215A8F0 (0x82C01B00 = 0)	-	void (void)	code	QAA only.
+cgame	0x8300C7C0	0x40	0x82178240	-	?	code	QAA only. Waits on an engine object (0x82C01C04 +0x2C). Used by CG_RegisterClientModelname (0x860291E0).
+cgame	0x8300C7C0	0x44	0x82178220	-	void (int set)	code	QAA only. Sets (non-zero) or clears an engine event (0x82C01C04 +0x90). Used by CG_RegisterClientModelname.
