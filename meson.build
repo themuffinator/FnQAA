@@ -1027,6 +1027,8 @@ qaa_ui_raster_tests = executable('fnqaa_qaa_ui_raster_tests',
   ['tests/qaa_ui_raster_tests.cpp', 'code/client/cl_qaa_ui_raster.cpp'],
   include_directories: include_directories('code/client'),
   cpp_args: common_cpp_args,
+  # the rasteriser splits large triangles across worker threads
+  dependencies: thread_dep,
 )
 test('fnqaa_qaa_ui_raster', qaa_ui_raster_tests)
 

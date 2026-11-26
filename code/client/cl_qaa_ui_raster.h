@@ -128,6 +128,8 @@ public:
 	void DrawBitmaps( const BitmapQuad *quads, int count, const Matrix &m, const Texture *tex );
 
 	int Triangles() const { return triangles_; }
+	/* pixels the rasteriser tested since Clear(), for profiling */
+	int64_t PixelsTested() const { return pixelsTested_; }
 	/* for tracing: the current movie-to-pixel transform, blend mode and mask state */
 	Matrix FullMatrix() const { return Full(); }
 	int BlendMode() const { return blend_.empty() ? BLEND_NORMAL : blend_.back(); }
@@ -142,7 +144,7 @@ private:
 		float u, v;			/* explicit UVs (bitmaps) */
 	};
 	void Raster( const ScreenVertex &a, const ScreenVertex &b, const ScreenVertex &c, const Fill &fill, bool explicitUV );
-	void Shade( int x, int y, const float rgba[4] );	/* premultiplied in, blended out */
+	void Shade( int x, int y, const float rgba[4], int mode );	/* premultiplied in, blended out */
 	Matrix Full() const;
 
 	int width_ = 0, height_ = 0;
@@ -155,6 +157,7 @@ private:
 	int stencilLevel_ = 0;
 	enum { MASK_OFF, MASK_SUBMIT_INCR, MASK_SUBMIT_DECR, MASK_TEST } maskState_ = MASK_OFF;
 	int triangles_ = 0;
+	int64_t pixelsTested_ = 0;
 };
 
 /* Sample a texture (straight RGBA out, 0..1). */

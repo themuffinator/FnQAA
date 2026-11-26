@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 extern "C" {
 #include "client.h"
+#include "cl_qaa_ui.h"
 }
 
 #include "client_cpp.h"
@@ -4039,8 +4040,10 @@ Con_ToggleConsole_f
 void Con_ToggleConsole_f( void ) {
 	int catcher;
 
-	// Can't toggle the console when it's the only thing available
-    if ( cls.state == CA_DISCONNECTED && Key_GetCatcher() == KEYCATCH_CONSOLE ) {
+	// Can't toggle the console when it's the only thing available.
+	// QAA: the front end is always there while it runs (PC deviation: the
+	// Xbox has no console, so it opens and closes over the menus).
+	if ( cls.state == CA_DISCONNECTED && Key_GetCatcher() == KEYCATCH_CONSOLE && !QAA_UI_Active() ) {
 		return;
 	}
 
@@ -5259,7 +5262,8 @@ void Con_DrawConsole( void ) {
 	Con_CheckResize();
 
 	// if disconnected, render console full screen
-	if ( cls.state == CA_DISCONNECTED ) {
+	// QAA: not while the front end runs; its menus are the screen then
+	if ( cls.state == CA_DISCONNECTED && !QAA_UI_Active() ) {
 		if ( !( Key_GetCatcher( ) & (KEYCATCH_UI | KEYCATCH_CGAME)) ) {
 			Con_DrawSolidConsole( 1.0 );
 			return;

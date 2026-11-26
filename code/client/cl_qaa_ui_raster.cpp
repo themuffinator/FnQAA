@@ -11,10 +11,112 @@ See cl_qaa_ui_raster.h.
 #include "cl_qaa_ui_raster.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <condition_variable>
+#include <cstdlib>
 #include <cstring>
+#include <functional>
+#include <mutex>
+#include <thread>
 
 namespace qaa_ui {
+
+/* ---- row bands --------------------------------------------------------------
+
+Large triangles (full-screen backgrounds and panels, most of a menu's cost)
+are split into bands of rows run on a few worker threads. A triangle's rows
+never overlap, each pixel is written by one band, and the triangles still
+run one after another, so the result is the same as on one thread. The pool
+is created on first use and never destroyed: its threads wait for work and
+end with the process. */
+class RowPool {
+public:
+	static RowPool &Get() {
+		static RowPool *pool = new RowPool();
+		return *pool;
+	}
+	int Bands() const { return bands_; }
+	/* Run fn(y0, y1) over [y0, y1) in pieces and wait for all of them. Rows
+	 * are handed out in small chunks, so bands of uneven cost (a triangle's
+	 * rows differ in length) still finish together. */
+	void Run( int y0, int y1, const std::function<void( int, int )> &fn ) {
+		if ( bands_ <= 1 ) {
+			fn( y0, y1 );
+			return;
+		}
+		job_ = &fn;
+		end_ = y1;
+		chunk_ = std::max( 1, ( y1 - y0 ) / ( bands_ * 8 ) );
+		next_.store( y0, std::memory_order_relaxed );
+		busy_.store( bands_ - 1, std::memory_order_relaxed );
+		{
+			std::lock_guard<std::mutex> lock( mutex_ );
+			generation_.fetch_add( 1, std::memory_order_release );
+		}
+		wake_.notify_all();
+		Take();
+		// the workers finish their last chunks; spin briefly, they are short
+		while ( busy_.load( std::memory_order_acquire ) > 0 ) {
+			std::this_thread::yield();
+		}
+		job_ = nullptr;
+	}
+
+private:
+	RowPool() {
+		const unsigned hw = std::thread::hardware_concurrency();
+		int threads = std::max( 0, std::min( 7, static_cast<int>( hw ) - 1 ) );
+		if ( const char *env = std::getenv( "QAA_UI_THREADS" ) ) {	// diagnostics: total threads, 1 = none
+			threads = std::max( 0, std::min( 31, std::atoi( env ) - 1 ) );
+		}
+		bands_ = threads + 1;
+		for ( int i = 0; i < threads; i++ ) {
+			std::thread( [this] { Work(); } ).detach();
+		}
+	}
+	/* Run chunks of rows until none are left. */
+	void Take() {
+		for ( ;; ) {
+			const int a = next_.fetch_add( chunk_, std::memory_order_relaxed );
+			if ( a >= end_ ) {
+				return;
+			}
+			( *job_ )( a, std::min( end_, a + chunk_ ) );
+		}
+	}
+	void Work() {
+		unsigned seen = 0;
+		for ( ;; ) {
+			// Spin a little before sleeping: the next triangle usually comes
+			// within microseconds, and waking a sleeping thread takes longer.
+			unsigned gen = generation_.load( std::memory_order_acquire );
+			for ( int spin = 0; gen == seen && spin < 4000; spin++ ) {
+				std::this_thread::yield();
+				gen = generation_.load( std::memory_order_acquire );
+			}
+			if ( gen == seen ) {
+				std::unique_lock<std::mutex> lock( mutex_ );
+				wake_.wait( lock, [&] { return generation_.load( std::memory_order_acquire ) != seen; } );
+				gen = generation_.load( std::memory_order_acquire );
+			}
+			seen = gen;
+			Take();
+			busy_.fetch_sub( 1, std::memory_order_acq_rel );
+		}
+	}
+	int bands_ = 1;
+	std::mutex mutex_;
+	std::condition_variable wake_;
+	std::atomic<unsigned> generation_{ 0 };
+	std::atomic<int> next_{ 0 }, busy_{ 0 };
+	const std::function<void( int, int )> *job_ = nullptr;
+	int end_ = 0, chunk_ = 1;
+};
+
+/* Triangles covering at least this many pixels of their bounding box are
+ * split into row bands. */
+static const int PARALLEL_PIXELS = 1 << 15;
 
 Matrix Matrix::Mul( const Matrix &a, const Matrix &b ) {
 	Matrix r;
@@ -34,7 +136,10 @@ static inline float Clamp01( float v ) {
 /* ---- textures ------------------------------------------------------------- */
 
 static inline void Texel( const Texture &t, int x, int y, bool clamp, float out[4] ) {
-	if ( clamp ) {
+	if ( static_cast<unsigned>( x ) < static_cast<unsigned>( t.width )
+		&& static_cast<unsigned>( y ) < static_cast<unsigned>( t.height ) ) {
+		// inside the texture: no clamp or wrap needed
+	} else if ( clamp ) {
 		x = x < 0 ? 0 : x >= t.width ? t.width - 1 : x;
 		y = y < 0 ? 0 : y >= t.height ? t.height - 1 : y;
 	} else {
@@ -196,6 +301,7 @@ void Canvas::Clear() {
 	user_ = Matrix();
 	cx_ = Cxform();
 	triangles_ = 0;
+	pixelsTested_ = 0;
 }
 
 void Canvas::ToStraight( std::vector<uint8_t> &out ) const {
@@ -262,7 +368,7 @@ Matrix Canvas::Full() const {
 	return Matrix::Mul( view_, Matrix::Mul( user_, matrix_ ) );
 }
 
-void Canvas::Shade( int x, int y, const float s[4] ) {
+void Canvas::Shade( int x, int y, const float s[4], int mode ) {
 	const size_t i = static_cast<size_t>( y ) * width_ + x;
 	switch ( maskState_ ) {
 	case MASK_SUBMIT_INCR:
@@ -286,7 +392,6 @@ void Canvas::Shade( int x, int y, const float s[4] ) {
 	uint8_t *p = &pixels_[i * 4];
 	float d[4] = { p[0] * ( 1.0f / 255.0f ), p[1] * ( 1.0f / 255.0f ), p[2] * ( 1.0f / 255.0f ), p[3] * ( 1.0f / 255.0f ) };
 	float o[4];
-	const int mode = blend_.empty() ? BLEND_NORMAL : blend_.back();
 	switch ( mode ) {
 	case BLEND_ADD:
 		for ( int k = 0; k < 4; k++ ) {
@@ -345,6 +450,96 @@ static inline bool TopLeft( float ax, float ay, float bx, float by ) {
 	return ( ay == by && bx < ax ) || by < ay;
 }
 
+/* A value interpolated over a triangle, as a plane in canvas pixels:
+ * value(px, py) = dx * px + dy * py + c. */
+struct Plane {
+	float dx = 0, dy = 0, c = 0;
+	float At( float px, float py ) const { return dx * px + dy * py + c; }
+};
+
+/* The planes of the three barycentric weights of (v0, v1, v2), whose
+ * signed area (Edge(v0, v1, v2)) is 1 / inv. Weight i is Edge of the
+ * opposite edge over the area, as the per-pixel coverage test uses. */
+static void WeightPlanes( const float sx[3], const float sy[3], float inv, Plane w[3] ) {
+	for ( int i = 0; i < 3; i++ ) {
+		const int a = ( i + 1 ) % 3, b = ( i + 2 ) % 3;
+		// Edge(a, b, p) = (bx - ax)(py - ay) - (by - ay)(px - ax)
+		w[i].dx = -( sy[b] - sy[a] ) * inv;
+		w[i].dy = ( sx[b] - sx[a] ) * inv;
+		w[i].c = ( ( sy[b] - sy[a] ) * sx[a] - ( sx[b] - sx[a] ) * sy[a] ) * inv;
+	}
+}
+
+static Plane Interpolate( const Plane w[3], float f0, float f1, float f2 ) {
+	Plane p;
+	p.dx = w[0].dx * f0 + w[1].dx * f1 + w[2].dx * f2;
+	p.dy = w[0].dy * f0 + w[1].dy * f1 + w[2].dy * f2;
+	p.c = w[0].c * f0 + w[1].c * f1 + w[2].c * f2;
+	return p;
+}
+
+/* Texture coordinate planes: the UV matrix applied to the shape-space planes. */
+static void UvPlanes( const Matrix &m, const Plane &x, const Plane &y, Plane *u, Plane *v ) {
+	u->dx = m.m[0] * x.dx + m.m[1] * y.dx;
+	u->dy = m.m[0] * x.dy + m.m[1] * y.dy;
+	u->c = m.m[0] * x.c + m.m[1] * y.c + m.m[2];
+	v->dx = m.m[3] * x.dx + m.m[4] * y.dx;
+	v->dy = m.m[3] * x.dy + m.m[4] * y.dy;
+	v->c = m.m[3] * x.c + m.m[4] * y.c + m.m[5];
+}
+
+static inline int FloorInt( float f ) {
+	const int i = static_cast<int>( f );
+	return f < static_cast<float>( i ) ? i - 1 : i;
+}
+
+/* A texel coordinate inside [0, size): clamped, or wrapped for Wrap_Repeat. */
+static inline int Address( int i, int size, bool clamp ) {
+	if ( static_cast<unsigned>( i ) < static_cast<unsigned>( size ) ) {
+		return i;
+	}
+	if ( clamp ) {
+		return i < 0 ? 0 : size - 1;
+	}
+	i %= size;
+	return i < 0 ? i + size : i;
+}
+
+/* SampleTexture, in integer texel addressing: the same results, without
+ * per-texel float conversion and function calls. */
+static inline void Sample( const TextureFill &t, float u, float v, float out[4] ) {
+	const Texture *tex = t.texture;
+	if ( !tex || tex->width <= 0 || tex->height <= 0 || tex->rgba.empty() ) {
+		out[0] = out[1] = out[2] = out[3] = 1.0f;
+		return;
+	}
+	const int w = tex->width, h = tex->height;
+	const uint8_t *base = tex->rgba.data();
+	if ( !t.linear ) {
+		// SampleTexture's floor(u * w - 0.5 + 0.5)
+		const int x = Address( FloorInt( u * w ), w, t.clamp );
+		const int y = Address( FloorInt( v * h ), h, t.clamp );
+		const uint8_t *p = base + ( static_cast<size_t>( y ) * w + x ) * 4;
+		for ( int k = 0; k < 4; k++ ) {
+			out[k] = p[k] * ( 1.0f / 255.0f );
+		}
+		return;
+	}
+	const float fx = u * w - 0.5f, fy = v * h - 0.5f;
+	const int ix = FloorInt( fx ), iy = FloorInt( fy );
+	const float ax = fx - ix, ay = fy - iy;
+	const int xa = Address( ix, w, t.clamp ), xb = Address( ix + 1, w, t.clamp );
+	const int ya = Address( iy, h, t.clamp ), yb = Address( iy + 1, h, t.clamp );
+	const uint8_t *p00 = base + ( static_cast<size_t>( ya ) * w + xa ) * 4;
+	const uint8_t *p10 = base + ( static_cast<size_t>( ya ) * w + xb ) * 4;
+	const uint8_t *p01 = base + ( static_cast<size_t>( yb ) * w + xa ) * 4;
+	const uint8_t *p11 = base + ( static_cast<size_t>( yb ) * w + xb ) * 4;
+	const float w11 = ax * ay, w10 = ax - w11, w01 = ay - w11, w00 = 1.0f - ax - ay + w11;
+	for ( int k = 0; k < 4; k++ ) {
+		out[k] = ( p00[k] * w00 + p10[k] * w10 + p01[k] * w01 + p11[k] * w11 ) * ( 1.0f / 255.0f );
+	}
+}
+
 void Canvas::Raster( const ScreenVertex &a, const ScreenVertex &b, const ScreenVertex &c, const Fill &fill, bool explicitUV ) {
 	float area = Edge( a.sx, a.sy, b.sx, b.sy, c.sx, c.sy );
 	if ( !( std::fabs( area ) > 1e-12f ) || !std::isfinite( area ) ) {
@@ -366,99 +561,189 @@ void Canvas::Raster( const ScreenVertex &a, const ScreenVertex &b, const ScreenV
 	if ( x0 >= x1 || y0 >= y1 ) {
 		return;
 	}
+	const bool submit = maskState_ == MASK_SUBMIT_INCR || maskState_ == MASK_SUBMIT_DECR;
+	if ( !submit && !explicitUV && fill.kind != FILL_COLOR && fill.kind != FILL_TEXTURE && fill.kind != FILL_GOURAUD ) {
+		return;
+	}
 	triangles_++;
 	const bool tl0 = TopLeft( v1->sx, v1->sy, v2->sx, v2->sy );
 	const bool tl1 = TopLeft( v2->sx, v2->sy, v0->sx, v0->sy );
 	const bool tl2 = TopLeft( v0->sx, v0->sy, v1->sx, v1->sy );
-	const float inv = 1.0f / area;
-	const bool submit = maskState_ == MASK_SUBMIT_INCR || maskState_ == MASK_SUBMIT_DECR;
+	const int mode = blend_.empty() ? BLEND_NORMAL : blend_.back();
+	// Blend modes Shade treats as normal (GFx draws most shapes as "none" or
+	// "layer"), unmasked or stencil-tested: blended inline below.
+	const bool normalBlend = mode != BLEND_ADD && mode != BLEND_SUBTRACT && mode != BLEND_MULTIPLY
+		&& mode != BLEND_DARKEN && mode != BLEND_LIGHTEN && mode != BLEND_SCREEN;
+	const bool plain = normalBlend && ( maskState_ == MASK_OFF || maskState_ == MASK_TEST );
+	const bool stencilTest = maskState_ == MASK_TEST;
+	const uint8_t level = static_cast<uint8_t>( stencilLevel_ );
 
-	for ( int y = y0; y < y1; y++ ) {
-		const float py = y + 0.5f;
-		for ( int x = x0; x < x1; x++ ) {
-			const float px = x + 0.5f;
-			const float w0 = Edge( v1->sx, v1->sy, v2->sx, v2->sy, px, py );
-			const float w1 = Edge( v2->sx, v2->sy, v0->sx, v0->sy, px, py );
-			const float w2 = Edge( v0->sx, v0->sy, v1->sx, v1->sy, px, py );
-			if ( w0 < 0 || w1 < 0 || w2 < 0 ) {
-				continue;
-			}
-			if ( ( w0 == 0 && !tl0 ) || ( w1 == 0 && !tl1 ) || ( w2 == 0 && !tl2 ) ) {
-				continue;
-			}
-			if ( submit ) {
-				const float none[4] = { 0, 0, 0, 0 };
-				Shade( x, y, none );
-				continue;
-			}
-			const float b0 = w0 * inv, b1 = w1 * inv, b2 = w2 * inv;
-			float col[4], fac[4];
-			for ( int k = 0; k < 4; k++ ) {
-				col[k] = v0->color[k] * b0 + v1->color[k] * b1 + v2->color[k] * b2;
-				fac[k] = v0->factor[k] * b0 + v1->factor[k] * b1 + v2->factor[k] * b2;
-			}
-			const float sxs = v0->x * b0 + v1->x * b1 + v2->x * b2;
-			const float sys = v0->y * b0 + v1->y * b1 + v2->y * b2;
-			float out[4];
-			if ( explicitUV ) {
-				// DrawBitmaps (glyphs): the quad's colour, alpha from the texture
-				const float u = v0->u * b0 + v1->u * b1 + v2->u * b2;
-				const float v = v0->v * b0 + v1->v * b1 + v2->v * b2;
-				float t[4];
-				SampleTexture( fill.tex[0], u, v, t );
-				std::memcpy( out, col, sizeof( out ) );
-				out[3] *= t[3];
-			} else {
-				switch ( fill.kind ) {
-				case FILL_COLOR:
-					std::memcpy( out, fill.color, sizeof( out ) );
-					break;
-				case FILL_TEXTURE: {
-					float u, v;
-					fill.tex[0].uv.Apply( sxs, sys, &u, &v );
-					SampleTexture( fill.tex[0], u, v, out );
-					break;
-				}
-				case FILL_GOURAUD: {
-					if ( fill.texCount == 0 || fill.gouraud == GFILL_COLOR ) {
-						std::memcpy( out, col, sizeof( out ) );
-					} else {
-						float t0[4], u, v;
-						fill.tex[0].uv.Apply( sxs, sys, &u, &v );
-						SampleTexture( fill.tex[0], u, v, t0 );
-						const float *other = col;
-						float t1[4];
-						if ( fill.texCount > 1 && ( fill.gouraud == GFILL_2TEXTURE || fill.gouraud == GFILL_2TEXTURE_COLOR
-							|| fill.gouraud == GFILL_3TEXTURE ) ) {
-							fill.tex[1].uv.Apply( sxs, sys, &u, &v );
-							SampleTexture( fill.tex[1], u, v, t1 );
-							other = t1;
-						}
-						for ( int k = 0; k < 4; k++ ) {
-							out[k] = other[k] + ( t0[k] - other[k] ) * fac[2];
-						}
-					}
-					break;
-				}
-				default:
-					return;
-				}
-			}
-			for ( int k = 0; k < 4; k++ ) {
-				out[k] = Clamp01( out[k] * cx_.mul[k] + cx_.add[k] );
-			}
-			if ( !explicitUV && fill.kind == FILL_GOURAUD ) {
-				out[3] *= Clamp01( fac[3] );	// edge anti-aliasing
-			}
-			if ( out[3] <= 0.0f ) {
-				continue;
-			}
-			out[0] *= out[3];
-			out[1] *= out[3];
-			out[2] *= out[3];
-			Shade( x, y, out );
+	// What the fill needs, as planes over the triangle.
+	const ScreenVertex *vs[3] = { v0, v1, v2 };
+	const float sx[3] = { v0->sx, v1->sx, v2->sx }, sy[3] = { v0->sy, v1->sy, v2->sy };
+	Plane w[3];
+	WeightPlanes( sx, sy, 1.0f / area, w );
+	auto attr = [&]( float ScreenVertex::*field ) {
+		return Interpolate( w, vs[0]->*field, vs[1]->*field, vs[2]->*field );
+	};
+	auto attrK = [&]( float ( ScreenVertex::*field )[4], int k ) {
+		return Interpolate( w, ( vs[0]->*field )[k], ( vs[1]->*field )[k], ( vs[2]->*field )[k] );
+	};
+	const bool gouraudTex = !explicitUV && fill.kind == FILL_GOURAUD && fill.texCount > 0 && fill.gouraud != GFILL_COLOR;
+	const bool twoTex = gouraudTex && fill.texCount > 1
+		&& ( fill.gouraud == GFILL_2TEXTURE || fill.gouraud == GFILL_2TEXTURE_COLOR || fill.gouraud == GFILL_3TEXTURE );
+	const bool needColor = explicitUV || ( fill.kind == FILL_GOURAUD && !twoTex );
+	Plane col[4], facLerp, facAlpha, u0, v0p, u1, v1p;
+	if ( needColor ) {
+		for ( int k = 0; k < 4; k++ ) {
+			col[k] = attrK( &ScreenVertex::color, k );
 		}
 	}
+	if ( !explicitUV && fill.kind == FILL_GOURAUD ) {
+		facLerp = attrK( &ScreenVertex::factor, 2 );
+		facAlpha = attrK( &ScreenVertex::factor, 3 );
+	}
+	if ( explicitUV ) {
+		u0 = attr( &ScreenVertex::u );
+		v0p = attr( &ScreenVertex::v );
+	} else if ( fill.kind == FILL_TEXTURE || gouraudTex ) {
+		const Plane shapeX = attr( &ScreenVertex::x ), shapeY = attr( &ScreenVertex::y );
+		UvPlanes( fill.tex[0].uv, shapeX, shapeY, &u0, &v0p );
+		if ( twoTex ) {
+			UvPlanes( fill.tex[1].uv, shapeX, shapeY, &u1, &v1p );
+		}
+	}
+	const Cxform cx = cx_;
+
+	// The x range a row can cover, from each edge's half-plane, widened by a
+	// pixel: the exact per-pixel test below still decides every pixel.
+	const ScreenVertex *ev[3][2] = { { v1, v2 }, { v2, v0 }, { v0, v1 } };
+	std::atomic<int64_t> testedAll{ 0 };
+	auto rows = [&]( int ya, int yb ) {
+		int64_t tested = 0;
+		for ( int y = ya; y < yb; y++ ) {
+			const float py = y + 0.5f;
+			// Where each edge crosses the row: px <= cross (dy > 0) or px >= cross
+			// (dy < 0). [xa, xb) widens that by a pixel and [inA, inB) narrows it
+			// by one: pixels in [inA, inB) are inside every edge and skip the test.
+			float lo = static_cast<float>( x0 ), hi = static_cast<float>( x1 );
+			bool interior = true;
+			for ( const auto &e : ev ) {
+				// Edge(a, b, px, py) = (b.x - a.x)(py - a.y) - (b.y - a.y)(px - a.x) >= 0
+				const float dy = e[1]->sy - e[0]->sy;
+				const float k = ( e[1]->sx - e[0]->sx ) * ( py - e[0]->sy );
+				if ( dy == 0 ) {
+					interior = interior && k > 0;	// the same sign along the whole row
+					continue;
+				}
+				const float cross = e[0]->sx + k / dy;
+				if ( !( std::fabs( cross ) < 1.0e6f ) ) {
+					interior = false;	// too far out to trust to a pixel
+					continue;
+				}
+				if ( dy > 0 ) {
+					hi = std::min( hi, cross );
+				} else {
+					lo = std::max( lo, cross );
+				}
+			}
+			const int xa = std::max( x0, static_cast<int>( std::floor( lo - 1.0f ) ) );
+			const int xb = std::min( x1, static_cast<int>( std::ceil( hi + 1.0f ) ) + 1 );
+			if ( xa >= xb ) {
+				continue;
+			}
+			const int inA = interior ? std::max( xa, static_cast<int>( std::ceil( lo + 1.0f ) ) ) : xb;
+			const int inB = interior ? std::min( xb, static_cast<int>( std::floor( hi - 1.0f ) ) ) : xb;
+			tested += xb - xa;
+			// the planes at the row's first pixel, stepped by dx per pixel
+			const float pxa = xa + 0.5f;
+			float c[4];
+			for ( int k = 0; k < 4; k++ ) {
+				c[k] = col[k].At( pxa, py );
+			}
+			float fl = facLerp.At( pxa, py ), fa = facAlpha.At( pxa, py );
+			float uu = u0.At( pxa, py ), vv = v0p.At( pxa, py );
+			float uu1 = u1.At( pxa, py ), vv1 = v1p.At( pxa, py );
+			uint8_t *row = &pixels_[( static_cast<size_t>( y ) * width_ ) * 4];
+			for ( int x = xa; x < xb; x++, fl += facLerp.dx, fa += facAlpha.dx, uu += u0.dx, vv += v0p.dx,
+				uu1 += u1.dx, vv1 += v1p.dx, c[0] += col[0].dx, c[1] += col[1].dx, c[2] += col[2].dx, c[3] += col[3].dx ) {
+				if ( x < inA || x >= inB ) {
+					const float px = x + 0.5f;
+					const float e0 = Edge( v1->sx, v1->sy, v2->sx, v2->sy, px, py );
+					const float e1 = Edge( v2->sx, v2->sy, v0->sx, v0->sy, px, py );
+					const float e2 = Edge( v0->sx, v0->sy, v1->sx, v1->sy, px, py );
+					if ( e0 < 0 || e1 < 0 || e2 < 0 ) {
+						continue;
+					}
+					if ( ( e0 == 0 && !tl0 ) || ( e1 == 0 && !tl1 ) || ( e2 == 0 && !tl2 ) ) {
+						continue;
+					}
+				}
+				if ( submit ) {
+					const float none[4] = { 0, 0, 0, 0 };
+					Shade( x, y, none, mode );
+					continue;
+				}
+				float out[4];
+				if ( explicitUV ) {
+					// DrawBitmaps (glyphs): the quad's colour, alpha from the texture
+					float t[4];
+					Sample( fill.tex[0], uu, vv, t );
+					std::memcpy( out, c, sizeof( out ) );
+					out[3] *= t[3];
+				} else if ( fill.kind == FILL_COLOR ) {
+					std::memcpy( out, fill.color, sizeof( out ) );
+				} else if ( fill.kind == FILL_TEXTURE ) {
+					Sample( fill.tex[0], uu, vv, out );
+				} else if ( !gouraudTex ) {
+					std::memcpy( out, c, sizeof( out ) );
+				} else {
+					float t0[4], t1[4];
+					Sample( fill.tex[0], uu, vv, t0 );
+					const float *other = c;
+					if ( twoTex ) {
+						Sample( fill.tex[1], uu1, vv1, t1 );
+						other = t1;
+					}
+					for ( int k = 0; k < 4; k++ ) {
+						out[k] = other[k] + ( t0[k] - other[k] ) * fl;
+					}
+				}
+				for ( int k = 0; k < 4; k++ ) {
+					out[k] = Clamp01( out[k] * cx.mul[k] + cx.add[k] );
+				}
+				if ( !explicitUV && fill.kind == FILL_GOURAUD ) {
+					out[3] *= Clamp01( fa );	// edge anti-aliasing
+				}
+				if ( out[3] <= 0.0f ) {
+					continue;
+				}
+				out[0] *= out[3];
+				out[1] *= out[3];
+				out[2] *= out[3];
+				if ( plain ) {
+					// Shade's mask test and normal blend, inline
+					if ( stencilTest && stencil_[static_cast<size_t>( y ) * width_ + x] != level ) {
+						continue;
+					}
+					uint8_t *p = row + x * 4;
+					const float keep = ( 1.0f - out[3] ) * ( 1.0f / 255.0f );
+					for ( int k = 0; k < 4; k++ ) {
+						p[k] = static_cast<uint8_t>( Clamp01( out[k] + p[k] * keep ) * 255.0f + 0.5f );
+					}
+				} else {
+					Shade( x, y, out, mode );
+				}
+			}
+		}
+		testedAll += tested;
+	};
+	if ( static_cast<int64_t>( x1 - x0 ) * ( y1 - y0 ) >= PARALLEL_PIXELS && y1 - y0 >= 8 ) {
+		RowPool::Get().Run( y0, y1, rows );
+	} else {
+		rows( y0, y1 );
+	}
+	pixelsTested_ += testedAll;
 }
 
 void Canvas::DrawTriangles( const Vertex *v, const uint32_t *indices, int triangles, const Fill &fill ) {

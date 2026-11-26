@@ -879,8 +879,10 @@ static void CL_KeyDownEvent( int key, unsigned time )
 		if ( cgvm ) {
 			VM_Call( cgvm, 2, CG_KEY_EVENT, key, qtrue );
 		}
-	} else if ( cls.state == CA_DISCONNECTED ) {
+	} else if ( cls.state == CA_DISCONNECTED && !QAA_UI_Active() ) {
 		Console_Key( key );
+	} else if ( cls.state == CA_DISCONNECTED ) {
+		// QAA: with the front end running, a closed console takes no keys
 	} else {
 		// send the bound action
 		Key_ParseBinding( key, qtrue, time );
@@ -1030,7 +1032,8 @@ void CL_CharEvent( int key )
 		} else {
 			Field_InsertUtf8Scalar( &chatField, encoded.bytes.data(), encoded.size );
 		}
-	} else if ( cls.state == CA_DISCONNECTED ) {
+	} else if ( cls.state == CA_DISCONNECTED && !QAA_UI_Active() ) {
+		// QAA: with the front end running, typing reaches the console only while it is open
 		if ( encoded.size == 1 ) {
 			Field_CharEvent( &g_consoleField, encoded.bytes[0] );
 		} else {

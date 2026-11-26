@@ -102,6 +102,22 @@ bindings. PC deviations: the console keeps its keys, and the keyboard
 drives the menus as the pad does (SFUI translates through its table at
 0x827EBBC8).
 
+**The console.** The Xbox has none. Here it opens and closes over the
+front end at any time. Quake III's rule that a disconnected client shows
+the console full screen, and cannot close it, applies only when the front
+end is not running (`qaa_ui 0`, or no recompiled ui module): SFUI does not
+hold `KEYCATCH_UI` during the start-up movies or at the title (**observed**),
+so under that rule the console covered the menus and kept every key. While
+the front end runs, a closed console takes no keys and no typing.
+
+**Region.** XGetLocale's country code is the console's region. The startup
+movie (`ui/startup.gfx`) shows the ESRB rating screen (`icons/rating_esrb`)
+and the US legal text for `us`, and the rest-of-world legal text with no
+rating elsewhere (**observed**: `rating_blank`, which the package does not
+hold). PC deviation: the region is the operating system's (Windows' home
+location, else the territory in `LC_ALL`, `LC_MESSAGES` or `LANG`), or
+`qaa_country` when set; `us` when none says. The language is always `en`.
+
 The engine's own calls into SFUI are made where retail makes them.
 `ClientLoadComplete` is sent at the end of `CL_InitCGame`. On the first
 snapshot the HUD scene is invoked (`_global.sceneManager.gotoScene`, menu
@@ -184,11 +200,17 @@ Every run is headless (`com_headless 2`, no sound, no input grab).
   changes. Higher levels add traps, draws, recorder calls and per-command
   replay.
 - `qaa_ui 0` (latched): run without the front end, console only.
+- `qaa_uiProfile 1`: once a second, the front end's frame rate and average
+  cost per frame (update thread, SFUI render, replay, present), with the
+  triangles and pixels each redraw rasterised.
+- `qaa_country <cc>`: the region the start-up movies see (`us` shows the
+  ESRB screen).
 
 **observed** at 1600×1024, in order:
 
-1. The legal screen, the Bethesda and Pi Studios logos, and the title with
-   its art and A-button prompt.
+1. The legal screen, the id, Bethesda and Pi Studios logos, and the title
+   with its art and A-button prompt (retail's order). The legal screen is
+   the US one with the ESRB rating only for region `us`.
 2. Enter: sign-in, storage, config load, then the main menu with its art.
 3. Multiplayer (Player Match, Ranked Match, System Link).
 4. `devmap q3dm6`: the HUD (armour, health, ammo with icon, frags, clock,
@@ -209,5 +231,10 @@ synthetic data. It needs no retail files.
 - The map name in the scoreboard is "null" when a map is started from the
   console rather than from the menus.
 - Performance: the rasteriser is a CPU path, redrawn only when SFUI
-  updates. A GPU replay would replace it.
+  updates. Large triangles are split into row bands on worker threads, and
+  each row is walked only over the span the triangle covers. **observed**
+  with `qaa_uiProfile` at 1600×1024 on a 20-thread laptop: the title
+  replays in about 13 ms (it took about 140 ms on one thread with a
+  per-pixel bounding-box walk), the start-up movies in about 45 ms, and the
+  HUD in about 6 ms. A GPU replay would replace it.
 - Rumble (`stopVibration`) and XAM import 752 are unimplemented.

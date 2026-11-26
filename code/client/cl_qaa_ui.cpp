@@ -31,8 +31,10 @@ Structure:
 #include "../qaa/qaa_guest_host.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdarg>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <set>
@@ -123,6 +125,7 @@ constexpr uint32_t D3DX_TEXTURE_FROM_MEMORY = 0x8221D000;
 cvar_t *qaa_uiEnable;
 cvar_t *qaa_uiTrace;
 cvar_t *qaa_uiTestFrames;
+cvar_t *qaa_uiProfile;
 qaa_module *uiModule;
 bool uiReady;
 bool uiFailed;
@@ -589,14 +592,19 @@ void PollGameStartedBeforeTitle() {
 }
 
 /* The two-letter codes QAA builds its localisation paths from (0x82184DA8:
- * XGetLanguage, 0x82184E58: XGetLocale). PC deviation: English and the US,
- * as an Xbox set to English. */
+ * XGetLanguage, 0x82184E58: XGetLocale). The language is English, as an
+ * Xbox set to English. The country is the console's region: the startup
+ * movie (ui/startup.gfx) shows the ESRB rating screen and the US legal text
+ * only for "us", and the rest-of-world legal text without a rating
+ * elsewhere. PC deviation: the region is the operating system's (Windows'
+ * home location, else the language environment's territory), or
+ * qaa_country when set. */
 void H_LanguageCode( void *, qaa_hook_call *c ) {
 	GStrcpy( R( c, 0 ), "en", 3 );
 }
 
 void H_CountryCode( void *, qaa_hook_call *c ) {
-	GStrcpy( R( c, 0 ), "us", 3 );
+	GStrcpy( R( c, 0 ), QAA_UI_CountryCode(), 3 );
 }
 
 /* -- licence and profile ---------------------------------------------------------------- */
@@ -2167,6 +2175,11 @@ bool QAA_UI_Init( void ) {
 		"recompiled from the package's default.xex." );
 	qaa_uiTrace = Cvar_Get( "qaa_uiTrace", "0", 0 );
 	qaa_uiTestFrames = Cvar_Get( "qaa_uiTestFrames", "0", 0 );
+	qaa_uiProfile = Cvar_Get( "qaa_uiProfile", "0", 0 );
+	Cvar_SetDescription( Cvar_Get( "qaa_country", "", CVAR_ARCHIVE ), "The console region the front end sees, two "
+		"letters (\"us\" shows the ESRB rating screen at start-up). Empty: the operating system's region." );
+	Cvar_SetDescription( qaa_uiProfile, "Print the front end's average cost per client frame once a second: "
+		"update thread, SFUI render, replay, present." );
 	Cvar_Get( "sys_titleFocused", "1", CVAR_ROM );
 	Cmd_AddCommand( "qaa_uiDump", UI_Dump_f );
 	if ( !qaa_uiEnable->integer || uiFailed ) {
@@ -2207,6 +2220,105 @@ void QAA_UI_Shutdown( void ) {
 
 bool QAA_UI_Active( void ) {
 	return uiReady && !uiFailed;
+}
+
+#ifdef _WIN32
+// kernel32 (Windows 10 1709 and later); declared here to keep windows.h out
+extern "C" __declspec( dllimport ) int __stdcall GetUserDefaultGeoName( wchar_t *geoName, int geoNameCount );
+#endif
+
+/* Two letters of a region name ("GB", "en_GB.UTF-8" from its '_'), lower-cased. */
+static bool CountryFrom( const char *name, char out[3] ) {
+	if ( !name ) {
+		return false;
+	}
+	if ( const char *territory = strchr( name, '_' ) ) {
+		name = territory + 1;
+	}
+	if ( !isalpha( static_cast<unsigned char>( name[0] ) ) || !isalpha( static_cast<unsigned char>( name[1] ) )
+		|| isalpha( static_cast<unsigned char>( name[2] ) ) ) {
+		return false;
+	}
+	out[0] = static_cast<char>( tolower( static_cast<unsigned char>( name[0] ) ) );
+	out[1] = static_cast<char>( tolower( static_cast<unsigned char>( name[1] ) ) );
+	out[2] = 0;
+	return true;
+}
+
+const char *QAA_UI_CountryCode( void ) {
+	static char code[3];
+	const char *forced = Cvar_VariableString( "qaa_country" );
+	if ( forced[0] && CountryFrom( forced, code ) ) {
+		return code;
+	}
+#ifdef _WIN32
+	wchar_t geo[16] = {};
+	char narrow[16] = {};
+	if ( GetUserDefaultGeoName( geo, 16 ) > 0 ) {
+		for ( int i = 0; i < 15 && geo[i]; i++ ) {
+			narrow[i] = geo[i] < 128 ? static_cast<char>( geo[i] ) : '?';
+		}
+		if ( CountryFrom( narrow, code ) ) {
+			return code;
+		}
+	}
+#else
+	for ( const char *var : { "LC_ALL", "LC_MESSAGES", "LANG" } ) {
+		const char *value = getenv( var );
+		if ( value && value[0] ) {
+			// "en_GB.UTF-8": only a value with a territory names a region
+			if ( strchr( value, '_' ) && CountryFrom( value, code ) ) {
+				return code;
+			}
+			break;
+		}
+	}
+#endif
+	Q_strncpyz( code, "us", sizeof( code ) );
+	return code;
+}
+
+/* qaa_uiProfile 1: average microseconds per client frame, once a second. */
+namespace uiprof {
+enum Stage { UPDATE, RENDER, REPLAY, PRESENT, COUNT };
+const char *const names[COUNT] = { "update", "render", "replay", "present" };
+int64_t total[COUNT];
+int frames, updates, redraws, started;
+int64_t tested, tris;
+
+int64_t Now() {
+	return Sys_Microseconds();
+}
+
+void Add( Stage stage, int64_t since ) {
+	total[stage] += Now() - since;
+}
+
+void EndFrame() {
+	if ( !qaa_uiProfile || !qaa_uiProfile->integer ) {
+		return;
+	}
+	frames++;
+	const int now = Sys_Milliseconds();
+	if ( !started ) {
+		started = now;
+	}
+	if ( now - started < 1000 ) {
+		return;
+	}
+	std::string line;
+	for ( int i = 0; i < COUNT; i++ ) {
+		line += va( " %s %lld", names[i], static_cast<long long>( total[i] / frames ) );
+		total[i] = 0;
+	}
+	Com_Printf( "QAA ui profile: %d frames/s, %d updates, %d redraws, us/frame:%s, per redraw %lld triangles "
+		"%lld kpixels (canvas %dx%d)\n", frames, updates, redraws, line.c_str(),
+		static_cast<long long>( redraws ? tris / redraws : 0 ),
+		static_cast<long long>( redraws ? tested / redraws / 1000 : 0 ), canvas.Width(), canvas.Height() );
+	frames = updates = redraws = 0;
+	tested = tris = 0;
+	started = now;
+}
 }
 
 void QAA_UI_Frame( void ) {
@@ -2310,7 +2422,11 @@ void QAA_UI_Frame( void ) {
 	}
 	while ( pending >= 1.0 ) {
 		pending -= 1.0;
-		if ( Api().qaa_guest_step_thread( Guest(), thread, frame, 5000 ) != QAA_OK ) {
+		const int64_t stepStart = uiprof::Now();
+		const int stepped = Api().qaa_guest_step_thread( Guest(), thread, frame, 5000 );
+		uiprof::Add( uiprof::UPDATE, stepStart );
+		uiprof::updates++;
+		if ( stepped != QAA_OK ) {
 			Com_Printf( S_COLOR_YELLOW "QAA ui: the update thread did not finish its frame (%s)\n",
 				Api().qaa_guest_last_error( Guest() ) );
 			break;
@@ -2323,6 +2439,9 @@ void QAA_UI_Draw( void ) {
 	if ( !QAA_UI_Active() ) {
 		return;
 	}
+	struct EndFrame {
+		~EndFrame() { uiprof::EndFrame(); }
+	} endFrame;
 	// a frame with no update shows the last one again
 	if ( !updatesPending && canvas.Width() == cls.glconfig.vidWidth && canvas.Height() == cls.glconfig.vidHeight
 		&& !presentBuffer.empty() ) {
@@ -2331,13 +2450,20 @@ void QAA_UI_Draw( void ) {
 		return;
 	}
 	updatesPending = false;
+	uiprof::redraws++;
+	int64_t stageStart = uiprof::Now();
 	canvas.Resize( cls.glconfig.vidWidth, cls.glconfig.vidHeight );
 	canvas.Clear();
 	canvasDrawn = false;
 	if ( !UiCall( addr::SFUI_RENDER, {} ) ) {
 		return;
 	}
+	uiprof::Add( uiprof::RENDER, stageStart );
+	stageStart = uiprof::Now();
 	ExecuteCommands();
+	uiprof::Add( uiprof::REPLAY, stageStart );
+	uiprof::tested += canvas.PixelsTested();
+	uiprof::tris += canvas.Triangles();
 	if ( qaa_uiTrace->integer > 1 ) {
 		Com_Printf( "QAA ui: draw %s, %d triangles, movies %d\n", canvasDrawn ? "recorded" : "empty",
 			canvas.Triangles(), QAA_LoadS32( sfui + 0x21E8 ) );
@@ -2357,9 +2483,11 @@ void QAA_UI_Draw( void ) {
 		dumpRequests--;
 		DumpCanvas( va( "screenshots/qaa_ui_%04d.tga", framesDrawn ) );
 	}
+	const int64_t presentStart = uiprof::Now();
 	canvas.ToStraight( presentBuffer );
 	re.DrawWebUISurface( 0, 0, cls.glconfig.vidWidth, cls.glconfig.vidHeight, canvas.Width(), canvas.Height(),
 		presentBuffer.data(), qtrue );
+	uiprof::Add( uiprof::PRESENT, presentStart );
 }
 
 /*

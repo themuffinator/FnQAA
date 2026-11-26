@@ -27,6 +27,9 @@ cycle (`python scripts/changelog.py clear-unreleased`).
   the game on its own, with no paths to type.
 
 ### Compatibility
+- The start-up sequence follows your region as the console does: the
+  legal notice without the ESRB rating outside the US, then the id,
+  Bethesda and Pi Studios logos. Set `qaa_country us` for the US screens.
 - The engine reads the game's data inside your package, in place, and never
   changes it; saved games and title updates stored beside the game are left
   alone.
@@ -42,7 +45,10 @@ cycle (`python scripts/changelog.py clear-unreleased`).
   and a setup kit only, never game data or game code.
 
 ### Fixes
-- _None yet._
+- The menus are many times faster: the title and menus no longer crawl at
+  a few frames a second.
+- The console no longer opens over the menus at start-up and stays stuck
+  there; it starts closed and opens and closes with the console key.
 
 ### Documentation and Tooling
 - The setup checks for every tool the recompile needs before it starts, and

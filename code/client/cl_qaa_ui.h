@@ -31,6 +31,11 @@ bool QAA_UI_Init( void );
 void QAA_UI_Shutdown( void );
 bool QAA_UI_Active( void );
 
+/* The console region the front end is told (XGetLocale's country code),
+ * two lower-case letters: qaa_country if set, else the operating system's
+ * region, else "us". */
+const char *QAA_UI_CountryCode( void );
+
 /* Once per client frame, before the screen update: one iteration of SFUI's
  * update thread (input, invokes, Advance). */
 void QAA_UI_Frame( void );
