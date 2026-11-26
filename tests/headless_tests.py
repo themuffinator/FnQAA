@@ -6,12 +6,11 @@ usage: headless_tests.py <openqaa client> <openqaa-ded server> [test names]
 Every run is unattended: the client starts with com_headless 2 (no window),
 sound off; the dedicated server is headless by default. No retail data is
 needed: the test writes a synthetic XBLA package (STFS) whose baseq3/pak0.bpk
-holds default.cfg, names it through fs_qaaNameList and checks that the engine
-mounts the package in place, executes that default.cfg and reads a record by
-raw hash. When QAA_PACKAGE names the user's real package, the server and the
-client also mount it and read its first BPK record by hash (a loose synthetic
-default.cfg stands in until the BPK name hash is known); otherwise those
-checks are skipped.
+holds default.cfg and a second config under their name hashes, and checks that
+the engine mounts the package in place, finds both by name, executes them and
+reads a record by raw hash. When QAA_PACKAGE names the user's real package,
+the server and the client also boot from it, executing QAA's own default.cfg,
+and read its first BPK record by hash; otherwise those checks are skipped.
 
 Windows also checks that no process window is ever created.
 """
@@ -32,9 +31,40 @@ CLIENT: Path
 SERVER: Path
 
 MARKER = "QAA_SYNTHETIC_DEFAULT_CFG"
-CFG_HASH = 0x5EED0000DEFA0C46
-EXTRA_HASH = 0x5EED00000000E47A
+NESTED_MARKER = "QAA_SYNTHETIC_NESTED_CFG"
+NESTED_NAME = "Cfg/Nested.CFG"          # looked up as exec cfg\nested.cfg
+EXTRA_HASH = 0x5EED00000000E47A        # no name: reached only by raw hash
 EXTRA = b"IBSP\x2f\x00\x00\x00 synthetic record read by raw hash\n"
+
+_POLY, _SEED, _MASK = 0x0060034000F0D50B, 0xFAC432B10CD5E44A, (1 << 64) - 1
+
+
+def _clmul_byte(i):
+    c = 0
+    for bit in range(7, -1, -1):
+        c = (c << 1) & _MASK
+        if (i >> bit) & 1:
+            c ^= _POLY
+    return c
+
+
+_TABLE = [_clmul_byte(i) for i in range(256)]
+
+
+def bpk_name_hash(path):
+    """An independent copy of qaa_bpk_name_hash (code/qaa/qaa_bpk.c)."""
+    h = _SEED
+    for c in path.encode():
+        if c == 0x2F:
+            c = 0x5C
+        elif 0x41 <= c <= 0x5A:
+            c += 0x20
+        v = c if c < 0x80 else (c - 0x100) & 0xFFFFFFFF   # sign extension, as qaa_bpk.c
+        h = ((h << 8) & _MASK) ^ _TABLE[h >> 56] ^ v
+    return h
+
+
+assert bpk_name_hash("default.cfg") == 0xABF374818163C51F
 
 
 def make_bpk(records):
@@ -171,16 +201,16 @@ class HeadlessTests(unittest.TestCase):
         root = Path(os.environ.get("MESON_BUILD_ROOT", CLIENT.parent))
         self.work = Path(tempfile.mkdtemp(prefix="openqaa-headless-", dir=str(root)))
         self.engine = Engine(self.work)
-        self.cfg = ("echo " + MARKER + "\n").encode()
-        bpk = make_bpk([(CFG_HASH, self.cfg), (EXTRA_HASH, EXTRA)])
+        self.cfg = ("echo " + MARKER + "\nexec cfg\\nested.cfg\n").encode()
+        nested = ("echo " + NESTED_MARKER + "\n").encode()
+        bpk = make_bpk([(bpk_name_hash("default.cfg"), self.cfg), (bpk_name_hash(NESTED_NAME), nested),
+                        (EXTRA_HASH, EXTRA)])
         self.package = self.work / "package"
         self.package.write_bytes(make_stfs([("default.xex", b"synthetic"), ("baseq3/pak0.bpk", bpk)]))
         self.folder = self.work / "folder"
         (self.folder / "baseq3").mkdir(parents=True)
         (self.folder / "default.xex").write_bytes(b"synthetic")
         (self.folder / "baseq3" / "pak0.bpk").write_bytes(bpk)
-        self.names = self.work / "names.txt"
-        self.names.write_text("# synthetic name list\n%016x default.cfg\n" % CFG_HASH)
 
     def tearDown(self):
         # only this test's own folder, inside the build tree, never through a link
@@ -189,12 +219,13 @@ class HeadlessTests(unittest.TestCase):
         shutil.rmtree(self.work)
 
     def synthetic_run(self, exe, source):
-        out = self.engine.run(exe, ["+set", "fs_qaaPackage", str(source), "+set", "fs_qaaNameList", str(self.names),
+        out = self.engine.run(exe, ["+set", "fs_qaaPackage", str(source),
                                     "+fs_restart", "+qaa_info", "+qaa_bpkread", "%016x" % EXTRA_HASH,
                                     "+wait", "3", "+quit"])
         self.assertIn(MARKER, out, "default.cfg was not executed from the BPK")
+        self.assertIn(NESTED_MARKER, out, "cfg/nested.cfg was not found by name")
         self.assertEqual(out.count("Quake Arena Arcade "), 2, "fs_restart did not remount the package")
-        self.assertIn("fs_qaaNameList: 1 of 2 records named", out)
+        self.assertIn("3 records", out)
         self.assertIn("qaa_bpkread %016x: %d bytes" % (EXTRA_HASH, len(EXTRA)), out)
         self.assertIn("crc32 %08x, begins 'IBSP'" % zlib.crc32(EXTRA), out)
         self.assertNotIn("SHORT READ", out)
@@ -221,15 +252,13 @@ class HeadlessTests(unittest.TestCase):
     def test_real_package_record_by_hash(self):
         package = Path(os.environ["QAA_PACKAGE"])
         h, size = first_real_record(package)
-        base = self.work / "base" / "baseq3"
-        base.mkdir(parents=True)
-        (base / "default.cfg").write_bytes(self.cfg)    # until the BPK name hash is known
         for exe in (SERVER, CLIENT):
             with self.subTest(exe=exe.name):
                 out = self.engine.run(exe, ["+set", "fs_qaaPackage", str(package), "+qaa_info",
                                             "+qaa_bpkread", "%016x" % h, "+wait", "3", "+quit"])
                 self.assertIn("title ID: 584108C8", out)
                 self.assertIn("4916 records", out)
+                self.assertNotIn(MARKER, out)       # QAA's own default.cfg, from the package
                 self.assertIn("qaa_bpkread %016x: %d bytes" % (h, size), out)
                 self.assertNotIn("SHORT READ", out)
 

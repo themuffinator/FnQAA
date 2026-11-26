@@ -13,7 +13,7 @@ package holds a fragmented baseq3/pak0.bpk whose records are stored raw, as
 an XMemCompress stream (one uncompressed LZX block) and with an unknown flag.
 ===========================================================================
 */
-#include "qaa_bpk.h"
+#include "qaa_bpk_archive.h"
 #include "qaa_stfs.h"
 
 #include <stdio.h>
@@ -301,35 +301,26 @@ static void TestStfsAndBpk( void ) {
 	free( big );
 }
 
-static void TestNameLines( void ) {
-	char path[64];
-	uint64_t hash = 0;
+static void TestNameHash( void ) {
+	const char names[] = "default.cfg\0Maps/Q3DM1.bsp\0";
+	uint64_t many[2];
 
-	CHECK( QAA_BpkParseNameLine( "0123456789abcdef maps/arena.bsp\r\n", &hash, path, sizeof( path ) ) == 1 );
-	CHECK( hash == 0x0123456789ABCDEFull && !strcmp( path, "maps/arena.bsp" ) );
-	CHECK( QAA_BpkParseNameLine( "  FEDCBA9876543210\tscripts/a b.shader  ", &hash, path, sizeof( path ) ) == 1 );
-	CHECK( hash == 0xFEDCBA9876543210ull && !strcmp( path, "scripts/a b.shader" ) );
-	CHECK( QAA_BpkParseNameLine( "default.cfg", &hash, path, sizeof( path ) ) == 1 );
-	CHECK( !strcmp( path, "default.cfg" ) && hash == QAA_BpkNameHash( "default.cfg" ) );
-	CHECK( QAA_BpkParseNameLine( "0123 short.txt", &hash, path, sizeof( path ) ) == 1 && !strcmp( path, "0123 short.txt" ) );
-	CHECK( QAA_BpkParseNameLine( "", &hash, path, sizeof( path ) ) == 0 );
-	CHECK( QAA_BpkParseNameLine( "# comment", &hash, path, sizeof( path ) ) == 0 );
-	CHECK( QAA_BpkParseNameLine( "// comment", &hash, path, sizeof( path ) ) == 0 );
-	CHECK( QAA_BpkParseNameLine( "0123456789abcdef ", &hash, path, sizeof( path ) ) == 1
-		&& !strcmp( path, "0123456789abcdef" ) );
-	CHECK( QAA_BpkParseNameLine( "a/very/long/path/that/does/not/fit/in/the/small/buffer/given/here.txt",
-		&hash, path, 16 ) == -1 );
-	/* the placeholder hash matches no record */
-	if ( !QAA_BpkNameHashKnown() ) {
-		CHECK( QAA_BpkNameHash( "default.cfg" ) == 0 );
-	}
+	/* default.cfg is pak0.bpk's second record (verified against the archive) */
+	CHECK( qaa_bpk_name_hash( "default.cfg" ) == 0xABF374818163C51Full );
+	/* case and separators do not matter */
+	CHECK( qaa_bpk_name_hash( "DEFAULT.CFG" ) == qaa_bpk_name_hash( "default.cfg" ) );
+	CHECK( qaa_bpk_name_hash( "maps/q3dm1.bsp" ) == qaa_bpk_name_hash( "MAPS\\Q3DM1.BSP" ) );
+	CHECK( qaa_bpk_name_hash( "maps/q3dm1.bsp" ) != qaa_bpk_name_hash( "maps/q3dm2.bsp" ) );
+	CHECK( qaa_bpk_name_hash( "" ) == 0xFAC432B10CD5E44Aull );	/* the seed */
+	qaa_bpk_name_hash_many( names, 2, many );
+	CHECK( many[0] == qaa_bpk_name_hash( "default.cfg" ) && many[1] == qaa_bpk_name_hash( "maps/q3dm1.bsp" ) );
 }
 
 int main( void ) {
 	TestHostFile();
 	TestCrc32();
 	TestStfsAndBpk();
-	TestNameLines();
+	TestNameHash();
 	if ( failures ) {
 		fprintf( stderr, "%d check(s) failed\n", failures );
 		return 1;

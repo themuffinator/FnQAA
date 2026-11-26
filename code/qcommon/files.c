@@ -36,6 +36,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "quakelive_pk3_xor.h"
 // QAA: Quake Arena Arcade's package (STFS) and archive (BPK) readers.
 #include "../qaa/qaa_bpk.h"
+#include "../qaa/qaa_bpk_archive.h"
 #include "../qaa/qaa_stfs.h"
 
 /*
@@ -286,6 +287,7 @@ typedef struct pack_s {
 	qboolean		quakeliveEncrypted;
 	uint64_t		workshopItemId;			// zero for non-Workshop archives
 	struct qaaBpk_s	*qaaBpk;					// QAA: PACK_FORMAT_BPK archive; fileInPack_t.pos is its record index
+	fileInPack_t	*qaaFiles;					// QAA: one entry per BPK record, named once looked up
 	int				hashSize;					// hash table size (power of 2)
 	fileInPack_t*	*hashTable;					// hash table
 	fileInPack_t*	buildBuffer;				// buffer with the filenames etc.
@@ -395,6 +397,9 @@ static char *FS_CreateQuakeLiveDecryptedZipFile( const char *zipfile );
 static pack_t *FS_LoadZipFile( const char *zipfile );
 static pack_t *FS_LoadPakFile( const char *pakfile );
 static int FS_QAA_OpenBpkRecord( fileHandle_t *file, pack_t *pak, uint32_t index, const char *name ); // QAA
+static void FS_QAA_ResolveName( const char *filename ); // QAA
+static void FS_QAA_FreeNames( pack_t *pak ); // QAA
+static int fs_qaaMounted; // QAA: number of mounted BPK packs
 
 typedef union qfile_gus {
 	FILE*		o;
@@ -2312,6 +2317,7 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 	// we will calculate full hash only once then just mask it by current pack->hashSize
 	// we can do that as long as we know properties of our hash function
 	fullHash = FS_HashFileName( filename, 0U );
+	FS_QAA_ResolveName( filename ); // QAA: BPK records are found by name hash
 
 	if ( file == NULL ) {
 		// just wants to see if file is there
@@ -2431,6 +2437,7 @@ void FS_TouchFileInPak( const char *filename ) {
 	fileInPack_t	*pakFile;
 
 	fullHash = FS_HashFileName( filename, 0U );
+	FS_QAA_ResolveName( filename ); // QAA
 
 	for ( search = fs_searchpaths ; search ; search = search->next ) {
 		
@@ -2848,6 +2855,7 @@ qboolean FS_FileIsInPAK( const char *filename, int *pChecksum, char *pakName ) {
 	}
 
 	fullHash = FS_HashFileName( filename, 0U );
+	FS_QAA_ResolveName( filename ); // QAA
 
 	//
 	// search through the path, one element at a time
@@ -2899,6 +2907,9 @@ static fileInPack_t *FS_FindFileInPack( const pack_t *pak, const char *filename,
 
 	if ( !pak || !pak->hashTable ) {
 		return NULL;
+	}
+	if ( pak->qaaBpk ) { // QAA
+		FS_QAA_ResolveName( filename );
 	}
 	for ( pakFile = pak->hashTable[ fullHash & ( pak->hashSize - 1 ) ]; pakFile; pakFile = pakFile->next ) {
 		if ( !FS_FilenameCompare( pakFile->name, filename ) ) {
@@ -4905,6 +4916,7 @@ Frees a pak structure and releases all associated resources
 static void FS_FreePak( pack_t *pak )
 {
 	if ( pak->qaaBpk ) { // QAA
+		FS_QAA_FreeNames( pak );
 		QAA_BpkClose( pak->qaaBpk );
 		pak->qaaBpk = NULL;
 	}
@@ -5870,6 +5882,7 @@ static void FS_Which_f( void ) {
 	if ( filename[0] == '/' || filename[0] == '\\' ) {
 		filename++;
 	}
+	FS_QAA_ResolveName( filename ); // QAA
 
 	// just wants to see if file is there
 	for ( search = fs_searchpaths ; search ; search = search->next ) {

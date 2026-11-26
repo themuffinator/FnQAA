@@ -260,7 +260,7 @@ include_dirs = include_directories(
 # Steam); the QAA package readers live in code/qaa.
 qaa_src = [
   'code/qaa/qaa_bpk.c',
-  'code/qaa/qaa_bpk_hash.c',
+  'code/qaa/qaa_bpk_archive.c',
   'code/qaa/qaa_io.c',
   'code/qaa/qaa_lzx.c',
   'code/qaa/qaa_stfs.c',

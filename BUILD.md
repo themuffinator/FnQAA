@@ -80,14 +80,17 @@ service unavailable.
 `OPENQAA_HEADLESS=2`, so a client never opens a window, and dedicated servers
 are headless anyway.
 
-- `openqaa_qaa_package`: the STFS and BPK readers on a synthetic package.
+- `openqaa_qaa_package`: the STFS and BPK readers on a synthetic package,
+  and the BPK name hash.
 - `openqaa_headless`: the client (`com_headless 2`, sound off) and the
   dedicated server start, mount a synthetic package (STFS file and folder),
-  execute the `default.cfg` stored in its pak0.bpk, read a record by raw
-  hash and quit with exit code 0. On Windows it also checks that the client
+  find the `default.cfg` in its pak0.bpk by name hash and execute it (it
+  execs a second config by a mixed-case, backslash path), read a record by
+  raw hash and quit with exit code 0. On Windows it also checks that the client
   never creates a visible window.
 - With `QAA_PACKAGE` set to your STFS package, `openqaa_headless` also
-  mounts it in both binaries and reads the first pak0.bpk record by hash.
+  boots both binaries from it (QAA's own `default.cfg`) and reads the first
+  pak0.bpk record by hash.
   Without it that check is skipped. No retail data is ever written.
 - The rest are FnQL's engine unit tests. `openqaa_audio_loopback` skips
   when the OpenAL driver lacks `ALC_SOFT_loopback`.

@@ -10,9 +10,9 @@ or game code is included in this repository.
 
 > **Status: M2, the engine.** The FnQL engine is imported and builds as
 > `openqaa` and `openqaa-ded`. It mounts the game's data straight from your
-> XBLA package, without extracting anything. The game modules (M3 to M5) and
-> the menus (M6) are not there yet, and pak0.bpk's file names wait on the
-> name hash (M1), so the game does not play yet. See [the plan](docs/PLAN.md).
+> XBLA package, without extracting anything, and boots from the game's own
+> `default.cfg`. The game modules (M3 to M5) and the menus (M6) are not there
+> yet, so the game does not play yet. See [the plan](docs/PLAN.md).
 
 ## Build
 
@@ -48,17 +48,15 @@ build/msvc/openqaa.exe +set fs_qaaPackage "D:\Games\QAA\0ED9DD87783BD72BA56ED67A
 
 - `+set fs_qaaPackage <path>`: the package file, a folder holding its files,
   or a `.bpk` file.
-- `+set fs_qaaNameList <file>`: a text file naming pak0.bpk records, one
-  `<16 hex digit hash> <path>` per line (a path alone is hashed by the
-  engine once the hash is known).
-- `qaa_info`: what is mounted, and how many records have names.
+- `qaa_info`: what is mounted.
 - `qaa_bpkread <hash>`: read a pak0.bpk record by its 64-bit name hash and
   print its size and CRC-32 (reads only).
 
-Until the name hash is known no record can be found by name, so the engine
-needs a `default.cfg` from somewhere (a loose `baseq3/default.cfg`, or a name
-list entry) to start. For automated runs use `+set com_headless 2`, which
-starts the client without a window.
+pak0.bpk stores only a hash of each file's path, so, as on the Xbox, its
+files are found by exact name and never appear in directory listings
+(`dir`, the game's file lists). Loose files under `baseq3/` in the install
+or home folder override the package. For automated runs use
+`+set com_headless 2`, which starts the client without a window.
 
 ## Tools
 

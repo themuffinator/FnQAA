@@ -13,16 +13,18 @@ fs_qaaPackage names one of
   - the STFS package file itself,
   - a folder holding the package's files (default.xex, baseq3/pak0.bpk), or
   - a .bpk file.
-BPK records are keyed by a 64-bit name hash (QAA_BpkNameHash). A record is
-visible to the filesystem by name once its path is known: from the name list
-in fs_qaaNameList, and, once the hash is implemented, from any path in that
-list without an explicit hash. Every record is reachable by its raw hash
-through qaa_bpkread.
+BPK records are keyed by a 64-bit hash of the path (qaa_bpk_name_hash,
+code/qaa/qaa_bpk.c). As in retail (default.xex: lookup at 0x82120C98), a
+file is found only by its exact name: the lookup functions in files.c call
+FS_QAA_ResolveName, which hashes the requested path and, on a hit, links the
+record into the pack's hash chain under that name. BPK packs keep numfiles
+at 0, so directory listings never include their records, because the table
+holds only hashes and retail cannot enumerate it either. Every record is also
+reachable by raw hash through qaa_bpkread.
 ===========================================================================
 */
 
 static cvar_t	*fs_qaaPackage;
-static cvar_t	*fs_qaaNameList;
 static char		fs_qaaSource[MAX_OSPATH * 2];	// what was mounted, for qaa_info
 static const char *fs_qaaKind = "none";
 static uint32_t	fs_qaaTitleId;
@@ -86,166 +88,109 @@ static int FS_QAA_OpenBpkRecord( fileHandle_t *file, pack_t *pak, uint32_t index
 }
 
 
-typedef struct {
-	uint32_t	index;
-	char		*name;
-} qaaNamedRecord_t;
-
-/*
-=================
-FS_QAA_ReadNameList
-
-Names the records of `bpk` from fs_qaaNameList. Returns the number named;
-*records and *names are Z_Malloc'd (free with Z_Free) when nonzero.
-=================
-*/
-static int FS_QAA_ReadNameList( const qaaBpk_t *bpk, qaaNamedRecord_t **records, char **names, int *namesLength ) {
-	const char *listPath = fs_qaaNameList->string;
-	byte *seen;
-	char *text, *line, *next;
-	char path[MAX_QPATH];
-	FILE *f;
-	long length;
-	int count = 0, capacity, lineNumber = 0, bad = 0, unmatched = 0;
-	int used = 0;
-	uint64_t hash;
-
-	*records = NULL;
-	*names = NULL;
-	*namesLength = 0;
-	if ( !listPath[0] ) {
-		return 0;
-	}
-	f = Sys_FOpen( listPath, "rb" );
-	if ( !f ) {
-		Com_Printf( S_COLOR_YELLOW "WARNING: cannot open fs_qaaNameList '%s'\n", listPath );
-		return 0;
-	}
-	fseek( f, 0, SEEK_END );
-	length = ftell( f );
-	fseek( f, 0, SEEK_SET );
-	if ( length <= 0 || length > 8 * 1024 * 1024 ) {
-		fclose( f );
-		return 0;
-	}
-	text = (char *)Z_Malloc( (int)length + 1 );
-	if ( (long)fread( text, 1, (size_t)length, f ) != length ) {
-		fclose( f );
-		Z_Free( text );
-		return 0;
-	}
-	fclose( f );
-	text[length] = '\0';
-
-	capacity = (int)QAA_BpkCount( bpk );
-	seen = (byte *)Z_Malloc( capacity + 1 );
-	*records = (qaaNamedRecord_t *)Z_Malloc( ( capacity + 1 ) * (int)sizeof( qaaNamedRecord_t ) );
-	*names = (char *)Z_Malloc( (int)length + 1 );	// names are no longer than the list
-
-	for ( line = text; line && *line; line = next ) {
-		int index, parsed;
-
-		next = strchr( line, '\n' );
-		if ( next ) {
-			*next++ = '\0';
-		}
-		lineNumber++;
-		parsed = QAA_BpkParseNameLine( line, &hash, path, sizeof( path ) );
-		if ( parsed < 0 ) {
-			bad++;
-			continue;
-		}
-		if ( parsed == 0 ) {
-			continue;
-		}
-		FS_ConvertFilename( path );
-		index = hash ? QAA_BpkFind( bpk, hash ) : -1;
-		if ( index < 0 ) {
-			unmatched++;
-			continue;
-		}
-		if ( seen[index] || FS_CheckDirTraversal( path ) ) {
-			continue;
-		}
-		seen[index] = 1;
-		( *records )[count].index = (uint32_t)index;
-		( *records )[count].name = *names + used;
-		strcpy( *names + used, path );
-		used += (int)strlen( path ) + 1;
-		count++;
-	}
-	Z_Free( seen );
-	Z_Free( text );
-	*namesLength = used;
-	Com_Printf( "fs_qaaNameList: %d of %d records named (%d lines, %d unmatched, %d malformed)\n",
-		count, capacity, lineNumber, unmatched, bad );
-	if ( !count ) {
-		Z_Free( *records );
-		Z_Free( *names );
-		*records = NULL;
-		*names = NULL;
-	}
-	return count;
-}
-
-
 /*
 =================
 FS_QAA_CreateBpkPack
 
-Builds a pack_t over an open archive; the pack owns `bpk`.
+Builds a pack_t over an open archive; the pack owns `bpk`. Its records get
+names only as they are looked up (FS_QAA_ResolveName).
 =================
 */
 static pack_t *FS_QAA_CreateBpkPack( qaaBpk_t *bpk, const char *displayName ) {
-	qaaNamedRecord_t *records;
-	char *names, *namePtr;
-	fileInPack_t *curFile;
+	const uint32_t count = QAA_BpkCount( bpk );
+	const int hashSize = FS_PakHashSize( count > 0 ? (int)count : 1 );
+	const size_t fileNameLen = strlen( displayName ) + 1;
 	pack_t *pack;
-	int namedCount, namesLength, hashSize, i;
-	size_t size, fileNameLen;
+	size_t size;
 
-	namedCount = FS_QAA_ReadNameList( bpk, &records, &names, &namesLength );
-	hashSize = FS_PakHashSize( namedCount > 0 ? namedCount : 1 );
-	fileNameLen = strlen( displayName ) + 1;
-	size = sizeof( *pack ) + hashSize * sizeof( pack->hashTable[0] ) + namedCount * sizeof( pack->buildBuffer[0] )
-		+ PAD( namesLength, sizeof( int ) ) + PAD( fileNameLen, sizeof( int ) ) + PAD( sizeof( "pak0" ), sizeof( int ) );
+	size = sizeof( *pack ) + hashSize * sizeof( pack->hashTable[0] ) + count * sizeof( pack->qaaFiles[0] )
+		+ PAD( fileNameLen, sizeof( int ) ) + PAD( sizeof( "pak0" ), sizeof( int ) );
 
 	pack = (pack_t *)Z_TagMalloc( (int)size, TAG_PACK );
 	Com_Memset( pack, 0, size );
 	pack->format = PACK_FORMAT_BPK;
 	pack->qaaBpk = bpk;
-	pack->numfiles = namedCount;
+	pack->numfiles = 0;		// not enumerable: see the top of this file
 	pack->hashSize = hashSize;
 	pack->hashTable = (fileInPack_t **)( pack + 1 );
-	pack->buildBuffer = (fileInPack_t *)( pack->hashTable + pack->hashSize );
-	namePtr = (char *)( pack->buildBuffer + namedCount );
-	pack->pakFilename = namePtr + PAD( namesLength, sizeof( int ) );
+	pack->qaaFiles = (fileInPack_t *)( pack->hashTable + pack->hashSize );
+	pack->pakFilename = (char *)( pack->qaaFiles + count );
 	pack->pakBasename = pack->pakFilename + PAD( fileNameLen, sizeof( int ) );
 	Com_Memcpy( pack->pakFilename, displayName, fileNameLen );
 	strcpy( pack->pakBasename, "pak0" );
 
-	curFile = pack->buildBuffer;
-	for ( i = 0; i < namedCount; i++ ) {
-		const qaaBpkEntry_t *entry = QAA_BpkEntry( bpk, records[i].index );
-		const long hash = FS_HashFileName( records[i].name, pack->hashSize );
-
-		curFile->name = namePtr;
-		strcpy( namePtr, records[i].name );
-		namePtr += strlen( records[i].name ) + 1;
-		curFile->pos = records[i].index;
-		curFile->size = entry->size;
-		curFile->next = pack->hashTable[ hash ];
-		pack->hashTable[ hash ] = curFile;
-		curFile++;
-	}
-	if ( records ) {
-		Z_Free( records );
-		Z_Free( names );
-	}
-
 	pack->checksum = (int)LittleLong( (int)QAA_BpkTableCrc( bpk ) );
 	pack->pure_checksum = pack->checksum;
 	return pack;
+}
+
+
+/*
+=================
+FS_QAA_FreeNames
+
+Releases the names FS_QAA_ResolveName gave a pack's records.
+=================
+*/
+static void FS_QAA_FreeNames( pack_t *pak ) {
+	uint32_t i;
+
+	if ( !pak->qaaBpk || !pak->qaaFiles ) {
+		return;
+	}
+	for ( i = 0; i < QAA_BpkCount( pak->qaaBpk ); i++ ) {
+		if ( pak->qaaFiles[i].name ) {
+			Z_Free( pak->qaaFiles[i].name );
+			pak->qaaFiles[i].name = NULL;
+		}
+	}
+}
+
+
+/*
+=================
+FS_QAA_ResolveName
+
+Called before a lookup of `filename` in the search path. For each mounted
+BPK pack whose table holds the name's hash, links that record into the
+pack's hash chain under this name, so the lookup that follows finds it like
+any pack entry. A record keeps the first spelling it was found by; the hash
+and FS_FilenameCompare both ignore case and separators.
+=================
+*/
+static void FS_QAA_ResolveName( const char *filename ) {
+	const searchpath_t *search;
+	uint64_t nameHash = 0;
+	qboolean hashed = qfalse;
+
+	if ( !fs_qaaMounted || !filename || !filename[0] ) {
+		return;
+	}
+	for ( search = fs_searchpaths; search; search = search->next ) {
+		pack_t *pak = search->pack;
+		fileInPack_t *file;
+		long hash;
+		int index;
+
+		if ( !pak || !pak->qaaBpk ) {
+			continue;
+		}
+		if ( !hashed ) {
+			nameHash = qaa_bpk_name_hash( filename );
+			hashed = qtrue;
+		}
+		index = QAA_BpkFind( pak->qaaBpk, nameHash );
+		if ( index < 0 || pak->qaaFiles[index].name ) {
+			continue;
+		}
+		file = &pak->qaaFiles[index];
+		file->name = CopyString( filename );
+		file->pos = (unsigned long)index;
+		file->size = QAA_BpkEntry( pak->qaaBpk, (uint32_t)index )->size;
+		hash = FS_HashFileName( file->name, pak->hashSize );
+		file->next = pak->hashTable[hash];
+		pak->hashTable[hash] = file;
+	}
 }
 
 
@@ -335,13 +280,11 @@ static void FS_QAA_MountPackage( void ) {
 	fs_qaaPackage = Cvar_Get( "fs_qaaPackage", "", CVAR_INIT | CVAR_PROTECTED );
 	Cvar_SetDescription( fs_qaaPackage, "Quake Arena Arcade's XBLA package (the STFS file), a folder holding "
 		"its files (default.xex, baseq3/pak0.bpk), or a .bpk file. Read in place, never written." );
-	fs_qaaNameList = Cvar_Get( "fs_qaaNameList", "", CVAR_INIT | CVAR_PROTECTED );
-	Cvar_SetDescription( fs_qaaNameList, "Text file naming BPK records, one per line: \"<16 hex digit hash> <path>\" "
-		"or a path alone (hashed by the engine once the BPK name hash is known)." );
 
 	fs_qaaKind = "none";
 	fs_qaaSource[0] = '\0';
 	fs_qaaTitleId = 0;
+	fs_qaaMounted = 0;
 	if ( !fs_qaaPackage->string[0] ) {
 		return;
 	}
@@ -355,8 +298,8 @@ static void FS_QAA_MountPackage( void ) {
 	pak->referenced = 0;
 	pak->exclude = qfalse;
 	pak->workshopItemId = 0;
-	fs_packFiles += pak->numfiles;
 	fs_packCount++;
+	fs_qaaMounted++;
 
 	search = (searchpath_t *)Z_TagMalloc( sizeof( *search ), TAG_SEARCH_PACK );
 	Com_Memset( search, 0, sizeof( *search ) );
@@ -364,8 +307,7 @@ static void FS_QAA_MountPackage( void ) {
 	search->next = fs_searchpaths;
 	fs_searchpaths = search;
 
-	Com_Printf( "Quake Arena Arcade %s: %s, %u records, %d named\n", fs_qaaKind, fs_qaaSource,
-		QAA_BpkCount( bpk ), pak->numfiles );
+	Com_Printf( "Quake Arena Arcade %s: %s, %u records\n", fs_qaaKind, fs_qaaSource, QAA_BpkCount( bpk ) );
 }
 
 
@@ -382,11 +324,6 @@ static void FS_QAA_CheckPackage( void ) {
 	(void)FS_CheckIdPaks;	// FnQL's check, kept in files.c but not called
 	for ( search = fs_searchpaths; search; search = search->next ) {
 		if ( search->pack && search->pack->format == PACK_FORMAT_BPK ) {
-			if ( !QAA_BpkNameHashKnown() && search->pack->numfiles == 0 ) {
-				Com_Printf( S_COLOR_YELLOW "WARNING: the BPK name hash is not implemented yet and no "
-					"fs_qaaNameList names its records, so no file in %s is visible by name.\n",
-					search->pack->pakFilename );
-			}
 			return;
 		}
 	}
@@ -499,12 +436,15 @@ static void FS_QAA_Info_f( void ) {
 	if ( fs_qaaTitleId ) {
 		Com_Printf( "title ID: %08X\n", fs_qaaTitleId );
 	}
-	Com_Printf( "BPK name hash: %s\n", QAA_BpkNameHashKnown() ? "implemented" : "placeholder (not yet known)" );
 	for ( search = fs_searchpaths; search; search = search->next ) {
 		if ( search->pack && search->pack->qaaBpk ) {
-			Com_Printf( "%s: version %u, %u records, %d named, table crc32 %08x\n", search->pack->pakFilename,
-				QAA_BpkVersion( search->pack->qaaBpk ), QAA_BpkCount( search->pack->qaaBpk ),
-				search->pack->numfiles, QAA_BpkTableCrc( search->pack->qaaBpk ) );
+			uint32_t i, named = 0;
+			for ( i = 0; i < QAA_BpkCount( search->pack->qaaBpk ); i++ ) {
+				named += search->pack->qaaFiles[i].name ? 1 : 0;
+			}
+			Com_Printf( "%s: version %u, %u records (%u looked up by name so far), table crc32 %08x\n",
+				search->pack->pakFilename, QAA_BpkVersion( search->pack->qaaBpk ),
+				QAA_BpkCount( search->pack->qaaBpk ), named, QAA_BpkTableCrc( search->pack->qaaBpk ) );
 		}
 	}
 }
