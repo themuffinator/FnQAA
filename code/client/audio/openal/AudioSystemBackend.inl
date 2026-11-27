@@ -510,6 +510,11 @@ void AudioSystem::StartBackgroundTrack( const char *intro, const char *loop ) {
 	if ( !started_ ) {
 		return;
 	}
+	// QAA: retail behaviour (0x82173470): a start of the track already
+	// playing leaves it playing (BackgroundTrackPolicy.h).
+	if ( backgroundStream_ != nullptr && fnql_audio_music::KeepsPlayingTrack( backgroundLoop_.c_str(), intro, loop ) ) {
+		return;
+	}
 
 	backgroundIntro_ = SafeString( intro );
 	backgroundLoop_ = ( loop != nullptr && loop[0] != '\0' ) ? SafeString( loop ) : backgroundIntro_;

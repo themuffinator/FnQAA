@@ -996,6 +996,13 @@ if get_option('audio-tests')
   )
   test('fnqaa_audio_tone', audio_tone_tests)
 
+  audio_music_tests = executable('fnqaa_audio_music_tests',
+    'tests/audio/background_track_policy_tests.cpp',
+    include_directories: include_directories('code/client/audio/shared'),
+    cpp_args: common_cpp_args,
+  )
+  test('fnqaa_audio_music', audio_music_tests)
+
   audio_loopback_tests = executable('fnqaa_audio_loopback_tests',
     'tests/audio/openal_loopback_tests.cpp',
     dependencies: client_deps + [openal_header_dep],

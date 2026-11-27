@@ -74,6 +74,9 @@ cycle (`python scripts/changelog.py clear-unreleased`).
 - Sounds no longer bend in pitch as you move: the Doppler effect is off by
   default, since Quake Arena Arcade has none. A config saved earlier keeps
   `s_doppler 1`; set `s_doppler 0` to match the console.
+- The menu music no longer starts over from the beginning each time you
+  return to the main menu: as on the console, a track that is already
+  playing keeps playing when it is asked for again.
 
 ### Builds and Packaging
 - Releases are built for Windows x86_64 and Linux x86_64 and hold the engine

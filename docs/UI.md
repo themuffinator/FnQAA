@@ -65,7 +65,7 @@ initializers). Then `SFUI_Init` runs on the client's thread.
 | `Z_*`, `Hunk_*Temp` | 0x8211B258.., 0x8211C180.. | the guest CRT heap (malloc 0x821DDBA8) |
 | `FS_*` | 0x82121B28.. | FnQL's file system (the package and pak0.bpk) |
 | `S_StartLocalSound`, `S_RegisterSound` | 0x82173418, 0x82173DC0 | FnQL sound |
-| background track (intro, loop) | 0x82173470 | `S_StartBackgroundTrack`: the menus' music (`playmusic`) |
+| background track (intro, loop) | 0x82173470 | `S_StartBackgroundTrack`: the menus' music (`playmusic`, sent by the main menu scene's `onEnter`); a request for the track already playing leaves it playing (`BackgroundTrackPolicy.h`) |
 | `Sys_Milliseconds`, language, country | 0x82185850, 0x82184DA8, 0x82184E58 | "en", "us" |
 | D3D texture create/lock/unlock/release/desc | 0x82204038, 0x82203EA0, 0x822023E8, 0x822021E0, 0x82204030 | host textures behind a guest 'QTEX' block |
 | `D3DXCreateTextureFromFileInMemoryEx` | 0x8221D000 | DDS (DXT1/2/3/5, 32-bit ARGB) and TGA, decoded to RGBA; fills `D3DXIMAGE_INFO` |

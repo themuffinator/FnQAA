@@ -37,6 +37,7 @@ extern "C" {
 
 #include "../../client_cpp.h"
 #include "../shared/AudioInitPolicy.h"
+#include "../shared/BackgroundTrackPolicy.h"
 
 #include <algorithm>
 #include <array>
@@ -1423,6 +1424,12 @@ static void S_Base_StartBackgroundTrack( const char *intro, const char *loop ){
 	if(!*intro)
 	{
 		S_Base_StopBackgroundTrack();
+		return;
+	}
+
+	// QAA: retail behaviour (0x82173470): a start of the track already
+	// playing leaves it playing (BackgroundTrackPolicy.h).
+	if ( s_backgroundStream && fnql_audio_music::KeepsPlayingTrack( s_backgroundLoop.data(), intro, loop ) ) {
 		return;
 	}
 
