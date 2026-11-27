@@ -122,6 +122,7 @@ constexpr uint32_t S_STARTLOCALSOUND = 0x82173418;
 constexpr uint32_t S_STARTBACKGROUNDTRACK = 0x82173470;
 constexpr uint32_t S_REGISTERSOUND = 0x82173DC0;
 constexpr uint32_t QNET_JOIN_WAIT = 0x82175A28;		// "Joining server", then the session thread
+constexpr uint32_t QNET_LEAVE_GAME = 0x821783D0;	// flags the session to end, as FgApi.exitGame
 constexpr uint32_t LANGUAGE_CODE = 0x82184DA8;
 constexpr uint32_t COUNTRY_CODE = 0x82184E58;
 constexpr uint32_t SYS_MILLISECONDS = 0x82185850;
@@ -578,7 +579,7 @@ void H_S_StartLocalSound( void *, qaa_hook_call *c ) {
  * play, 2 at the title, 3 in the menus. */
 namespace gamestate {
 constexpr uint32_t ADDRESS = 0x82C01C48;
-constexpr uint32_t STARTUP = 1, TITLE = 2;
+constexpr uint32_t STARTUP = 1, TITLE = 2, POSTGAME = 7;
 }
 
 /* On the console a game cannot start before the title; on the PC it can,
@@ -827,6 +828,20 @@ void PollSessionEnd() {
 	SyncKeyCatchers();
 	Cvar_Set( "ui_messageReady", "1" );
 	Cvar_Set( "team", "" );
+}
+
+/* (leave): the post-game's Exit Match (FSCommand "dismissPostGame") leaves
+ * through 0x821783D0, which flags the session as exitGame does: bit 4 for a
+ * Live game (ui_sessionType 3 or more), otherwise bit 3 when leave is set,
+ * then signals it. The flag is polled (PollSessionEnd). */
+void H_QnetLeaveGame( void *, qaa_hook_call *c ) {
+	const uint32_t block = QAA_LoadU32( addr::LIVE_STATE_PTR );
+	if ( !block ) {
+		return;
+	}
+	const uint32_t flag = Cvar_VariableIntegerValue( "ui_sessionType" ) >= 3 ? session::END_LIVE
+		: R( c, 0 ) ? session::END : 0;
+	QAA_StoreU32( block + session::FLAGS, QAA_LoadU32( block + session::FLAGS ) | flag );
 }
 
 /* Hosting a match. Host Match's Start Match (FSCommand "startServer",
@@ -2110,6 +2125,7 @@ const HookEntry hookTable[] = {
 	{ hook::S_STARTBACKGROUNDTRACK, H_S_StartBackgroundTrack },
 	{ hook::S_REGISTERSOUND, H_S_RegisterSound },
 	{ hook::QNET_JOIN_WAIT, H_QnetJoinWait },
+	{ hook::QNET_LEAVE_GAME, H_QnetLeaveGame },
 	{ hook::LANGUAGE_CODE, H_LanguageCode },
 	{ hook::COUNTRY_CODE, H_CountryCode },
 	{ hook::SYS_MILLISECONDS, H_Sys_Milliseconds },
@@ -3380,8 +3396,23 @@ bool QAA_UI_KeyEvent( int key, bool down, unsigned time ) {
 			return false;
 		}
 	}
+	// QAA: PC deviation. Match Results leaves on Start (its scene's
+	// onUnhandledKey sends dismissPostGame) and turns Back off (disableBack),
+	// so Escape, which SFUI reads as Back, did nothing there, and a keyboard
+	// without a keypad has no Start (keypad Enter). Escape is Start on that
+	// screen; its release follows its press.
+	static bool escapeAsStart;
+	int sent = k;
+	if ( key == K_ESCAPE ) {
+		if ( down ) {
+			escapeAsStart = QAA_LoadU32( gamestate::ADDRESS ) == gamestate::POSTGAME;
+		}
+		if ( escapeAsStart ) {
+			sent = QaaKey( K_PAD0_START );
+		}
+	}
 	// (key, down, controller): the PC has one player, on controller 0
-	UiCall( addr::SFUI_KEY_EVENT, { static_cast<uint64_t>( k ), down ? 1u : 0u, 0 } );
+	UiCall( addr::SFUI_KEY_EVENT, { static_cast<uint64_t>( sent ), down ? 1u : 0u, 0 } );
 	return true;
 }
 

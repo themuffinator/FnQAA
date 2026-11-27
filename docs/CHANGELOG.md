@@ -100,6 +100,10 @@ cycle (`python scripts/changelog.py clear-unreleased`).
   setting now sets the server's size (at most 16), as on the console.
 - Pressing Escape in a game no longer crashes the game when the key is
   still held as the in-game menu opens.
+- Exit Match on the Match Results screen now takes you back to the menus,
+  and so does its countdown when it runs out; both left you stuck on the
+  results. The button is Start on a controller, and Escape or keypad Enter
+  on the keyboard.
 
 ### Documentation and Tooling
 - The setup checks for every tool the recompile needs before it starts, and
