@@ -149,6 +149,7 @@ cvar_t *qaa_uiEnable;
 cvar_t *qaa_uiTrace;
 cvar_t *qaa_uiTestFrames;
 cvar_t *qaa_uiProfile;
+cvar_t *qaa_uiTestVerify;
 qaa_module *uiModule;
 bool uiReady;
 bool uiFailed;
@@ -3035,6 +3036,9 @@ bool QAA_UI_Init( void ) {
 	qaa_uiTrace = Cvar_Get( "qaa_uiTrace", "0", 0 );
 	qaa_uiTestFrames = Cvar_Get( "qaa_uiTestFrames", "0", 0 );
 	qaa_uiProfile = Cvar_Get( "qaa_uiProfile", "0", 0 );
+	qaa_uiTestVerify = Cvar_Get( "qaa_uiTestVerify", "0", 0 );
+	Cvar_SetDescription( qaa_uiTestVerify, "Check every frame the front end draws against a full redraw of the same "
+		"triangles on a fresh canvas, reporting each that differs (slow; for tests)." );
 	Cvar_SetDescription( Cvar_Get( "qaa_country", "", CVAR_ARCHIVE ), "The console region the front end sees, two "
 		"letters (\"us\" shows the ESRB rating screen at start-up). Empty: the operating system's region." );
 	Cvar_SetDescription( qaa_uiProfile, "Print the front end's average cost per client frame once a second: "
@@ -3163,7 +3167,7 @@ enum Stage { POINTER, UPDATE, RENDER, RECORD, RASTER, UPLOAD, COUNT };
 const char *const names[COUNT] = { "pointer", "update", "render", "record", "raster", "upload" };
 int64_t total[COUNT];
 int frames, updates, redraws, repeats, started;
-int64_t tested, tris, rowsDrawn, uploadedRows;
+int64_t tested, tris, rowsDrawn, uploadedRows, rowsKept;
 
 int64_t Now() {
 	return Sys_Microseconds();
@@ -3191,13 +3195,15 @@ void EndFrame() {
 		total[i] = 0;
 	}
 	Com_Printf( "QAA ui profile: %d frames/s, %d updates, %d redraws, %d repeated, us/frame:%s, per redraw %lld "
-		"triangles %lld kpixels %lld rows drawn %lld rows uploaded (canvas %dx%d)\n", frames, updates, redraws, repeats, line.c_str(),
+		"triangles %lld kpixels %lld rows drawn %lld rows uploaded, per frame %lld rows kept as hidden (canvas %dx%d)\n",
+		frames, updates, redraws, repeats, line.c_str(),
 		static_cast<long long>( redraws ? tris / redraws : 0 ),
 		static_cast<long long>( redraws ? tested / redraws / 1000 : 0 ),
 		static_cast<long long>( redraws ? rowsDrawn / redraws : 0 ),
-		static_cast<long long>( redraws ? uploadedRows / redraws : 0 ), canvas.Width(), canvas.Height() );
+		static_cast<long long>( redraws ? uploadedRows / redraws : 0 ), static_cast<long long>( rowsKept / frames ),
+		canvas.Width(), canvas.Height() );
 	frames = updates = redraws = repeats = 0;
-	tested = tris = rowsDrawn = uploadedRows = 0;
+	tested = tris = rowsDrawn = uploadedRows = rowsKept = 0;
 	started = now;
 }
 }
@@ -3268,6 +3274,10 @@ void QAA_UI_Frame( void ) {
 		if ( testFrames == qaa_uiTestFrames->integer || ( every > 0 && testFrames % every == 0 ) ) {
 			dumpRequests++;
 		} else if ( testFrames == qaa_uiTestFrames->integer + 2 ) {
+			if ( qaa_uiTestVerify->integer ) {
+				Com_Printf( "QAA ui: %d frames checked against a full redraw, %d differed\n", canvas.VerifiedFlushes(),
+					canvas.VerifyMismatches() );
+			}
 			Cbuf_AddText( "quit\n" );
 		}
 	}
@@ -3362,6 +3372,7 @@ void QAA_UI_Draw( void ) {
 	presentValid = false;
 	int64_t stageStart = uiprof::Now();
 	canvas.Resize( canvasW, canvasH );
+	canvas.SetVerify( qaa_uiTestVerify && qaa_uiTestVerify->integer );
 	canvas.Clear();
 	canvasDrawn = false;
 	if ( !RenderMovies() ) {
@@ -3393,8 +3404,13 @@ void QAA_UI_Draw( void ) {
 	// Rasterises the bands whose triangles differ from the last frame's
 	// (none when the frame repeats), then converts what changed.
 	stageStart = uiprof::Now();
+	const int mismatchesBefore = canvas.VerifyMismatches();
 	canvas.ToStraight( presentBuffer );
+	if ( canvas.VerifyMismatches() != mismatchesBefore ) {
+		Com_Printf( S_COLOR_YELLOW "QAA ui: frame %d differs from a full redraw of its triangles\n", framesDrawn );
+	}
 	uiprof::Add( uiprof::RASTER, stageStart );
+	uiprof::rowsKept += canvas.RowsKept();
 	if ( canvas.RowsDrawn() ) {
 		uiprof::redraws++;
 		uiprof::tris += canvas.Triangles();

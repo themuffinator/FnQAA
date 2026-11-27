@@ -340,6 +340,42 @@ hashing them redrew the whole main menu, and the HUD after the in-game
 menu, on every frame. A frame flushed in two parts (a texture changed
 while triangles were queued) redraws every band of the next one.
 
+Triangles also change where nothing they draw can show. **observed** A
+submenu is drawn over the screens it was opened from: Game Settings
+(Help & Options, Settings, Game Settings) draws all three screens, each
+over its own opaque background, about 23,400 triangles. Every screen's
+list keeps a highlight on each row whose colour transform pulses every
+frame, under a mask that lets through only the selected row's. Hashes
+alone redrew 592 rows a frame there (about 17 ms at 2560×1440, 44 frames
+a second); 128 of them changed. Three checks find such changes exactly,
+so every frame still comes out as a full redraw of its triangles would:
+
+- **Masks.** A triangle under a mask at stencil level L can only draw
+  where the stencil was raised to L since it was last cleared, inside the
+  bounds of the triangles that raised it. A triangle outside those bounds
+  is not queued; the others are queued over the bounds' rows only. Their
+  columns are kept, as a row's values are stepped from its first pixel
+  and would round differently from another.
+- **Seals.** Drawing a band records, per pixel, the last triangle whose
+  write there did not depend on what was under it: opaque, or near opaque
+  and the same over black and over white. A linearly sampled opaque
+  texture does not always come out opaque: about 0.35% of its samples
+  have alpha 0.99999994 (**observed** with the rasteriser's own
+  arithmetic). A band whose changed triangles, as they were and as they
+  are, write pixels only and lie wholly over pixels sealed by a later
+  triangle that has not changed keeps its pixels.
+- **Checkpoints.** A band that is drawn again leaves out the triangles
+  drawn over that way and resumes from its checkpoint: its pixels,
+  stencil and seals as they were before its first change, saved the last
+  time it was drawn. It does so while every triangle before that point is
+  the same and drawn, or left out as it was then. The pulsing row is the
+  last screen's, drawn after all three backgrounds, so its bands draw
+  about a fifth of their pixels.
+
+Game Settings now draws its 128 rows in about 2-3.5 ms. `qaa_uiTestVerify
+1` checks every frame against a full redraw of the same triangles on a
+fresh canvas, masked-out ones included (Testing).
+
 Textures are host objects SFUI creates, changes and frees on its update
 thread and on its own loader threads, which run alongside the engine. The
 table is locked. Every change gives the texture a new version once its
@@ -399,7 +435,15 @@ Every run is headless (`com_headless 2`, no sound, no input grab).
   average cost per frame (the pointer's events, update thread, SFUI
   render, recording the commands, rasterising, upload), with the
   triangles each redraw queued and the pixels, rows drawn and rows
-  uploaded.
+  uploaded, and the rows a frame kept although their triangles changed
+  (hidden, as above).
+- `qaa_uiTestVerify 1`: rasterise every frame a second time, in full on a
+  fresh canvas and with the triangles left out for their masks, and
+  compare the pixels and the straight copy byte for byte with what band
+  reuse drew. Each frame that differs is reported, and the count when
+  `qaa_uiTestFrames` quits. Slow: a check for rasteriser changes, which
+  cannot be compared across runs (runs at different speeds reach
+  different animation frames).
 - `QAA_UI_THREADS=N` (environment): rasterise on N threads in all (1: on
   the calling thread only).
 - A windowless client (`com_headless 2`) never changes the display mode,
@@ -456,13 +500,17 @@ synthetic data. It needs no retail files.
   redrew all 1440 rows every frame in about 28 ms, at about 30 frames a
   second); a full redraw of it takes about 9.5 ms, of the title about 6.5
   ms; frames that repeat cost about 0.1 ms; in a game the HUD redraws a
-  few times a second, about 100 rows. Every frame of a run through the
-  start-up movies, the title, the menus, a game and the in-game menu
-  matched a full redraw of the same triangles byte for byte. In a game,
-  SFUI's update thread itself (the HUD's ActionScript, recompiled guest
-  code) takes about 1.5-3 ms a frame; retail overlapped it with rendering,
-  FnQAA runs it with the engine waiting. A GPU replay would replace the
-  rasteriser.
+  few times a second, about 100 rows. Help & Options, Settings and Game
+  Settings draw 128 rows a frame in about 2-3.5 ms at 63 frames a second
+  (they drew 496-592 rows in 17-33 ms, at 26-50 frames a second; above).
+  Recording Game Settings' 23,400 triangles takes about 2.7 ms. Every
+  frame of a run through the start-up movies, the title, the menus to
+  Game Settings, a game, its scoreboard and the in-game menu matched a
+  full redraw of the same triangles byte for byte (`qaa_uiTestVerify`).
+  In a game, SFUI's update thread itself (the HUD's ActionScript,
+  recompiled guest code) takes about 1.5-3 ms a frame; retail overlapped
+  it with rendering, FnQAA runs it with the engine waiting. A GPU replay
+  would replace the rasteriser.
 - The menus' `stopVibration` (0x82190B18) goes to the recompiled XAM
   helper (0x821F2468) and does not reach the pad; the cgame's rumble does
   (its pulses last 100 to 400 ms). XAM import 752 is unimplemented. The

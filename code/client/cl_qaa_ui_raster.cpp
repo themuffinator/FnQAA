@@ -528,9 +528,15 @@ inline bool NormalBlend( int mode ) {
  * Everything the loops read is copied to locals first: the pixel stores
  * are bytes, which may alias anything, so values read through op would be
  * loaded again for every pixel.
+ *
+ * A pixel whose new bytes do not depend on what was under it (an opaque
+ * write, or a near-opaque one that comes out the same over black and over
+ * white: the blend is monotonic in the pixel) is sealed: its seal becomes
+ * sealPos, the triangle's place in its band's list plus one (0: none).
  */
 template <int SHADE, bool NORMAL>
-void RasterRows( const Canvas::Op &op, uint8_t *pixels, uint8_t *stencil, int width, int ya, int yb, int64_t &testedOut ) {
+void RasterRows( const Canvas::Op &op, uint8_t *pixels, uint8_t *stencil, uint16_t *seal, uint16_t sealPos, int width,
+	int ya, int yb, int64_t &testedOut ) {
 	constexpr bool colour = SHADE == SHADE_GLYPH || SHADE == SHADE_GOURAUD || SHADE == SHADE_GOURAUD_TEX;
 	constexpr bool gouraud = SHADE == SHADE_GOURAUD || SHADE == SHADE_GOURAUD_TEX || SHADE == SHADE_GOURAUD_TEX2;
 	constexpr bool tex0 = SHADE == SHADE_TEXTURE || SHADE == SHADE_GOURAUD_TEX || SHADE == SHADE_GOURAUD_TEX2 || SHADE == SHADE_GLYPH;
@@ -636,6 +642,7 @@ void RasterRows( const Canvas::Op &op, uint8_t *pixels, uint8_t *stencil, int wi
 		}
 		uint8_t *row = pixels + static_cast<size_t>( y ) * width * 4;
 		uint8_t *srow = stencil + static_cast<size_t>( y ) * width;
+		uint16_t *sealRow = seal + static_cast<size_t>( y ) * width;
 		for ( int x = xa; x < xb; x++ ) {
 			if ( x != xa ) {
 				if constexpr ( colour ) {
@@ -684,6 +691,7 @@ void RasterRows( const Canvas::Op &op, uint8_t *pixels, uint8_t *stencil, int wi
 				if constexpr ( SHADE == SHADE_COLOR && NORMAL ) {
 					if ( solid ) {
 						std::memcpy( p, solidPx, 4 );
+						sealRow[x] = sealPos;
 						continue;
 					}
 				}
@@ -692,6 +700,7 @@ void RasterRows( const Canvas::Op &op, uint8_t *pixels, uint8_t *stencil, int wi
 						const uint8_t *t = s0.Point( uu, vv );
 						if ( t[3] == 255 ) {
 							std::memcpy( p, t, 4 );
+							sealRow[x] = sealPos;
 							continue;
 						}
 						if ( t[3] == 0 ) {
@@ -730,6 +739,17 @@ void RasterRows( const Canvas::Op &op, uint8_t *pixels, uint8_t *stencil, int wi
 				out = out * Set4( alpha, alpha, alpha, 1.0f );
 				if constexpr ( NORMAL ) {
 					const float keep = ( 1.0f - alpha ) * ( 1.0f / 255.0f );
+					if ( keep == 0.0f ) {
+						sealRow[x] = sealPos;
+					} else if ( alpha > 0.996f ) {
+						// within a step of opaque: the same over black and white?
+						uint8_t over[2][4];
+						PutBytes( Clamp4( out ) * Splat( 255.0f ) + Splat( 0.5f ), over[0] );
+						PutBytes( Clamp4( out + Splat( 255.0f ) * Splat( keep ) ) * Splat( 255.0f ) + Splat( 0.5f ), over[1] );
+						if ( !std::memcmp( over[0], over[1], 4 ) ) {
+							sealRow[x] = sealPos;
+						}
+					}
 					PutBytes( Clamp4( out + Bytes( p ) * Splat( keep ) ) * Splat( 255.0f ) + Splat( 0.5f ), p );
 				} else {
 					float o[4];
@@ -742,7 +762,7 @@ void RasterRows( const Canvas::Op &op, uint8_t *pixels, uint8_t *stencil, int wi
 	testedOut += tested;
 }
 
-using RasterFn = void ( * )( const Canvas::Op &, uint8_t *, uint8_t *, int, int, int, int64_t & );
+using RasterFn = void ( * )( const Canvas::Op &, uint8_t *, uint8_t *, uint16_t *, uint16_t, int, int, int, int64_t & );
 
 template <int SHADE>
 constexpr RasterFn Pick( bool normal ) {
@@ -777,6 +797,22 @@ uint64_t HashOp( const Canvas::Op &op ) {
 	return h;
 }
 
+/* Whether every value in [x0, x1) x [y0, y1) of a map (seals, stride values
+ * a row) is above pos. */
+bool AllAbove( const uint16_t *map, int stride, int x0, int y0, int x1, int y1, size_t pos ) {
+	for ( int y = y0; y < y1; y++ ) {
+		const uint16_t *row = map + static_cast<size_t>( y ) * stride;
+		uint16_t least = 0xFFFF;
+		for ( int x = x0; x < x1; x++ ) {
+			least = std::min( least, row[x] );
+		}
+		if ( least <= pos ) {
+			return false;
+		}
+	}
+	return true;
+}
+
 /* Premultiplied to straight colour: min(255, c * 255 / a), by alpha then
  * colour. */
 const uint8_t *Unpremultiply() {
@@ -802,6 +838,7 @@ void Canvas::Resize( int width, int height ) {
 	height_ = std::max( height, 1 );
 	pixels_.assign( static_cast<size_t>( width_ ) * height_ * 4, 0 );
 	stencil_.assign( static_cast<size_t>( width_ ) * height_, 0 );
+	seal_.assign( static_cast<size_t>( width_ ) * height_, 0 );
 	rowBlank_.assign( static_cast<size_t>( height_ ), 1 );
 	straightBlank_.assign( static_cast<size_t>( height_ ), 0 );
 	lastStraight_ = nullptr;
@@ -811,6 +848,8 @@ void Canvas::Resize( int width, int height ) {
 	const int bands = ( height_ + BAND_ROWS - 1 ) / BAND_ROWS;
 	bandHash_.assign( static_cast<size_t>( bands ), 0 );
 	bandStale_.assign( static_cast<size_t>( bands ), 1 );
+	bandLast_.assign( static_cast<size_t>( bands ), {} );
+	checkpoints_.assign( static_cast<size_t>( bands ), {} );
 	bandsValid_ = false;	// the old frame is gone
 	clip_[0] = clip_[1] = 0;
 	clip_[2] = width_;
@@ -819,34 +858,174 @@ void Canvas::Resize( int width, int height ) {
 
 void Canvas::Clear() {
 	ops_.clear();
+	verifyOps_.clear();
 	clearPending_ = true;
 	blend_.clear();
 	stencilLevel_ = 0;
 	maskState_ = MASK_OFF;
+	ClearMaskBounds();
 	matrix_ = Matrix();
 	user_ = Matrix();
 	cx_ = Cxform();
 	triangles_ = 0;
 	pixelsTested_ = 0;
 	rowsDrawn_ = 0;
+	rowsKept_ = 0;
+}
+
+void Canvas::ClearMaskBounds() {
+	maskBoundsTop_ = 0;
+	maskBoundsKnown_ = true;
 }
 
 void Canvas::ToStraight( std::vector<uint8_t> &out ) const {
 	Flush( &out );
 }
 
-/* One band: when raster, the pending clear and the queued triangles that
- * reach it, in order; then, when it changed since the straight copy was
- * last made (or the copy goes to another buffer), its straight copy. Rows
- * no triangle touches and that are already transparent are left alone, in
- * the pixels and, when the copy goes to the same buffer as last time, in
- * the copy. */
-void Canvas::RunBand( int band, bool raster, bool clear, std::vector<uint8_t> *straight, bool sameStraight,
+/* Whether a band whose triangles changed since it was last drawn would
+ * come out the same: its list is as long as then, and every triangle that
+ * differs, then and now, writes pixels only and lies wholly over pixels
+ * sealed by a later triangle (one that is the same). Those pixels depend
+ * only on the later triangles, and the rest on the same triangles as then,
+ * over the same stencil. */
+bool Canvas::Sealed( int band ) const {
+	const std::vector<uint32_t> &list = bandOps_[band];
+	const std::vector<BandOp> &last = bandLast_[band];
+	if ( list.size() != last.size() || list.size() >= 0xFFFF ) {
+		return false;
+	}
+	const int ya = band * BAND_ROWS, yb = std::min( height_, ya + BAND_ROWS );
+	// whether every pixel of a rectangle is sealed after position pos
+	auto covered = [&]( int x0, int y0, int x1, int y1, size_t pos ) {
+		return AllAbove( seal_.data(), width_, x0, std::max( y0, ya ), x1, std::min( y1, yb ), pos );
+	};
+	// Changed triangles come in runs (a shape whose colour transform
+	// changed): each run is checked as one rectangle, after its last
+	// position, and only a run that fails that triangle by triangle.
+	for ( size_t k = 0; k < list.size(); ) {
+		if ( opHash_[list[k]] == last[k].hash ) {
+			k++;
+			continue;
+		}
+		size_t end = k;
+		int x0 = INT32_MAX, y0 = INT32_MAX, x1 = INT32_MIN, y1 = INT32_MIN;
+		for ( ; end < list.size() && opHash_[list[end]] != last[end].hash; end++ ) {
+			const Op &op = ops_[list[end]];
+			const BandOp &then = last[end];
+			if ( !then.pixels || op.type != OP_TRIANGLE || op.shade == SHADE_SUBMIT ) {
+				return false;
+			}
+			x0 = std::min( { x0, op.wx0, static_cast<int>( then.x0 ) } );
+			y0 = std::min( { y0, op.y0, static_cast<int>( then.y0 ) } );
+			x1 = std::max( { x1, op.wx1, static_cast<int>( then.x1 ) } );
+			y1 = std::max( { y1, op.y1, static_cast<int>( then.y1 ) } );
+		}
+		if ( !covered( x0, y0, x1, y1, end ) ) {
+			for ( size_t j = k; j < end; j++ ) {
+				const Op &op = ops_[list[j]];
+				const BandOp &then = last[j];
+				if ( !covered( op.wx0, op.y0, op.wx1, op.y1, j + 1 ) || !covered( then.x0, then.y0, then.x1, then.y1, j + 1 ) ) {
+					return false;
+				}
+			}
+		}
+		k = end;
+	}
+	return true;
+}
+
+/* One band, by action: BAND_RASTER, the pending clear and the queued
+ * triangles that reach it, in order; BAND_CHANGED, the same unless Sealed()
+ * shows they would come out as the band is, leaving out the triangles that
+ * would be drawn over and resuming from the band's checkpoint where it
+ * still holds. Then, when it changed since the straight copy was last made
+ * (or the copy goes to another buffer), its straight copy. Rows no triangle
+ * touches and that are already transparent are left alone, in the pixels
+ * and, when the copy goes to the same buffer as last time, in the copy. */
+void Canvas::RunBand( int band, int action, bool clear, std::vector<uint8_t> *straight, bool sameStraight,
 	BandResult *out ) const {
 	const int ya = band * BAND_ROWS, yb = std::min( height_, ya + BAND_ROWS );
 	const size_t rowBytes = static_cast<size_t>( width_ ) * 4;
-	if ( raster ) {
-		const std::vector<uint32_t> &list = bandOps_[band];
+	const std::vector<uint32_t> &list = bandOps_[band];
+	// what the band now holds, for the next frame's Sealed()
+	auto remember = [&] {
+		std::vector<BandOp> &last = bandLast_[band];
+		last.resize( list.size() );
+		for ( size_t k = 0; k < list.size(); k++ ) {
+			const Op &op = ops_[list[k]];
+			last[k] = { opHash_[list[k]], static_cast<int16_t>( op.wx0 ), static_cast<int16_t>( op.y0 ),
+				static_cast<int16_t>( op.wx1 ), static_cast<int16_t>( op.y1 ), op.type == OP_TRIANGLE && op.shade != SHADE_SUBMIT };
+		}
+	};
+	if ( action == BAND_CHANGED && Sealed( band ) ) {
+		remember();
+		out->kept = yb - ya;
+		action = BAND_KEEP;
+	}
+	if ( action != BAND_KEEP ) {
+		const size_t bandPixels = static_cast<size_t>( yb - ya ) * width_;
+		uint8_t *bandRgba = pixels_.data() + static_cast<size_t>( ya ) * rowBytes;
+		uint8_t *bandStencil = stencil_.data() + static_cast<size_t>( ya ) * width_;
+		uint16_t *bandSeal = seal_.data() + static_cast<size_t>( ya ) * width_;
+		// A band that changed is drawn without the triangles whose pixels
+		// were all sealed last time by a later triangle that is the same
+		// now: it writes them again whatever is under it. Only while the
+		// stencil goes as then (every triangle that changed writes pixels
+		// only), so the sealing triangles pass the same mask tests.
+		thread_local std::vector<uint16_t> hidden;	// per pixel of the band: such a seal, or 0
+		thread_local std::vector<uint8_t> differs, culled;
+		culled.assign( list.size(), 0 );
+		bool cull = false;
+		size_t firstChange = list.size();	// the first triangle that changed and is drawn
+		if ( action == BAND_CHANGED ) {
+			const std::vector<BandOp> &last = bandLast_[band];
+			cull = list.size() == last.size() && list.size() < 0xFFFF;
+			differs.assign( list.size(), 0 );
+			for ( size_t k = 0; cull && k < list.size(); k++ ) {
+				if ( opHash_[list[k]] != last[k].hash ) {
+					const Op &op = ops_[list[k]];
+					differs[k] = 1;
+					cull = last[k].pixels && op.type == OP_TRIANGLE && op.shade != SHADE_SUBMIT;
+				}
+			}
+			if ( cull ) {
+				hidden.resize( bandPixels );
+				for ( size_t i = 0; i < bandPixels; i++ ) {
+					const uint16_t s = bandSeal[i];
+					hidden[i] = s && !differs[s - 1] ? s : 0;
+				}
+				const uint16_t *map = hidden.data() - static_cast<size_t>( ya ) * width_;
+				for ( size_t k = 0; k < list.size(); k++ ) {
+					const Op &op = ops_[list[k]];
+					if ( op.type == OP_TRIANGLE && op.shade != SHADE_SUBMIT
+						&& AllAbove( map, width_, op.wx0, std::max( ya, op.y0 ), op.wx1, std::min( yb, op.y1 ), k + 1 ) ) {
+						culled[k] = 1;
+					} else if ( differs[k] && firstChange == list.size() ) {
+						firstChange = k;
+					}
+				}
+			}
+		}
+		// The checkpoint: the band as drawn up to a position, kept from a
+		// frame that drew it. It stands for this frame when every triangle
+		// before it is left out as then, or is the same as then and drawn:
+		// the same triangles drawn over the same start.
+		Checkpoint &cp = checkpoints_[band];
+		size_t start = 0;
+		if ( !cull ) {
+			cp.valid = false;
+		} else if ( cp.valid && cp.pos <= firstChange && cp.pos <= list.size() ) {
+			bool same = true;
+			for ( size_t j = 0; same && j < cp.pos; j++ ) {
+				same = culled[j] == cp.culled[j] && ( culled[j] || opHash_[list[j]] == cp.hash[j] );
+			}
+			if ( same ) {
+				std::memcpy( bandRgba, cp.rgba.data(), bandPixels * 4 );
+				std::memcpy( bandStencil, cp.stencil.data(), bandPixels );
+				std::memcpy( bandSeal, cp.seal.data(), bandPixels * sizeof( uint16_t ) );
+				start = cp.pos;
+			}
+		}
 		// the rows the triangles cover
 		uint8_t touched[BAND_ROWS] = {};
 		for ( uint32_t i : list ) {
@@ -859,7 +1038,7 @@ void Canvas::RunBand( int band, bool raster, bool clear, std::vector<uint8_t> *s
 		for ( int y = ya; y < yb; y++ ) {
 			const bool used = touched[y - ya] != 0;
 			if ( clear ) {
-				if ( used || !rowBlank_[y] ) {
+				if ( !start && ( used || !rowBlank_[y] ) ) {
 					std::memset( pixels_.data() + y * rowBytes, 0, rowBytes );
 				}
 				rowBlank_[y] = !used;
@@ -870,18 +1049,46 @@ void Canvas::RunBand( int band, bool raster, bool clear, std::vector<uint8_t> *s
 		// The stencil is cleared at a frame's start and by a mask's first
 		// submit; it is only written when a triangle reads it.
 		bool stencilZero = clear;
-		for ( uint32_t i : list ) {
-			const Op &op = ops_[i];
+		if ( start ) {
+			stencilZero = cp.stencilZero;
+		} else {
+			std::memset( bandSeal, 0, bandPixels * sizeof( uint16_t ) );
+		}
+		// a new checkpoint before the first change, unless resumed from there
+		const size_t takeAt = cull && firstChange != start ? firstChange : list.size();
+		for ( size_t k = start; k < list.size(); k++ ) {
+			if ( k == takeAt ) {
+				cp.valid = true;
+				cp.pos = k;
+				cp.stencilZero = stencilZero;
+				cp.hash.resize( k );
+				for ( size_t j = 0; j < k; j++ ) {
+					cp.hash[j] = opHash_[list[j]];
+				}
+				cp.culled.assign( culled.begin(), culled.begin() + k );
+				cp.rgba.assign( bandRgba, bandRgba + bandPixels * 4 );
+				cp.stencil.assign( bandStencil, bandStencil + bandPixels );
+				cp.seal.assign( bandSeal, bandSeal + bandPixels );
+			}
+			const Op &op = ops_[list[k]];
 			if ( op.type == OP_CLEAR_STENCIL ) {
 				stencilZero = true;
 				continue;
 			}
+			if ( culled[k] ) {
+				continue;
+			}
 			if ( op.mask != M_OFF && stencilZero ) {
-				std::memset( stencil_.data() + static_cast<size_t>( ya ) * width_, 0, static_cast<size_t>( yb - ya ) * width_ );
+				std::memset( bandStencil, 0, bandPixels );
 				stencilZero = false;
 			}
 			const RasterFn fn = RasterFor( op.shade, NormalBlend( op.mode ) );
-			fn( op, pixels_.data(), stencil_.data(), width_, std::max( ya, op.y0 ), std::min( yb, op.y1 ), out->tested );
+			const uint16_t sealPos = k + 1 < 0xFFFF ? static_cast<uint16_t>( k + 1 ) : 0;
+			fn( op, pixels_.data(), stencil_.data(), seal_.data(), sealPos, width_, std::max( ya, op.y0 ), std::min( yb, op.y1 ),
+				out->tested );
+		}
+		if ( clear ) {
+			remember();
 		}
 		out->rows = yb - ya;
 		bandStale_[band] = 1;
@@ -939,6 +1146,13 @@ void Canvas::Flush( std::vector<uint8_t> *straight ) const {
 	if ( !clear && ops_.empty() && !straight ) {
 		return;
 	}
+	// a frame's first flush, for SetVerify: the queue as it was, with the
+	// triangles left out for their masks
+	std::vector<Op> verifyOps;
+	if ( verify_ && clear ) {
+		verifyOps.swap( verifyOps_ );
+	}
+	verifyOps_.clear();
 	const int bands = ( height_ + BAND_ROWS - 1 ) / BAND_ROWS;
 	bandOps_.resize( static_cast<size_t>( bands ) );
 	for ( std::vector<uint32_t> &list : bandOps_ ) {
@@ -954,26 +1168,48 @@ void Canvas::Flush( std::vector<uint8_t> *straight ) const {
 	// leaves alone the bands whose triangles hash the same as the last
 	// frame's; a flush that continues a frame invalidates every band, as
 	// their hashes then describe only part of what they hold.
-	std::vector<uint8_t> raster( static_cast<size_t>( bands ), 0 );
+	// Bands whose hash changed are rasterised unless Sealed() shows the
+	// change is hidden.
+	std::vector<uint8_t> raster( static_cast<size_t>( bands ), BAND_KEEP );
 	if ( clear ) {
 		const bool reuse = bandsValid_;
-		std::vector<uint64_t> opHash( ops_.size() );
-		for ( size_t i = 0; i < ops_.size(); i++ ) {
-			opHash[i] = HashOp( ops_[i] );
-		}
-		for ( int b = 0; b < bands; b++ ) {
+		// on the workers: every op, in chunks, then every band's list
+		opHash_.resize( ops_.size() );
+		std::vector<uint64_t> hashes( static_cast<size_t>( bands ) );
+		const int chunks = static_cast<int>( std::min<size_t>( 64, ( ops_.size() + 1023 ) / 1024 ) );
+		auto hashOps = [&]( int c ) {
+			for ( size_t i = ops_.size() * c / chunks; i < ops_.size() * ( c + 1 ) / chunks; i++ ) {
+				opHash_[i] = HashOp( ops_[i] );
+			}
+		};
+		auto hashBand = [&]( int b ) {
 			uint64_t h = 0x13198A2E03707344ull;
 			for ( uint32_t i : bandOps_[b] ) {
-				h = ( h ^ opHash[i] ) * 0x9E3779B97F4A7C15ull;
+				h = ( h ^ opHash_[i] ) * 0x9E3779B97F4A7C15ull;
 				h ^= h >> 29;
 			}
-			raster[b] = !reuse || h != bandHash_[b];
-			bandHash_[b] = h;
+			hashes[b] = h;
+		};
+		Workers &pool = Workers::Get();
+		if ( pool.Threads() > 1 && chunks > 1 ) {
+			pool.Run( chunks, hashOps );
+			pool.Run( bands, hashBand );
+		} else {
+			for ( int c = 0; c < chunks; c++ ) {
+				hashOps( c );
+			}
+			for ( int b = 0; b < bands; b++ ) {
+				hashBand( b );
+			}
+		}
+		for ( int b = 0; b < bands; b++ ) {
+			raster[b] = static_cast<uint8_t>( !reuse ? BAND_RASTER : hashes[b] != bandHash_[b] ? BAND_CHANGED : BAND_KEEP );
+			bandHash_[b] = hashes[b];
 		}
 		bandsValid_ = true;
 	} else if ( !ops_.empty() ) {
 		for ( int b = 0; b < bands; b++ ) {
-			raster[b] = !bandOps_[b].empty();
+			raster[b] = static_cast<uint8_t>( bandOps_[b].empty() ? BAND_KEEP : BAND_RASTER );
 		}
 		bandsValid_ = false;
 	}
@@ -986,7 +1222,7 @@ void Canvas::Flush( std::vector<uint8_t> *straight ) const {
 	std::vector<BandResult> results( work.size() );
 	Workers &workers = Workers::Get();
 	auto run = [&]( int i ) {
-		RunBand( work[i], raster[work[i]] != 0, clear, straight, sameStraight, &results[i] );
+		RunBand( work[i], raster[work[i]], clear, straight, sameStraight, &results[i] );
 	};
 	if ( workers.Threads() <= 1 || work.size() <= 1 || static_cast<int64_t>( width_ ) * height_ < ( 1 << 16 ) ) {
 		for ( size_t i = 0; i < work.size(); i++ ) {
@@ -1015,9 +1251,26 @@ void Canvas::Flush( std::vector<uint8_t> *straight ) const {
 	for ( const BandResult &r : results ) {
 		pixelsTested_ += r.tested;
 		rowsDrawn_ += r.rows;
+		rowsKept_ += r.kept;
 	}
 	ops_.clear();
 	clearPending_ = false;
+	if ( verify_ && clear ) {
+		// the same triangles on a canvas with no bands to reuse
+		static Canvas fresh;
+		fresh.Resize( width_, height_ );
+		fresh.bandsValid_ = false;
+		fresh.ops_ = std::move( verifyOps );
+		fresh.clearPending_ = true;
+		std::vector<uint8_t> freshStraight;
+		fresh.Flush( straight ? &freshStraight : nullptr );
+		bool same = fresh.pixels_ == pixels_;
+		if ( straight ) {
+			same = same && freshStraight == *straight;
+		}
+		verified_++;
+		mismatches_ += same ? 0 : 1;
+	}
 }
 
 void Canvas::SetView( const Matrix &toPixels, int clipX0, int clipY0, int clipX1, int clipY1 ) {
@@ -1046,7 +1299,12 @@ void Canvas::BeginSubmitMask( int mode ) {
 		op.y0 = 0;
 		op.x1 = width_;
 		op.y1 = height_;
+		op.wx1 = width_;
 		stencilLevel_ = 0;
+		ClearMaskBounds();
+		if ( verify_ ) {
+			verifyOps_.push_back( op );
+		}
 	}
 	maskState_ = mode == 2 ? MASK_SUBMIT_DECR : MASK_SUBMIT_INCR;
 }
@@ -1099,22 +1357,78 @@ void Canvas::Raster( const ScreenVertex &a, const ScreenVertex &b, const ScreenV
 	if ( x0 >= x1 || y0 >= y1 ) {
 		return;
 	}
+	// A mask at level L lets through only pixels whose stencil is L, which
+	// lie inside what raised it from L - 1 since it was cleared: a triangle
+	// outside those bounds is not queued, and the others only over their
+	// rows (with SetVerify, the check draws them whole). Columns are kept:
+	// a row's values are stepped from its first pixel, so moving that pixel
+	// would round them differently.
+	int rows[2] = { y0, y1 }, columns[2] = { x0, x1 };
+	bool maskedOut = false;
+	if ( maskState_ == MASK_TEST && maskBoundsKnown_ && stencilLevel_ >= 1 && stencilLevel_ <= MASK_LEVELS ) {
+		if ( stencilLevel_ - 1 >= maskBoundsTop_ ) {
+			maskedOut = true;
+		} else {
+			const int *m = maskBounds_[stencilLevel_ - 1];
+			rows[0] = std::max( y0, m[1] );
+			rows[1] = std::min( y1, m[3] );
+			columns[0] = std::max( x0, m[0] );
+			columns[1] = std::min( x1, m[2] );
+			maskedOut = columns[0] >= columns[1] || rows[0] >= rows[1];
+		}
+	}
+	if ( maskedOut && !verify_ ) {
+		return;
+	}
 	const bool submit = maskState_ == MASK_SUBMIT_INCR || maskState_ == MASK_SUBMIT_DECR;
+	if ( maskState_ == MASK_SUBMIT_INCR ) {
+		if ( stencilLevel_ < 0 || stencilLevel_ >= MASK_LEVELS ) {
+			maskBoundsKnown_ = false;	// past what the bounds keep (or wrapping)
+		} else {
+			for ( ; maskBoundsTop_ <= stencilLevel_; maskBoundsTop_++ ) {
+				int *e = maskBounds_[maskBoundsTop_];
+				e[0] = e[1] = INT32_MAX;
+				e[2] = e[3] = INT32_MIN;
+			}
+			int *m = maskBounds_[stencilLevel_];
+			m[0] = std::min( m[0], x0 );
+			m[1] = std::min( m[1], y0 );
+			m[2] = std::max( m[2], x1 );
+			m[3] = std::max( m[3], y1 );
+		}
+	}
 	if ( !submit && !explicitUV && fill.kind != FILL_COLOR && fill.kind != FILL_TEXTURE && fill.kind != FILL_GOURAUD ) {
 		return;
 	}
-	triangles_++;
-
-	// Only the fields the fill uses are set; the rest stay zero, so state
-	// left over from earlier commands (the fill colour under a gouraud fill,
-	// say) does not make a repeated triangle look new.
 	Op &op = NewOp();
-	op.type = OP_TRIANGLE;
-	op.mask = static_cast<uint8_t>( maskState_ );
 	op.x0 = x0;
 	op.y0 = y0;
 	op.x1 = x1;
 	op.y1 = y1;
+	Resolve( op, v0, v1, v2, area, fill, explicitUV, submit );
+	if ( verify_ ) {
+		verifyOps_.push_back( op );
+	}
+	if ( maskedOut ) {
+		ops_.pop_back();
+		return;
+	}
+	op.y0 = rows[0];
+	op.y1 = rows[1];
+	op.wx0 = columns[0];
+	op.wx1 = columns[1];
+	triangles_++;
+}
+
+/* A queued triangle's fields, from its vertices (counter-clockwise, of
+ * signed area area) and the state. Only the fields the fill uses are set;
+ * the rest stay zero, so state left over from earlier commands (the fill
+ * colour under a gouraud fill, say) does not make a repeated triangle look
+ * new. */
+void Canvas::Resolve( Op &op, const ScreenVertex *v0, const ScreenVertex *v1, const ScreenVertex *v2, float area,
+	const Fill &fill, bool explicitUV, bool submit ) const {
+	op.type = OP_TRIANGLE;
+	op.mask = static_cast<uint8_t>( maskState_ );
 	const ScreenVertex *vs[3] = { v0, v1, v2 };
 	for ( int k = 0; k < 3; k++ ) {
 		op.sx[k] = vs[k]->sx;

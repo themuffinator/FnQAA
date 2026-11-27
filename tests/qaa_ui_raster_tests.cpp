@@ -397,11 +397,90 @@ void TestBands() {
 	Check( r.size() == 4 && r[0] == 10 && r[1] == 20 && r[2] == 400 && r[3] == 440, "separate strips upload separately" );
 }
 
+/* Changes that cannot show keep their bands: a shape animating outside its
+ * mask is not even queued, and one animating under an opaque layer (a
+ * linearly sampled opaque texture, whose alpha can fall a hair short of 1)
+ * leaves its bands as they are. A change on top redraws only its bands,
+ * from the checkpoint before it. Every frame matches a full redraw of the
+ * same triangles, masked-out ones included (SetVerify). */
+void TestHiddenChanges() {
+	const int w = 640, h = 480;
+	Texture grad;
+	grad.width = 256;
+	grad.height = 1;
+	grad.rgba.resize( 256 * 4 );
+	for ( int i = 0; i < 256; i++ ) {
+		grad.rgba[i * 4 + 0] = static_cast<uint8_t>( i );
+		grad.rgba[i * 4 + 1] = static_cast<uint8_t>( 40 + i / 2 );
+		grad.rgba[i * 4 + 2] = static_cast<uint8_t>( 255 - i );
+		grad.rgba[i * 4 + 3] = 255;
+	}
+	grad.version = 1;
+	Fill layer;
+	layer.kind = FILL_TEXTURE;
+	layer.texCount = 1;
+	layer.tex[0].texture = &grad;
+	layer.tex[0].clamp = true;
+	layer.tex[0].linear = true;
+	layer.tex[0].uv.m[0] = 1.0f / 390.0f;
+	layer.tex[0].uv.m[2] = -250.0f / 390.0f;
+	layer.tex[0].uv.m[4] = 1.0f / h;
+	Canvas c;
+	c.Resize( w, h );
+	std::vector<uint8_t> straight;
+	float layerLeft = 250, maskLeft = 300;
+	auto frame = [&]( float t ) {
+		c.SetVerify( true );
+		c.Clear();
+		c.SetView( Matrix(), 0, 0, w, h );
+		Cxform fade;
+		fade.mul[3] = t;
+		// underneath: a mask over the right, and two shapes fading under it
+		c.BeginSubmitMask( 0 );
+		Rect( c, maskLeft, 0, 640, 480, Fill() );
+		c.EndSubmitMask();
+		c.SetCxform( fade );
+		Rect( c, 10, 400, 200, 440, Solid( 1, 0, 0, 1 ) );		// outside the mask
+		Rect( c, 320, 100, 600, 140, Solid( 0, 1, 0, 1 ) );	// inside it
+		c.DisableMask();
+		c.SetCxform( Cxform() );
+		// an opaque layer over the right
+		Rect( c, layerLeft, 0, 640, 480, layer );
+		// on it, a shape fading and a still one over that
+		c.SetCxform( fade );
+		Rect( c, 260, 200, 500, 236, Solid( 1, 1, 1, 1 ) );
+		c.SetCxform( Cxform() );
+		Rect( c, 280, 210, 620, 226, Solid( 0, 0, 1, 0.5f ) );
+		c.ToStraight( straight );
+	};
+	frame( 0.25f );
+	Check( c.Triangles() == 10, "a shape outside its mask is not queued" );
+	frame( 0.5f );
+	int drawn = 0, kept = 0;
+	for ( int i = 0; i < 6; i++ ) {
+		frame( 0.3f + 0.1f * i );
+		drawn += c.RowsDrawn();
+		kept += c.RowsKept();
+	}
+	Check( c.VerifiedFlushes() == 8 && c.VerifyMismatches() == 0, "hidden changes: every frame matches a full redraw" );
+	Check( drawn == 6 * 3 * Canvas::BAND_ROWS, "only the bands of the change on top are drawn" );
+	Check( kept == 6 * 3 * Canvas::BAND_ROWS, "the bands of the change under the opaque layer are kept" );
+	// what is under the change on top moves, then the mask: nothing reused
+	// may show the old state
+	for ( int i = 0; i < 6; i++ ) {
+		layerLeft = i == 1 || i == 2 ? 251.5f : 250.0f;
+		maskLeft = i == 4 ? 330.0f : 300.0f;
+		frame( 0.35f + 0.1f * i );
+	}
+	Check( c.VerifiedFlushes() == 14 && c.VerifyMismatches() == 0, "changes under a change: every frame matches a full redraw" );
+}
+
 }
 
 int main() {
 	TestCoverageAndTopLeft();
 	TestBands();
+	TestHiddenChanges();
 	TestCxformAndStraight();
 	TestBlendAdd();
 	TestMask();

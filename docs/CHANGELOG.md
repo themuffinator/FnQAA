@@ -91,6 +91,9 @@ cycle (`python scripts/changelog.py clear-unreleased`).
   of the screen that changed are drawn again: the main menu runs at full
   frame rate at 2560x1440 instead of about 30 frames a second, and the HUD
   no longer redraws on every frame after the in-game menu.
+- Help & Options, Settings and Game Settings run at full frame rate: they
+  no longer redraw the menus hidden under them on every frame. Game
+  Settings at 2560x1440 used to drop to about 44 frames a second.
 - Fixed a crash risk when the menus load many images at once: the game's
   image-loading threads and the menus could change the list of images at
   the same time.

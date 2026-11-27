@@ -116,7 +116,17 @@ struct BitmapQuad {
  * leaves a band's pixels alone when the triangles that reach it are the
  * same as last frame's (positions, fills, state and texture versions), so
  * a frame that repeats, or animates a small part of the screen, redraws
- * only what changed.
+ * only what changed. Changes that cannot show are found exactly, so that
+ * every frame comes out as a full redraw of its triangles would:
+ *
+ * - a triangle under a mask that lies outside everything the mask's
+ *   triangles drew is never queued;
+ * - a band whose changed triangles all lie under pixels that a later,
+ *   unchanged triangle wrote whatever was under them (an opaque layer over
+ *   an animating one) keeps its pixels;
+ * - a band that is drawn again leaves out the triangles drawn over that
+ *   way, and resumes from its checkpoint, the state before its first
+ *   change last time, while the triangles before it are the same.
  */
 class Canvas {
 public:
@@ -138,6 +148,17 @@ public:
 	/* Rows rasterised since Clear(), as of the last flush (0: the frame
 	 * repeated the last one), for profiling. */
 	int RowsDrawn() const { return rowsDrawn_; }
+	/* Rows whose triangles changed but were shown to come out the same
+	 * (hidden under later opaque pixels), as of the last flush. */
+	int RowsKept() const { return rowsKept_; }
+
+	/* Checking (tests): every flush that starts a frame also rasterises the
+	 * same triangles (masked-out ones included) on a fresh canvas, and
+	 * compares its pixels and straight copy byte for byte with what the
+	 * band reuse produced. Set it before Clear(). */
+	void SetVerify( bool on ) { verify_ = on; }
+	int VerifiedFlushes() const { return verified_; }
+	int VerifyMismatches() const { return mismatches_; }
 
 	/* Start a frame: the canvas clears to transparent at the next flush. */
 	void Clear();
@@ -187,6 +208,7 @@ public:
 		uint8_t level = 0;		/* stencil level */
 		bool tl[3] = {};		/* top-left edges */
 		int x0 = 0, y0 = 0, x1 = 0, y1 = 0;	/* clipped bounds, [x0, x1) x [y0, y1) */
+		int wx0 = 0, wx1 = 0;	/* the columns it can write: [x0, x1) within its mask's bounds */
 		float sx[3] = {}, sy[3] = {};
 		Plane col[4], facLerp, facAlpha, u0, v0, u1, v1;
 		float color[4] = {};
@@ -207,15 +229,20 @@ private:
 		float u, v;			/* explicit UVs (bitmaps) */
 	};
 	void Raster( const ScreenVertex &a, const ScreenVertex &b, const ScreenVertex &c, const Fill &fill, bool explicitUV );
+	void Resolve( Op &op, const ScreenVertex *v0, const ScreenVertex *v1, const ScreenVertex *v2, float area, const Fill &fill,
+		bool explicitUV, bool submit ) const;
 	Op &NewOp();
 	void Flush( std::vector<uint8_t> *straight ) const;
 	struct BandResult {
 		int64_t tested = 0;
 		int rows = 0;				/* rows rasterised */
+		int kept = 0;				/* rows kept although their triangles changed (Sealed) */
 		std::vector<int> changed;	/* straight rows written, [y0, y1) pairs */
 	};
-	void RunBand( int band, bool raster, bool clear, std::vector<uint8_t> *straight, bool sameStraight,
+	enum { BAND_KEEP, BAND_RASTER, BAND_CHANGED };
+	void RunBand( int band, int action, bool clear, std::vector<uint8_t> *straight, bool sameStraight,
 		BandResult *out ) const;
+	bool Sealed( int band ) const;
 	Matrix Full() const;
 
 	int width_ = 0, height_ = 0;
@@ -238,12 +265,53 @@ private:
 	mutable std::vector<uint8_t> bandStale_;
 	mutable bool bandsValid_ = false;
 	mutable std::vector<std::vector<uint32_t>> bandOps_;	/* the queued triangles reaching each band */
-	mutable int rowsDrawn_ = 0;
+	mutable std::vector<uint64_t> opHash_;					/* per queued op, as of a frame's first flush */
+	/*
+	 * Seals: per pixel, 1 + the position in its band's list of the last
+	 * triangle whose write there did not depend on what was under it (0:
+	 * none), as of the band's last rasterisation; and per band, the
+	 * triangles it then had. When a band's triangles change only in ways
+	 * hidden under later seals (a layer animating under an opaque one),
+	 * its pixels are kept (Sealed).
+	 */
+	struct BandOp {
+		uint64_t hash;
+		int16_t x0, y0, x1, y1;
+		bool pixels;			/* writes pixels only (no stencil) */
+	};
+	mutable std::vector<uint16_t> seal_;
+	mutable std::vector<std::vector<BandOp>> bandLast_;
+	/* Per band: its pixels, stencil and seals as drawn up to position pos
+	 * of its list (before the first triangle that changed, last time it
+	 * was drawn), and the triangles before it: their hashes and which were
+	 * left out as drawn over. */
+	struct Checkpoint {
+		bool valid = false;
+		bool stencilZero = false;
+		size_t pos = 0;
+		std::vector<uint64_t> hash;
+		std::vector<uint8_t> culled;
+		std::vector<uint8_t> rgba, stencil;
+		std::vector<uint16_t> seal;
+	};
+	mutable std::vector<Checkpoint> checkpoints_;
+	mutable int rowsDrawn_ = 0, rowsKept_ = 0;
+	bool verify_ = false;
+	mutable std::vector<Op> verifyOps_;	/* SetVerify: everything queued since the last flush, masks' bounds aside */
+	mutable int verified_ = 0, mismatches_ = 0;
 	Matrix view_, matrix_, user_;
 	Cxform cx_;
 	int clip_[4] = { 0, 0, 0, 0 };
 	std::vector<int> blend_;
 	int stencilLevel_ = 0;
+	/* Per stencil level L, the bounds of the triangles that raised the
+	 * stencil from L to L + 1 since it was last cleared: the only pixels a
+	 * mask at level L + 1 can let through. x0 >= x1 when there are none. */
+	static constexpr int MASK_LEVELS = 255;
+	int maskBounds_[MASK_LEVELS][4] = {};
+	int maskBoundsTop_ = 0;		/* levels from it up are empty */
+	bool maskBoundsKnown_ = true;	/* false: a mask went past MASK_LEVELS */
+	void ClearMaskBounds();
 	enum { MASK_OFF, MASK_SUBMIT_INCR, MASK_SUBMIT_DECR, MASK_TEST } maskState_ = MASK_OFF;
 	int triangles_ = 0;
 	mutable int64_t pixelsTested_ = 0;
