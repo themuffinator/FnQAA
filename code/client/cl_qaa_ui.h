@@ -44,8 +44,18 @@ void QAA_UI_Frame( void );
  * what it recorded, over the frame. */
 void QAA_UI_Draw( void );
 
-/* A key event for the front end; true if it took it. */
+/* A key event for the front end; true if it took it. Mouse buttons and
+ * the wheel go to it while it owns the pointer. */
 bool QAA_UI_KeyEvent( int key, bool down, unsigned time );
+
+/* The front end owns the mouse pointer: its menus, and anything it shows
+ * outside a game (start-up movies, title, loading). The platform layers
+ * then show the system pointer and report absolute positions
+ * (Key_GetPointerCatcher). PC deviation: the Xbox has no mouse. */
+bool QAA_UI_WantsPointer( void );
+
+/* The pointer's position in renderer pixels, while the front end owns it. */
+void QAA_UI_PointerMove( int x, int y );
 
 /* cgame traps that feed the front end (docs/ABI.md, cgame 116..140), with
  * their guest-address arguments. Returns the trap's result. */

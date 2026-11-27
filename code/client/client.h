@@ -656,6 +656,7 @@ void CL_SetCGameTime( void );
 void CL_InitUI( void );
 void CL_ShutdownUI( void );
 int Key_GetCatcher( void );
+int Key_GetPointerCatcher( void );	// QAA: Key_GetCatcher, plus KEYCATCH_UI while the front end owns the pointer
 void Key_SetCatcher( int catcher );
 
 

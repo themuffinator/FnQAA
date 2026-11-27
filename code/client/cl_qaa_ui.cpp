@@ -31,6 +31,7 @@ Structure:
 #include "../qaa/qaa_guest_host.h"
 
 #include <algorithm>
+#include <limits>
 #include <atomic>
 #include <cctype>
 #include <cmath>
@@ -66,6 +67,16 @@ constexpr uint32_t SFUI_STATE_PTR = 0x82A87958;		// the SFUI object (0x3627E0 by
 constexpr uint32_t SFUI_RENDERER = 0x21CC;			// +: the GRenderer (0x800280 bytes, ctor 0x82166B38)
 constexpr uint32_t SFUI_THREAD = 0x361ED4;			// +: update thread handle (0x82195200)
 constexpr uint32_t SFUI_FRAME_EVENT = 0x361ED8;		// +: the event the thread waits on (0x82196458)
+constexpr uint32_t SFUI_MOVIES = 0x21E4;			// +: GFxMovieView *[], the top one takes the input (0x82198698)
+constexpr uint32_t SFUI_MOVIE_COUNT = 0x21E8;		// +: how many
+
+// GFx 2.x GFxMovieView (vtable 0x820B0490)
+constexpr uint32_t MOVIE_GET_VARIABLE = 0x30;		// vtable +: GetVariable(GFxValue *, path) (0x82655768)
+constexpr uint32_t MOVIE_INVOKE = 0x48;				// vtable +: Invoke(path, GFxValue *result, args, count) (0x82658590)
+constexpr uint32_t MOVIE_STAGE_SCALE_X = 0x70;		// +: viewport pixels to stage pixels: x * scale + offset
+constexpr uint32_t MOVIE_STAGE_SCALE_Y = 0x74;		//   (as HandleEvent maps the mouse, 0x82650C10)
+constexpr uint32_t MOVIE_STAGE_OFFSET_X = 0x78;
+constexpr uint32_t MOVIE_STAGE_OFFSET_Y = 0x7C;
 
 // engine data the front end reads
 constexpr uint32_t CMD_ARGC = 0x828E0AD0;			// Cmd_Argc, read inline by the sf_* commands
@@ -1469,9 +1480,13 @@ void LoadFillTexture( uint32_t a, qaa_ui::TextureFill &t ) {
 	t.linear = QAA_LoadU32( a + 32 ) != 0;
 }
 
+int displayW, displayH;	// the movie's viewport buffer, as the last frame set it
+
 void BeginDisplay( uint32_t c ) {
 	const float x0 = QAA_LoadF( c + 4 ), x1 = QAA_LoadF( c + 8 ), y0 = QAA_LoadF( c + 12 ), y1 = QAA_LoadF( c + 16 );
 	const int bufW = QAA_LoadS32( c + 0x14 ), bufH = QAA_LoadS32( c + 0x18 );
+	displayW = bufW;
+	displayH = bufH;
 	const int left = QAA_LoadS32( c + 0x1C ), top = QAA_LoadS32( c + 0x20 );
 	const int width = QAA_LoadS32( c + 0x24 ), height = QAA_LoadS32( c + 0x28 );
 	const uint32_t flags = QAA_LoadU32( c + 0x44 );
@@ -2242,9 +2257,602 @@ int QaaKey( int key ) {
 	}
 }
 
+/* ==== the mouse =============================================================================
+
+PC deviation: the Xbox has no mouse. The movies' own mouse handlers do
+not select or activate anything: QAA's FgUIComponent uses onRollOver,
+onPress, onRollOut and onRelease only to show its _over, _down and _up
+frames (activate() calls onActivate(), then onRelease() for the look), and
+SFUI registers no mouse with GFx (the movie's mouse count, +0x9B8, is 0).
+What selects and activates is the scene, FgScene: setSelection(i) moves
+the selection over its selectionArray, and its onKeyDown takes A to
+currentSelection.activate(), B to goBack() and the rest to the selection's
+own onKeyDown (a list's rows, a slider's value). So the pointer drives the
+scenes as the pad does:
+
+- over a selectable component (its hitTest, by bounding box, in the
+  stage's pixels; of overlapping boxes, the one the pointer is most
+  central in) it selects the component, and inside a grid
+  (FgGridSelector) or a list (FgListBox) the square or row too; off every
+  component the selection stays;
+- the left button presses A on what it is over (PointerPress for sliders
+  and rotators, and the title);
+- the right button (and the fourth) presses B, as Escape; the wheel moves
+  the selection, as the arrow keys (a list scrolls).
+
+Everything is queued and run before each step of the update thread, while
+it is parked, through the movie's GetVariable and Invoke, so the movies'
+ActionScript runs as it does for SFUI's own invokes; the keys then go
+through SFUI's key queue (SFUI_KEY_EVENT). The pointer is the system's:
+the platform layers show it and report absolute positions while the front
+end owns it (Key_GetPointerCatcher). */
+
+/* GFxValue (GFx 2.x): the type, then the value at +8 */
+enum { GFXV_UNDEFINED = 0, GFXV_NULL = 1, GFXV_BOOL = 2, GFXV_NUMBER = 3, GFXV_STRING = 4 };
+constexpr uint32_t GFXV_SIZE = 0x10;
+
+struct PointerEvent {
+	enum Kind { MOVE, CLICK, KEY } kind;
+	int key;		// KEY: the engine key for SFUI
+	bool down;
+	float x, y;		// viewport pixels
+};
+std::vector<PointerEvent> pointerEvents;
+float pointerX, pointerY;			// viewport pixels, as last reported
+uint32_t mouseKeysTaken;			// bit per mouse key whose press the front end took
+uint32_t gfxScratch;				// guest: a GFxValue result, arguments, a path
+
+void QueuePointerEvent( const PointerEvent &e ) {
+	if ( e.kind == PointerEvent::MOVE && !pointerEvents.empty() && pointerEvents.back().kind == PointerEvent::MOVE ) {
+		pointerEvents.back() = e;	// moves join
+	} else if ( pointerEvents.size() < 64 ) {
+		pointerEvents.push_back( e );
+	}
+}
+
+/* The movie that takes the input (SFUI's key handler, 0x82198698). */
+uint32_t InputMovie() {
+	const uint32_t count = QAA_LoadU32( sfui + addr::SFUI_MOVIE_COUNT ), movies = QAA_LoadU32( sfui + addr::SFUI_MOVIES );
+	return count && movies ? QAA_LoadU32( movies + 4 * ( count - 1 ) ) : 0;
+}
+
+void StoreDouble( uint32_t a, double v ) {
+	uint64_t u;
+	std::memcpy( &u, &v, 8 );
+	QAA_StoreU32( a, static_cast<uint32_t>( u >> 32 ) );
+	QAA_StoreU32( a + 4, static_cast<uint32_t>( u ) );
+}
+
+double LoadDouble( uint32_t a ) {
+	const uint64_t u = static_cast<uint64_t>( QAA_LoadU32( a ) ) << 32 | QAA_LoadU32( a + 4 );
+	double v = 0;
+	std::memcpy( &v, &u, 8 );
+	return v;
+}
+
+/* A GFxValue that is a number or a boolean, as a number. */
+bool ValueNumber( uint32_t v, double *out ) {
+	switch ( QAA_LoadU32( v ) & 0xF ) {
+	case GFXV_NUMBER:
+		*out = LoadDouble( v + 8 );
+		return true;
+	case GFXV_BOOL:
+		*out = QAA_LoadU8( v + 8 ) ? 1.0 : 0.0;
+		return true;
+	default:
+		return false;
+	}
+}
+
+bool ScratchReady() {
+	return gfxScratch || ( gfxScratch = GCalloc( 0x200 ) ) != 0;
+}
+
+/* Invoke(path, result, args, count) (movie vtable +0x48) with number and
+ * boolean arguments ({ value, is a boolean }); *out: the result as a number. */
+bool GfxInvoke( uint32_t movie, const std::string &path, std::initializer_list<std::pair<double, bool>> args,
+	double *out = nullptr ) {
+	if ( !ScratchReady() || args.size() > 4 ) {
+		return false;
+	}
+	const uint32_t result = gfxScratch, argv = gfxScratch + GFXV_SIZE, text = gfxScratch + 0x80;
+	QAA_StoreU32( result, GFXV_UNDEFINED );
+	uint32_t a = argv;
+	for ( const auto &arg : args ) {
+		QAA_StoreU32( a, arg.second ? GFXV_BOOL : GFXV_NUMBER );
+		QAA_StoreU32( a + 4, 0 );
+		if ( arg.second ) {
+			QAA_StoreU32( a + 8, 0 );
+			QAA_StoreU8( a + 8, arg.first != 0.0 );
+		} else {
+			StoreDouble( a + 8, arg.first );
+		}
+		a += GFXV_SIZE;
+	}
+	GStrcpy( text, path.c_str(), 0x180 );
+	uint64_t ok = 0;
+	if ( !UiCall( QAA_LoadU32( QAA_LoadU32( movie ) + addr::MOVIE_INVOKE ),
+		{ movie, text, result, argv, static_cast<uint64_t>( args.size() ) }, &ok ) || !( ok & 0xFF ) ) {
+		return false;
+	}
+	return !out || ValueNumber( result, out );
+}
+
+/* GetVariable(result, path) (movie vtable +0x30) into the scratch block:
+ * the value's type, or -1 when the path does not resolve. */
+int GfxType( uint32_t movie, const std::string &path ) {
+	if ( !ScratchReady() ) {
+		return -1;
+	}
+	const uint32_t result = gfxScratch, text = gfxScratch + 0x80;
+	QAA_StoreU32( result, GFXV_UNDEFINED );
+	GStrcpy( text, path.c_str(), 0x180 );
+	uint64_t ok = 0;
+	if ( !UiCall( QAA_LoadU32( QAA_LoadU32( movie ) + addr::MOVIE_GET_VARIABLE ), { movie, result, text }, &ok ) || !( ok & 0xFF ) ) {
+		return -1;
+	}
+	return static_cast<int>( QAA_LoadU32( result ) & 0xF );
+}
+
+/* GetVariable: a number or a boolean. */
+bool GfxNumber( uint32_t movie, const std::string &path, double *out ) {
+	return GfxType( movie, path ) >= 0 && ValueNumber( gfxScratch, out );
+}
+
+/* The current scene, as _global.sceneManager.currentScene's getter finds
+ * it (FgSceneManager2: movies[movies.length - 1].scene): GetVariable does
+ * not run getters. Empty when there is none. */
+std::string ScenePath( uint32_t movie ) {
+	double movies = 0;
+	if ( !GfxNumber( movie, "_global.sceneManager.movies.length", &movies ) || movies < 1 ) {
+		return std::string();
+	}
+	return "_global.sceneManager.movies." + std::to_string( static_cast<int>( movies ) - 1 ) + ".scene";
+}
+
+/* The pointer, in the stage's pixels (as GFx maps its mouse, 0x82650C10). */
+struct StagePoint {
+	double x, y;
+};
+
+StagePoint ToStage( uint32_t movie, float x, float y ) {
+	return { QAA_LoadF( movie + addr::MOVIE_STAGE_SCALE_X ) * x + QAA_LoadF( movie + addr::MOVIE_STAGE_OFFSET_X ),
+		QAA_LoadF( movie + addr::MOVIE_STAGE_SCALE_Y ) * y + QAA_LoadF( movie + addr::MOVIE_STAGE_OFFSET_Y ) };
+}
+
+/* clip.hitTest(x, y) by bounding box, in stage pixels. */
+bool HitTest( uint32_t movie, const std::string &clip, double x, double y ) {
+	double hit = 0;
+	return GfxInvoke( movie, clip + ".hitTest", { { x, false }, { y, false }, { 0.0, true } }, &hit ) && hit != 0.0;
+}
+
+/* A clip that is shown and, for a component, selectable. */
+bool Usable( uint32_t movie, const std::string &clip ) {
+	double v = 0;
+	return !( GfxNumber( movie, clip + ".isSelectable", &v ) && v == 0.0 ) && !( GfxNumber( movie, clip + "._visible", &v ) && v == 0.0 );
+}
+
+/* Where clip's bounding box crosses the line through p along x (or y), in
+ * stage pixels: in one span, whose ends are found by halving. */
+void SpanThrough( uint32_t movie, const std::string &clip, StagePoint p, bool vertical, double limit, double *lo, double *hi ) {
+	const double at = vertical ? p.y : p.x;
+	auto hit = [&]( double v ) {
+		return vertical ? HitTest( movie, clip, p.x, v ) : HitTest( movie, clip, v, p.y );
+	};
+	auto edge = [&]( double inside, double outside ) {
+		if ( hit( outside ) ) {
+			return outside;
+		}
+		for ( int i = 0; i < 11 && std::fabs( outside - inside ) > 1.0; i++ ) {
+			const double mid = ( inside + outside ) * 0.5;
+			( hit( mid ) ? inside : outside ) = mid;
+		}
+		return inside;
+	};
+	*lo = edge( at, 0.0 );
+	*hi = edge( at, limit );
+}
+
+double SpanMiddle( uint32_t movie, const std::string &clip, StagePoint p, bool vertical, double limit ) {
+	double lo, hi;
+	SpanThrough( movie, clip, p, vertical, limit, &lo, &hi );
+	return ( lo + hi ) * 0.5;
+}
+
+/* The stage's size in pixels. */
+StagePoint StageSize( uint32_t movie ) {
+	return { QAA_LoadF( movie + addr::MOVIE_STAGE_SCALE_X ) * ( displayW > 0 ? displayW : cls.glconfig.vidWidth ),
+		QAA_LoadF( movie + addr::MOVIE_STAGE_SCALE_Y ) * ( displayH > 0 ? displayH : cls.glconfig.vidHeight ) };
+}
+
+/* The usable element of path[0 .. count) under p, -1 for none. Neighbours'
+ * boxes overlap (a menu item's holds its highlight bar, often far wider
+ * than its text), so of several the one p is most central in, measured in
+ * each box's own half-width and half-height. */
+int ElementAt( uint32_t movie, const std::string &path, int count, StagePoint p ) {
+	int found[4], hits = 0;
+	for ( int i = 0; i < count && i < 64 && hits < 4; i++ ) {
+		const std::string clip = path + "." + std::to_string( i );
+		if ( HitTest( movie, clip, p.x, p.y ) && Usable( movie, clip ) ) {
+			found[hits++] = i;
+		}
+	}
+	if ( hits <= 1 ) {
+		return hits ? found[0] : -1;
+	}
+	const StagePoint size = StageSize( movie );
+	int best = -1;
+	double bestDistance = 0;
+	for ( int k = 0; k < hits; k++ ) {
+		const std::string clip = path + "." + std::to_string( found[k] );
+		double x0, x1, y0, y1;
+		SpanThrough( movie, clip, p, false, size.x, &x0, &x1 );
+		SpanThrough( movie, clip, p, true, size.y, &y0, &y1 );
+		const double dx = ( p.x - ( x0 + x1 ) * 0.5 ) / std::max( ( x1 - x0 ) * 0.5, 1.0 );
+		const double dy = ( p.y - ( y0 + y1 ) * 0.5 ) / std::max( ( y1 - y0 ) * 0.5, 1.0 );
+		const double distance = dx * dx + dy * dy;
+		if ( best < 0 || distance < bestDistance ) {
+			best = found[k];
+			bestDistance = distance;
+		}
+	}
+	return best;
+}
+
+/* What the pointer is over: the current scene's component, and inside a
+ * grid (FgGridSelector: grid[], setGridSelection) or a list (FgListBox:
+ * rowList[], setSelection) its cell. */
+struct PointerTarget {
+	std::string scene;			// empty: no scene
+	int count = -1;				// the scene's components
+	int selection = -1;			// the scene's selection
+	int component = -1;			// under the pointer
+	std::string path;			// the component's
+	enum { PLAIN, GRID, LIST, SLIDER, ROTATOR } kind = PLAIN;
+	int cells = 0, currentCell = -1, cell = -1;
+};
+
+/* What kind of component t->path is; with p, the cell under it. */
+void Classify( uint32_t movie, PointerTarget *t, const StagePoint *p ) {
+	double v = 0;
+	if ( GfxNumber( movie, t->path + ".grid.length", &v ) ) {
+		t->kind = PointerTarget::GRID;
+		t->cells = static_cast<int>( v );
+		t->currentCell = GfxNumber( movie, t->path + ".currentGridSelection", &v ) ? static_cast<int>( v ) : -1;
+		t->cell = p ? ElementAt( movie, t->path + ".grid", t->cells, *p ) : -1;
+	} else if ( GfxNumber( movie, t->path + ".rowList.length", &v ) ) {
+		t->kind = PointerTarget::LIST;
+		t->cells = static_cast<int>( v );
+		t->currentCell = GfxNumber( movie, t->path + ".currentRow", &v ) ? static_cast<int>( v ) : -1;
+		t->cell = p ? ElementAt( movie, t->path + ".rowList", t->cells, *p ) : -1;
+	} else if ( GfxType( movie, t->path + ".moveLeft" ) > GFXV_UNDEFINED && GfxType( movie, t->path + ".line" ) > GFXV_UNDEFINED ) {
+		t->kind = PointerTarget::SLIDER;	// FgSlider: line, the track; data, the thumb
+	} else if ( GfxType( movie, t->path + ".setNext" ) > GFXV_UNDEFINED ) {
+		t->kind = PointerTarget::ROTATOR;	// FgRotator: left and right step its value
+	}
+}
+
+PointerTarget TargetAt( uint32_t movie, StagePoint p ) {
+	PointerTarget t;
+	t.scene = ScenePath( movie );
+	double v = 0;
+	if ( t.scene.empty() || !GfxNumber( movie, t.scene + ".selectionArray.length", &v ) ) {
+		return t;
+	}
+	t.count = static_cast<int>( v );
+	t.selection = GfxNumber( movie, t.scene + ".selectionIndex", &v ) ? static_cast<int>( v ) : -1;
+	const std::string components = t.scene + ".selectionArray";
+	t.component = ElementAt( movie, components, t.count, p );
+	if ( t.component < 0 ) {
+		return t;
+	}
+	t.path = components + "." + std::to_string( t.component );
+	Classify( movie, &t, &p );
+	return t;
+}
+
+/* Selects what the pointer is over, as the pad would: the component in
+ * the scene, then the cell in its grid or list. */
+void SelectTarget( uint32_t movie, const PointerTarget &t ) {
+	if ( t.component < 0 ) {
+		return;
+	}
+	if ( t.component != t.selection ) {
+		if ( qaa_uiTrace && qaa_uiTrace->integer ) {
+			Com_Printf( "QAA ui: pointer selects component %d of %d (was %d)\n", t.component, t.count, t.selection );
+		}
+		GfxInvoke( movie, t.scene + ".setSelection", { { static_cast<double>( t.component ), false } } );
+	}
+	if ( t.cell >= 0 && t.cell != t.currentCell ) {
+		if ( qaa_uiTrace && qaa_uiTrace->integer ) {
+			Com_Printf( "QAA ui: pointer selects %s %d of %d (was %d)\n", t.kind == PointerTarget::GRID ? "square" : "row",
+				t.cell, t.cells, t.currentCell );
+		}
+		GfxInvoke( movie, t.path + ( t.kind == PointerTarget::GRID ? ".setGridSelection" : ".setSelection" ),
+			{ { static_cast<double>( t.cell ), false } } );
+	}
+}
+
+/* A key for SFUI, as QAA_UI_KeyEvent hands keys over. */
+void SendUiKey( int key, bool down ) {
+	PublishClientState();
+	UiCall( addr::SFUI_KEY_EVENT, { static_cast<uint64_t>( key ), down ? 1u : 0u, 0 } );
+}
+
+/* Where clip's bounding box crosses the row y, in stage pixels: sampled
+ * across the stage, then each edge found by halving. False if it does not. */
+bool RowSpan( uint32_t movie, const std::string &clip, double y, double *left, double *right ) {
+	const double width = StageSize( movie ).x;
+	constexpr int SAMPLES = 48;
+	int first = -1, last = -1;
+	for ( int i = 0; i <= SAMPLES; i++ ) {
+		if ( HitTest( movie, clip, width * i / SAMPLES, y ) ) {
+			if ( first < 0 ) {
+				first = i;
+			}
+			last = i;
+		}
+	}
+	if ( first < 0 ) {
+		return false;
+	}
+	auto edge = [&]( double inside, double outside ) {
+		for ( int i = 0; i < 8 && std::fabs( outside - inside ) > 0.5; i++ ) {
+			const double mid = ( inside + outside ) * 0.5;
+			( HitTest( movie, clip, mid, y ) ? inside : outside ) = mid;
+		}
+		return inside;
+	};
+	*left = first > 0 ? edge( width * first / SAMPLES, width * ( first - 1 ) / SAMPLES ) : 0.0;
+	*right = last < SAMPLES ? edge( width * last / SAMPLES, width * ( last + 1 ) / SAMPLES ) : width;
+	return true;
+}
+
+/* A slider being dragged by its track: the value follows the pointer. */
+struct SliderDrag {
+	bool active = false;
+	std::string path;
+	double left = 0, right = 0;		// the track, stage pixels
+	double value = 0;				// last set
+} sliderDrag;
+
+/* setValue at the pointer's place on the track, snapped to the slider's
+ * step from its minimum (FgSlider: _minValue, _maxValue, _datastep). */
+void SlideTo( uint32_t movie, double x ) {
+	double lo = 0, hi = 1, step = 0;
+	if ( !GfxNumber( movie, sliderDrag.path + "._minValue", &lo ) || !GfxNumber( movie, sliderDrag.path + "._maxValue", &hi ) ) {
+		return;
+	}
+	GfxNumber( movie, sliderDrag.path + "._datastep", &step );
+	const double f = sliderDrag.right > sliderDrag.left
+		? std::clamp( ( x - sliderDrag.left ) / ( sliderDrag.right - sliderDrag.left ), 0.0, 1.0 ) : 0.0;
+	double v = lo + f * ( hi - lo );
+	if ( step > 0 ) {
+		v = std::clamp( lo + std::round( ( v - lo ) / step ) * step, std::min( lo, hi ), std::max( lo, hi ) );
+	}
+	if ( v != sliderDrag.value ) {
+		sliderDrag.value = v;
+		if ( qaa_uiTrace && qaa_uiTrace->integer ) {
+			Com_Printf( "QAA ui: pointer sets slider to %g\n", v );
+		}
+		GfxInvoke( movie, sliderDrag.path + ".setValue", { { v, false } } );
+	}
+}
+
+/* The left button's press: the key it became, released with it. */
+int clickKey;
+
+/* The left button: what it is over is selected, then pressed:
+ * - a button, a list's row, a grid's square: A;
+ * - a slider's track: its value there (and it follows while held); left
+ *   or right of the track (the arrows): left or right;
+ * - a rotator's value: left or right of its middle;
+ * - a slider's or rotator's label: nothing more.
+ * On a scene whose one component is a button (the title), a click anywhere
+ * is on it; on a scene with none (the start-up movies), A. */
+void PointerPress( uint32_t movie, float x, float y ) {
+	int key = K_ENTER;
+	if ( movie ) {
+		const StagePoint p = ToStage( movie, x, y );
+		PointerTarget t = TargetAt( movie, p );
+		if ( t.component < 0 && t.count == 1 && Usable( movie, t.scene + ".selectionArray.0" ) ) {
+			// the scene's only component, if a button (the title's "Press A
+			// to start"); not a list, whose A would take its current row
+			PointerTarget only = t;
+			only.path = t.scene + ".selectionArray.0";
+			Classify( movie, &only, nullptr );
+			if ( only.kind == PointerTarget::PLAIN ) {
+				t = only;
+				t.component = 0;
+			}
+		}
+		if ( qaa_uiTrace && qaa_uiTrace->integer ) {
+			Com_Printf( "QAA ui: pointer click on component %d of %d, cell %d of %d\n", t.component, t.count, t.cell, t.cells );
+		}
+		if ( t.component < 0 && t.count > 0 ) {
+			return;	// beside every component
+		}
+		SelectTarget( movie, t );
+		if ( ( t.kind == PointerTarget::GRID || t.kind == PointerTarget::LIST ) && t.cell < 0 ) {
+			return;	// a grid or list, beside its cells
+		}
+		if ( t.kind == PointerTarget::SLIDER || t.kind == PointerTarget::ROTATOR ) {
+			if ( HitTest( movie, t.path + ".label", p.x, p.y ) ) {
+				return;
+			}
+			// the control's row: the pointer's, else the middle of the component's
+			const double rows[2] = { p.y, SpanMiddle( movie, t.path, p, true, StageSize( movie ).y ) };
+			double left = 0, right = 0;
+			bool found = false;
+			for ( double row : rows ) {
+				if ( t.kind == PointerTarget::SLIDER ) {
+					found = RowSpan( movie, t.path + ".line", row, &left, &right );
+				} else if ( RowSpan( movie, t.path, row, &left, &right ) ) {
+					double labelLeft, labelRight;	// the value: right of the label
+					if ( RowSpan( movie, t.path + ".label", row, &labelLeft, &labelRight ) && labelRight < right ) {
+						left = std::max( left, labelRight );
+					}
+					found = true;
+				}
+				if ( found ) {
+					break;
+				}
+			}
+			if ( !found ) {
+				return;
+			}
+			if ( t.kind == PointerTarget::SLIDER && p.x >= left && p.x <= right ) {
+				sliderDrag.active = true;
+				sliderDrag.path = t.path;
+				sliderDrag.left = left;
+				sliderDrag.right = right;
+				sliderDrag.value = std::numeric_limits<double>::quiet_NaN();
+				SlideTo( movie, p.x );
+				return;
+			}
+			key = p.x < ( t.kind == PointerTarget::SLIDER ? left : ( left + right ) * 0.5 ) ? K_LEFTARROW : K_RIGHTARROW;
+		}
+	}
+	clickKey = key;
+	SendUiKey( key, true );
+}
+
+/* Before each step of the update thread: the pointer's events, in order. */
+void RunPointerEvents() {
+	if ( pointerEvents.empty() ) {
+		return;
+	}
+	std::vector<PointerEvent> events;
+	events.swap( pointerEvents );
+	const uint32_t movie = InputMovie();
+	for ( const PointerEvent &e : events ) {
+		switch ( e.kind ) {
+		case PointerEvent::MOVE:
+			if ( !movie ) {
+				break;
+			}
+			if ( sliderDrag.active ) {
+				SlideTo( movie, ToStage( movie, e.x, e.y ).x );
+			} else {
+				SelectTarget( movie, TargetAt( movie, ToStage( movie, e.x, e.y ) ) );
+			}
+			break;
+		case PointerEvent::CLICK:
+			if ( e.down ) {
+				PointerPress( movie, e.x, e.y );
+			} else {
+				sliderDrag.active = false;
+				if ( clickKey ) {
+					SendUiKey( clickKey, false );
+					clickKey = 0;
+				}
+			}
+			break;
+		case PointerEvent::KEY:
+			SendUiKey( e.key, e.down );
+			break;
+		}
+	}
+}
+
+int MouseKeyBit( int key ) {
+	switch ( key ) {
+	case K_MOUSE1: return 1;
+	case K_MOUSE2: return 2;
+	case K_MOUSE3: return 4;
+	case K_MOUSE4: return 8;
+	case K_MOUSE5: return 16;
+	case K_MWHEELUP: return 32;
+	case K_MWHEELDOWN: return 64;
+	default: return 0;
+	}
+}
+
+/* A mouse button or the wheel: the front end takes a press while it owns
+ * the pointer, and the release of every press it took (so a press the game
+ * took is released in the game, and the reverse). */
+bool MouseKeyEvent( int key, bool down ) {
+	const uint32_t bit = static_cast<uint32_t>( MouseKeyBit( key ) );
+	if ( down ) {
+		if ( !QAA_UI_WantsPointer() || ( Key_GetCatcher() & KEYCATCH_CONSOLE ) ) {
+			return false;
+		}
+		mouseKeysTaken |= bit;
+	} else {
+		if ( !( mouseKeysTaken & bit ) ) {
+			return false;
+		}
+		mouseKeysTaken &= ~bit;
+	}
+	PointerEvent e = { PointerEvent::KEY, 0, down, pointerX, pointerY };
+	switch ( key ) {
+	case K_MOUSE1:
+		e.kind = PointerEvent::CLICK;
+		break;
+	case K_MOUSE2:
+	case K_MOUSE4:
+		e.key = K_ESCAPE;
+		break;
+	case K_MWHEELUP:
+		e.key = K_UPARROW;
+		break;
+	case K_MWHEELDOWN:
+		e.key = K_DOWNARROW;
+		break;
+	default:
+		return true;	// taken, not used
+	}
+	QueuePointerEvent( e );
+	return true;
+}
+
+/* qaa_uiGet <path>: a variable of the movie that takes the input, as
+ * GetVariable resolves the path (no getters: the current scene is
+ * _global.sceneManager.movies.<n - 1>.scene). For working on the menus. */
+void UI_Get_f( void ) {
+	const uint32_t movie = InputMovie();
+	const int type = movie ? GfxType( movie, Cmd_Argv( 1 ) ) : -1;
+	const uint32_t value = gfxScratch;
+	double n = 0;
+	if ( type < 0 ) {
+		Com_Printf( "%s: not found\n", Cmd_Argv( 1 ) );
+	} else if ( type == GFXV_STRING ) {
+		Com_Printf( "%s = \"%s\"\n", Cmd_Argv( 1 ), GStr( QAA_LoadU32( value + 8 ) ).c_str() );
+	} else if ( ValueNumber( value, &n ) ) {
+		Com_Printf( "%s = %g%s\n", Cmd_Argv( 1 ), n, type == GFXV_BOOL ? " (boolean)" : "" );
+	} else {
+		Com_Printf( "%s = %s\n", Cmd_Argv( 1 ), type == GFXV_NULL ? "null" : "undefined" );
+	}
+}
+
+/* qaa_uiTestPointer x y: the pointer at renderer pixel (x, y), through the
+ * engine's absolute pointer path (headless tests). */
+void UI_TestPointer_f( void ) {
+	CL_MouseAbsoluteEvent( atoi( Cmd_Argv( 1 ) ), atoi( Cmd_Argv( 2 ) ) );
+}
+
 } // namespace
 
 /* ==== public ================================================================================== */
+
+bool QAA_UI_WantsPointer( void ) {
+	// the menus, and everything the front end shows outside a game (start-up
+	// movies, title, loading); in a game, only while a menu holds the keys
+	return QAA_UI_Active() && ( cls.state != CA_ACTIVE || ( Key_GetCatcher() & KEYCATCH_UI )
+		|| ( QAA_LoadU32( addr::CLS_KEYCATCHERS ) & KEYCATCH_UI ) );
+}
+
+void QAA_UI_PointerMove( int x, int y ) {
+	if ( !QAA_UI_Active() ) {
+		return;
+	}
+	// renderer pixels to the movie's viewport buffer (the video mode, as SFUI
+	// sets it from the glconfig it is given)
+	const int vidW = std::max( cls.glconfig.vidWidth, 1 ), vidH = std::max( cls.glconfig.vidHeight, 1 );
+	pointerX = static_cast<float>( x ) * ( displayW > 0 ? displayW : vidW ) / vidW;
+	pointerY = static_cast<float>( y ) * ( displayH > 0 ? displayH : vidH ) / vidH;
+	QueuePointerEvent( { PointerEvent::MOVE, 0, false, pointerX, pointerY } );
+}
 
 bool QAA_UI_Init( void ) {
 	if ( uiReady ) {
@@ -2259,9 +2867,11 @@ bool QAA_UI_Init( void ) {
 	Cvar_SetDescription( Cvar_Get( "qaa_country", "", CVAR_ARCHIVE ), "The console region the front end sees, two "
 		"letters (\"us\" shows the ESRB rating screen at start-up). Empty: the operating system's region." );
 	Cvar_SetDescription( qaa_uiProfile, "Print the front end's average cost per client frame once a second: "
-		"update thread, SFUI render, replay, present." );
+		"pointer events, update thread, SFUI render, recording, rasterising, upload." );
 	Cvar_Get( "sys_titleFocused", "1", CVAR_ROM );
 	Cmd_AddCommand( "qaa_uiDump", UI_Dump_f );
+	Cmd_AddCommand( "qaa_uiTestPointer", UI_TestPointer_f );
+	Cmd_AddCommand( "qaa_uiGet", UI_Get_f );
 	if ( !qaa_uiEnable->integer || uiFailed ) {
 		return false;
 	}
@@ -2360,8 +2970,8 @@ const char *QAA_UI_CountryCode( void ) {
 
 /* qaa_uiProfile 1: average microseconds per client frame, once a second. */
 namespace uiprof {
-enum Stage { UPDATE, RENDER, RECORD, RASTER, UPLOAD, COUNT };
-const char *const names[COUNT] = { "update", "render", "record", "raster", "upload" };
+enum Stage { POINTER, UPDATE, RENDER, RECORD, RASTER, UPLOAD, COUNT };
+const char *const names[COUNT] = { "pointer", "update", "render", "record", "raster", "upload" };
 int64_t total[COUNT];
 int frames, updates, redraws, repeats, started;
 int64_t tested, tris, rowsDrawn, uploadedRows;
@@ -2408,7 +3018,8 @@ void QAA_UI_Frame( void ) {
 	if ( qaa_uiTestFrames && qaa_uiTestFrames->integer > 0 ) {
 		static int testFrames;
 		testFrames++;
-		// qaa_uiTestKeys "frame:KEY frame:KEY ...": scripted presses (key names as bind)
+		// qaa_uiTestKeys "frame:KEY frame:KEY ...": scripted presses (key names as
+		// bind); +KEY only presses, -KEY only releases
 		char script[MAX_CVAR_VALUE_STRING];
 		Cvar_VariableStringBuffer( "qaa_uiTestKeys", script, sizeof( script ) );
 		for ( const char *p = script; *p; ) {
@@ -2428,11 +3039,16 @@ void QAA_UI_Frame( void ) {
 			}
 			name[n] = 0;
 			if ( at == testFrames ) {
-				const int key = Key_StringToKeynum( name );
+				const bool press = name[0] != '-', release = name[0] != '+';
+				const int key = Key_StringToKeynum( name + ( press && release ? 0 : 1 ) );
 				if ( key > 0 ) {
 					Com_Printf( "QAA ui: test key %s at frame %d\n", name, testFrames );
-					CL_KeyEvent( key, qtrue, Sys_Milliseconds() );
-					CL_KeyEvent( key, qfalse, Sys_Milliseconds() );
+					if ( press ) {
+						CL_KeyEvent( key, qtrue, Sys_Milliseconds() );
+					}
+					if ( release ) {
+						CL_KeyEvent( key, qfalse, Sys_Milliseconds() );
+					}
 				}
 			}
 			p = q;
@@ -2504,7 +3120,10 @@ void QAA_UI_Frame( void ) {
 	}
 	while ( pending >= 1.0 ) {
 		pending -= 1.0;
-		const int64_t stepStart = uiprof::Now();
+		int64_t stepStart = uiprof::Now();
+		RunPointerEvents();	// before this iteration's input and Advance
+		uiprof::Add( uiprof::POINTER, stepStart );
+		stepStart = uiprof::Now();
 		const int stepped = Api().qaa_guest_step_thread( Guest(), thread, frame, 5000 );
 		uiprof::Add( uiprof::UPDATE, stepStart );
 		uiprof::updates++;
@@ -2610,6 +3229,9 @@ void QAA_UI_Draw( void ) {
  * keys (PC deviation: the Xbox has no console).
  */
 bool QAA_UI_KeyEvent( int key, bool down, unsigned time ) {
+	if ( QAA_UI_Active() && MouseKeyBit( key ) ) {
+		return MouseKeyEvent( key, down );
+	}
 	if ( !QAA_UI_Active() || ( Key_GetCatcher() & KEYCATCH_CONSOLE ) || key == K_CONSOLE ) {
 		return false;
 	}

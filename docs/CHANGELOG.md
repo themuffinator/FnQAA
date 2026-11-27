@@ -33,6 +33,13 @@ cycle (`python scripts/changelog.py clear-unreleased`).
 - The engine reads the game's data inside your package, in place, and never
   changes it; saved games and title updates stored beside the game are left
   alone.
+- The menus work with the mouse. Pointing at an item selects it, as the
+  D-pad would; clicking presses A on it, including a list's rows, a grid's
+  squares and the title; clicking a slider's track sets its value, and
+  dragging along it follows the pointer; clicking either side of an
+  option's value steps it left or right. The right mouse button goes back,
+  as B, and the wheel moves the selection. The pointer shows over the
+  menus and the in-game menu, and the game keeps the mouse while you play.
 
 ### Rendering and Display
 - The menus and HUD show at any resolution. Above 2048 pixels wide (for

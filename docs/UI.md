@@ -102,6 +102,50 @@ bindings. PC deviations: the console keeps its keys, and the keyboard
 drives the menus as the pad does (SFUI translates through its table at
 0x827EBBC8).
 
+**The mouse.** PC deviation: the Xbox has none. **code** The movies'
+mouse handlers do not select or activate anything: QAA's `FgUIComponent`
+uses `onRollOver`, `onPress`, `onRollOut` and `onRelease` only to show its
+`_over`, `_down` and `_up` frames, and SFUI registers no mouse with GFx
+(the movie's mouse count, +0x9B8, is 0, so GFx drops mouse events). What
+selects and activates is the scene (`FgScene`): `setSelection(i)` over its
+`selectionArray`, and its `onKeyDown`, which takes A to
+`currentSelection.activate()`, B to `goBack()` and the rest to the
+selection's own `onKeyDown`. So the pointer drives the scenes as the pad
+does, through the movie's `GetVariable` (vtable +0x30) and `Invoke`
+(+0x48):
+
+- Over a selectable component it selects the component, by `hitTest` on
+  bounding boxes in the stage's pixels (the viewport mapped as GFx maps its
+  mouse, movie +0x70..+0x7C). Neighbouring boxes overlap (a menu item's
+  holds its highlight bar), so of several the one the pointer is most
+  central in wins, measured in each box's own size. Inside a grid
+  (`FgGridSelector`: `grid[]`, `setGridSelection`) or a list (`FgListBox`:
+  `rowList[]`, `setSelection`) the square or row is selected too. Off
+  every component the selection stays.
+- The left button presses A on what it is over. On a slider (`FgSlider`)
+  the track (`line`) sets the value at the pointer, snapped to its step,
+  and the value follows while the button is held; left or right of the
+  track (the arrows) presses left or right. On a rotator (`FgRotator`)
+  the button presses left or right of the value's middle. On a slider's or
+  rotator's label it only selects. On a scene whose one component is a
+  button (the title's "Press A to start") a click anywhere is on it; on a
+  scene with none (the start-up movies) it presses A. Beside every
+  component of a scene, a click does nothing.
+- The right button (and the fourth) presses B, as Escape; the wheel
+  presses up and down, so it moves the selection and scrolls a list.
+
+The current scene is `_global.sceneManager.movies[movies.length - 1].scene`:
+`currentScene` is an `addProperty` getter, which GFx's `GetVariable` does
+not run. Pointer events are queued and run before each step of the update
+thread, while it is parked; the keys they become then go through SFUI's key
+queue after the selection changes. The front end owns the pointer
+(`QAA_UI_WantsPointer`) in its menus and wherever it shows outside a game
+(the start-up movies, the title, loading), where SFUI holds no
+`KEYCATCH_UI`: `Key_GetPointerCatcher` adds `KEYCATCH_UI` for the SDL,
+Win32 and X11 layers, which then show the system pointer (confined to a
+fullscreen window) and report absolute positions. A button the front end
+took is released there, and one the game took is released in the game.
+
 **The console.** The Xbox has none. Here it opens and closes over the
 front end at any time. Quake III's rule that a disconnected client shows
 the console full screen, and cannot close it, applies only when the front
@@ -216,6 +260,7 @@ the bare name).
 | A game can only start from the menus, after the title | a game can also start from the command line (`+map`, `+devmap`) while the start-up movies play. The first snapshot's HUD request then finds no scene manager, and the title would load over the game. When the front end reaches the title (`setGameState(2)`, 0x82C01C48) with a game running, the HUD is requested again, and the title's music is not started over the game's | `PollGameStartedBeforeTitle`, `H_S_StartBackgroundTrack` |
 | Update and render overlap on two threads | one thread | |
 | GPU replay | software rasteriser | |
+| No mouse | the pointer selects, A on a click, B on the right button, the wheel as up and down; sliders take the pointer's place on the track ([the mouse](#frames-input-and-events)) | `RunPointerEvents`, `Key_GetPointerCatcher` |
 
 ## Testing
 
@@ -224,7 +269,13 @@ Every run is headless (`com_headless 2`, no sound, no input grab).
 - `qaa_uiTestFrames N`: run N client frames, then quit.
 - `qaa_uiTestEvery K`: dump the canvas every K frames to
   `screenshots/qaa_ui_NNNN.tga`.
-- `qaa_uiTestKeys "frame:KEY ..."`: scripted key presses (bind names).
+- `qaa_uiTestKeys "frame:KEY ..."`: scripted key presses (bind names,
+  `MOUSE1` and `MWHEELDOWN` included); `+KEY` only presses, `-KEY` only
+  releases (a drag).
+- `qaa_uiTestPointer x y`: the pointer at renderer pixel (x, y), through
+  the engine's absolute pointer path.
+- `qaa_uiGet path`: a variable of the movie, as `GetVariable` resolves the
+  path (for example `_global.sceneManager.movies.0.scene.selectionIndex`).
 - `qaa_uiTestCmds "frame:command|..."`: console commands at given frames.
 - `qaa_uiDump`: dump the canvas now.
 - `qaa_uiTrace 1..6`: increasingly detailed tracing. 1 logs FgApi calls
@@ -234,9 +285,10 @@ Every run is headless (`com_headless 2`, no sound, no input grab).
 - `qaa_ui 0` (latched): run without the front end, console only.
 - `qaa_uiProfile 1`: once a second, the front end's frame rate, how many
   frames drew some band and how many repeated the one on screen, and the
-  average cost per frame (update thread, SFUI render, recording the
-  commands, rasterising, upload), with the triangles each redraw queued and
-  the pixels, rows drawn and rows uploaded.
+  average cost per frame (the pointer's events, update thread, SFUI
+  render, recording the commands, rasterising, upload), with the
+  triangles each redraw queued and the pixels, rows drawn and rows
+  uploaded.
 - `QAA_UI_THREADS=N` (environment): rasterise on N threads in all (1: on
   the calling thread only).
 - A windowless client (`com_headless 2`) never changes the display mode,
@@ -290,3 +342,6 @@ synthetic data. It needs no retail files.
   FnQAA runs it with the engine waiting. A GPU replay would replace the
   rasteriser.
 - Rumble (`stopVibration`) and XAM import 752 are unimplemented.
+- **observed**: the model selector (Player Settings, Select Model) shows
+  an empty grid, and the map selector (Host Match, Change Arena/Gametype)
+  shows its rows as placeholder text, from the keyboard as from the mouse.

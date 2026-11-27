@@ -27,6 +27,7 @@ extern "C" {
 
 #include "client_cpp.h"
 #include "input_compat.hpp"
+#include "cl_qaa_ui.h"
 #include "../qcommon/netchan_safety.hpp"
 
 #include <array>
@@ -700,6 +701,9 @@ before queueing this event.
 void CL_MouseAbsoluteEvent( int x, int y ) {
 	if ( Key_GetCatcher() & KEYCATCH_CONSOLE ) {
 		Con_SetMousePos( x, y );
+	} else if ( QAA_UI_WantsPointer() ) {
+		// QAA: the Scaleform front end drives its menus with the pointer
+		QAA_UI_PointerMove( x, y );
 	} else if ( Cvar_VariableIntegerValue( "cg_ignoreMouseInput" ) ) {
 		return;
 	} else if ( Key_GetCatcher() & KEYCATCH_CGAME ) {

@@ -75,7 +75,7 @@ static qboolean s_legacyWarpFailureReported;
 
 static int IN_PointerConsumerIdentity( void )
 {
-	const int catcher = Key_GetCatcher();
+	const int catcher = Key_GetPointerCatcher();	// QAA: as the pointer owner
 	if ( catcher & KEYCATCH_CONSOLE ) {
 		return KEYCATCH_CONSOLE;
 	}
@@ -104,7 +104,7 @@ fnql::input::PointerOwner WIN_ResolvePointerOwner( void )
 {
 	fnql::input::PointerOwnerInputs inputs;
 
-	inputs.catcher = Key_GetCatcher();
+	inputs.catcher = Key_GetPointerCatcher();	// QAA: the front end's menus own the pointer (PC deviation)
 	inputs.consoleMask = KEYCATCH_CONSOLE;
 	inputs.menuMask = kPointerMenuMask;
 	inputs.consoleUsesAbsolutePointer = !glw_state.cdsFullscreen;

@@ -1088,6 +1088,22 @@ int Key_GetCatcher( void )
 
 /*
 ====================
+Key_GetPointerCatcher
+
+The catcher the platform layers decide mouse pointer ownership from.
+QAA: the Scaleform front end owns the pointer wherever it shows menus,
+including the start-up movies and the title, where SFUI holds no
+KEYCATCH_UI (PC deviation: the Xbox has no mouse).
+====================
+*/
+int Key_GetPointerCatcher( void )
+{
+	return keyCatchers | ( QAA_UI_WantsPointer() ? KEYCATCH_UI : 0 );
+}
+
+
+/*
+====================
 Key_SetCatcher
 ====================
 */

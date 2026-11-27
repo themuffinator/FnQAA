@@ -223,7 +223,7 @@ static qboolean WIN_ConsoleOwnsPointer( void )
 
 static int WIN_PointerConsumerIdentity( void )
 {
-	const int catcher = Key_GetCatcher();
+	const int catcher = Key_GetPointerCatcher();	// QAA: as the pointer owner
 
 	if ( catcher & KEYCATCH_CONSOLE ) return KEYCATCH_CONSOLE;
 	if ( catcher & KEYCATCH_UI ) return KEYCATCH_UI;
@@ -1111,7 +1111,7 @@ LRESULT WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM  wParam, LPARAM lParam 
 				SetCursor( NULL );
 				return TRUE;
 			}
-			if ( Key_GetCatcher() & ( KEYCATCH_UI | KEYCATCH_CGAME ) ) {
+			if ( Key_GetPointerCatcher() & ( KEYCATCH_UI | KEYCATCH_CGAME ) ) {	// QAA: as the pointer owner
 				// Retail retains the normal Win32 arrow while native UI or
 				// cgame overlays own absolute mouse input.
 				SetCursor( LoadCursor( NULL, IDC_ARROW ) );

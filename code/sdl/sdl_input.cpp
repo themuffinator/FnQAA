@@ -313,7 +313,7 @@ static PointerOwner IN_ResolvePointerOwner( void )
 {
 	fnql::input::PointerOwnerInputs inputs;
 
-	inputs.catcher = Key_GetCatcher();
+	inputs.catcher = Key_GetPointerCatcher();	// QAA: the front end's menus own the pointer (PC deviation)
 	inputs.consoleMask = KEYCATCH_CONSOLE;
 	inputs.menuMask = kPointerMenuMask;
 	// A fullscreen window exposes no desktop for the OS pointer to reach, so the
@@ -343,7 +343,7 @@ static PointerMode IN_ResolvePointerMode( PointerOwner owner )
 
 static int IN_PointerConsumerIdentity( void )
 {
-	const int catcher = Key_GetCatcher();
+	const int catcher = Key_GetPointerCatcher();	// QAA: as the pointer owner
 
 	if ( catcher & KEYCATCH_CONSOLE ) return KEYCATCH_CONSOLE;
 	if ( catcher & KEYCATCH_UI ) return KEYCATCH_UI;
