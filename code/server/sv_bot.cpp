@@ -522,14 +522,16 @@ void SV_BotInitCvars(void) {
 	Cvar_Get("bot_forcewrite", "0", 0);					//force writing aas file
 	Cvar_Get("bot_aasoptimize", "0", 0);				//no aas file optimisation
 	Cvar_Get("bot_saveroutingcache", "0", 0);			//save routing cache
-	Cvar_Get("bot_thinktime", "100", 0);				//msec the bots thinks
+	// QAA: retail SV_BotInitCvars registers bot_thinktime "300" (0x8212C2B4).
+	Cvar_Get("bot_thinktime", "300", 0);				//msec the bots thinks
 	Cvar_Get("bot_reloadcharacters", "0", 0);			//reload the bot characters each time
 	Cvar_Get("bot_testichat", "0", 0);					//test ichats
 	Cvar_Get("bot_testrchat", "0", 0);					//test rchats
 	Cvar_Get("bot_testsolid", "0", CVAR_CHEAT);			//test for solid areas
 	Cvar_Get("bot_testclusters", "0", CVAR_CHEAT);		//test the AAS clusters
 	Cvar_Get("bot_fastchat", "0", 0);					//fast chatting bots
-	Cvar_Get("bot_nochat", "0", 0);						//disable chats
+	// QAA: retail SV_BotInitCvars registers bot_nochat "1" (0x8212C340).
+	Cvar_Get("bot_nochat", "1", 0);						//disable chats
 	Cvar_Get("bot_pause", "0", CVAR_CHEAT);				//pause the bots thinking
 	Cvar_Get("bot_report", "0", CVAR_CHEAT);			//get a full report in ctf
 	Cvar_Get("bot_grapple", "0", 0);					//enable grapple

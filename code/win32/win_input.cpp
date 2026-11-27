@@ -1904,7 +1904,8 @@ void IN_Init( void ) {
 
 #ifdef USE_JOYSTICK
 	// joystick variables
-	in_joystick = Cvar_Get( "in_joystick", "0", CVAR_ARCHIVE | CVAR_LATCH );
+	// QAA: retail IN_Init registers in_joystick "1" (0x8218250C): the pad is on.
+	in_joystick = Cvar_Get( "in_joystick", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	Cvar_SetDescription( in_joystick, "Whether or not joystick support is on." );
 	in_joystickProfile = Cvar_Get( "in_joystickProfile", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	Cvar_CheckRange( in_joystickProfile, "0", "1", CV_INTEGER );

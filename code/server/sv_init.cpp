@@ -532,7 +532,8 @@ void SV_SpawnServer( const char *mapname, qboolean killBots ) {
 #endif
 
 	// get latched value
-	sv_pure = Cvar_Get( "sv_pure", "1", CVAR_SYSTEMINFO | CVAR_LATCH );
+	// QAA: the same default as SV_Init's, retail's sv_pure "0" (0x82134DD4).
+	sv_pure = Cvar_Get( "sv_pure", "0", CVAR_SYSTEMINFO | CVAR_LATCH );
 
 	// VMs can change latched cvars instantly which could cause side-effects in SV_UserMove()
 	sv.pure = sv_pure->integer;
@@ -739,8 +740,9 @@ void SV_Init( void )
 	Cvar_Get ("dmflags", "0", CVAR_SERVERINFO);
 	// The currently shipped retail qagame registers 50 here. Match the module
 	// boundary so startup does not retain a stale Quake III reset value.
-	Cvar_Get ("fraglimit", "50", CVAR_SERVERINFO);
-	Cvar_Get ("timelimit", "0", CVAR_SERVERINFO);
+	// QAA: retail SV_Init registers fraglimit "10" and timelimit "60" (0x82134BE8, 0x82134C00).
+	Cvar_Get ("fraglimit", "10", CVAR_SERVERINFO);
+	Cvar_Get ("timelimit", "60", CVAR_SERVERINFO);
 	sv_gametype = Cvar_Get ("g_gametype", "0", CVAR_SERVERINFO | CVAR_LATCH );
 	Cvar_SetDescription( sv_gametype, "Set the gametype to mod." );
 	Cvar_Get ("sv_keywords", "", CVAR_SERVERINFO);
@@ -810,7 +812,8 @@ void SV_Init( void )
 	// systeminfo
 	sv_cheats = Cvar_Get( "sv_cheats", "1", CVAR_SYSTEMINFO | CVAR_ROM );
 	sv_serverid = Cvar_Get( "sv_serverid", "0", CVAR_SYSTEMINFO | CVAR_ROM );
-	sv_pure = Cvar_Get( "sv_pure", "1", CVAR_SYSTEMINFO | CVAR_LATCH );
+	// QAA: retail SV_Init registers sv_pure "0" (0x82134DD4).
+	sv_pure = Cvar_Get( "sv_pure", "0", CVAR_SYSTEMINFO | CVAR_LATCH );
 	Cvar_SetDescription( sv_pure, "Requires clients to only get data from pack archives the server is using." );
 	Cvar_Get( "sv_paks", "", CVAR_SYSTEMINFO | CVAR_ROM );
 	Cvar_Get( "sv_pakNames", "", CVAR_SYSTEMINFO | CVAR_ROM );
@@ -824,7 +827,8 @@ void SV_Init( void )
 	Cvar_SetDescription( sv_rconPassword, "Password for remote server commands." );
 	sv_privatePassword = Cvar_Get ("sv_privatePassword", "", CVAR_TEMP | CVAR_PRIVATE );
 	Cvar_SetDescription( sv_privatePassword, "Set password for private clients to login with." );
-	sv_fps = Cvar_Get ("sv_fps", "40", CVAR_TEMP );
+	// QAA: retail SV_Init registers sv_fps "20" (0x82134E64); default.cfg sets 60.
+	sv_fps = Cvar_Get ("sv_fps", "20", CVAR_TEMP );
 	Cvar_CheckRange( sv_fps, "10", "125", CV_INTEGER );
 	Cvar_SetDescription( sv_fps, "Set the max frames per second the server sends the client." );
 	sv_audioPVS = Cvar_Get( "sv_audioPVS", "0", CVAR_ARCHIVE_ND );
@@ -844,7 +848,8 @@ void SV_Init( void )
 	Cvar_SetDescription( sv_zombietime, "Seconds to sink messages after disconnect." );
 	Cvar_Get ("nextmap", "", CVAR_TEMP );
 
-	sv_allowDownload = Cvar_Get ("sv_allowDownload", "1", CVAR_SERVERINFO);
+	// QAA: retail SV_Init registers sv_allowDownload "0" (0x82134ED8).
+	sv_allowDownload = Cvar_Get ("sv_allowDownload", "0", CVAR_SERVERINFO);
 	Cvar_SetDescription( sv_allowDownload, "Toggle the ability for clients to download files maps etc. from server." );
 	Cvar_Get ("sv_dlURL", "", CVAR_SERVERINFO | CVAR_ARCHIVE);
 

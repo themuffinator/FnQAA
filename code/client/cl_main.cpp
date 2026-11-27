@@ -4713,9 +4713,9 @@ void CL_Init( void ) {
 	cl_motd = Cvar_Get( "cl_motd", "1", 0 );
 	Cvar_SetDescription( cl_motd, "Toggle the display of the 'Message of the day'. When Quake 3 Arena starts a map up, it sends the GL_RENDERER string to the Message Of The Day server at id. This responds back with a message of the day to the client." );
 
-	// Retail Quake Live uses a 40 second connection timeout. Existing user-set
-	// values remain valid, while new profiles receive the retail reset value.
-	cl_timeout = Cvar_Get( "cl_timeout", "40", 0 );
+	// QAA: retail CL_Init registers cl_timeout "200" (0x8210A90C), Quake III's
+	// value; Quake Live's was 40. Existing user-set values remain valid.
+	cl_timeout = Cvar_Get( "cl_timeout", "200", 0 );
 	Cvar_CheckRange( cl_timeout, "5", nullptr, CV_INTEGER );
 	Cvar_SetDescription( cl_timeout, "Duration of receiving nothing from server for client to decide it must be disconnected (in seconds)." );
 
@@ -4869,7 +4869,8 @@ void CL_Init( void ) {
 	rconAddress = Cvar_Get ("rconAddress", "", 0);
 	Cvar_SetDescription( rconAddress, "The IP address of the remote console you wish to connect to." );
 
-	cl_allowDownload = Cvar_Get( "cl_allowDownload", "1", CVAR_ARCHIVE_ND );
+	// QAA: retail CL_Init registers cl_allowDownload "0" (0x8210ABF0).
+	cl_allowDownload = Cvar_Get( "cl_allowDownload", "0", CVAR_ARCHIVE_ND );
 	Cvar_SetDescription( cl_allowDownload, "Enables downloading of content needed in server. Valid bitmask flags:\n 1: Downloading enabled\n 2: Do not use HTTP/FTP downloads\n 4: Do not use UDP downloads" );
 #ifdef USE_CURL
 	cl_mapAutoDownload = Cvar_Get( "cl_mapAutoDownload", "0", CVAR_ARCHIVE_ND );
@@ -4944,8 +4945,9 @@ void CL_Init( void ) {
 	// nothing syncs it from a Steam persona. FnQL's Steam "country" key and
 	// \cl_steamNameLock are removed; nothing else reads them.
 	Cvar_Get ("name", "UnnamedPlayer", CVAR_USERINFO | CVAR_ARCHIVE_ND );
-	Cvar_Get ("rate", "25000", CVAR_USERINFO | CVAR_ARCHIVE );
-	Cvar_Get ("snaps", "40", CVAR_USERINFO | CVAR_ARCHIVE );
+	// QAA: retail CL_Init registers rate "32000" and snaps "60" (0x8210AE98, 0x8210AEB0).
+	Cvar_Get ("rate", "32000", CVAR_USERINFO | CVAR_ARCHIVE );
+	Cvar_Get ("snaps", "60", CVAR_USERINFO | CVAR_ARCHIVE );
 	// QAA: retail CL_Init (0x8210AED0, 0x8210AEE4) starts the player as James,
 	// the model ui_modelIndex 22 selects in the Select Model grid.
 	Cvar_Get ("model", "james", CVAR_USERINFO | CVAR_ARCHIVE_ND );
@@ -4965,7 +4967,8 @@ void CL_Init( void ) {
 	Cvar_Get ("cl_anonymous", "0", CVAR_USERINFO | CVAR_ARCHIVE_ND );
 
 	Cvar_Get ("password", "", CVAR_USERINFO | CVAR_NORESTART);
-	Cvar_Get ("cg_predictItems", "1", CVAR_USERINFO | CVAR_ARCHIVE );
+	// QAA: retail CL_Init registers cg_predictItems "0" (0x8210AF60).
+	Cvar_Get ("cg_predictItems", "0", CVAR_USERINFO | CVAR_ARCHIVE );
 	// Retail registers these two beside cg_predictItems with flags 0x80803
 	// (quakelive_steam.exe 0x4bcbac, 0x4bcbc0), so the first userinfo a server
 	// sees already carries them; cgame only registers them once it has loaded.

@@ -53,6 +53,12 @@ cycle (`python scripts/changelog.py clear-unreleased`).
 - Control Scheme binds the controller's buttons without touching the
   keyboard or mouse: choosing a button no longer rebinds the mouse
   buttons or arrow keys, and Clear All clears only the controller.
+- The engine's settings start at the console's values: the controller is
+  on (`in_joystick 1`), sound volume is full, matches default to 10 frags
+  and 60 minutes, bots think as often as on the console
+  (`bot_thinktime 300`), and flares, the sun, shadows, model detail and
+  the near clip plane match it. A config you saved earlier keeps the
+  values it holds; `reset <cvar>` now restores the console's value.
 
 ### Rendering and Display
 - The menus and HUD show at any resolution. Above 2048 pixels wide (for

@@ -112,8 +112,9 @@ its stubbed chat calls are in [ABI.md](ABI.md)). Headless, bots added with
 `addbot` route, fight, die and respawn on `q3dm6`, on the dedicated and the
 listen server. Open: with only bots the match stays in warmup (`CS_WARMUP`
 -1), so frags do not score unless `g_doWarmup 0`; how QAA starts the match
-outside the Live lobby is to be read from the game. And the engine's Quake
-Live cvar defaults (`fraglimit`, `timelimit`) that override QAA's.
+outside the Live lobby is to be read from the game. The engine's cvar
+defaults follow `default.xex`'s registrations (`fraglimit` 10, `timelimit`
+60 and the rest), except where a PC setting has no Xbox equivalent.
 
 **M5 Client game** (in progress). The engine hosts the recompiled cgame
 (`code/client/cl_qaa_cgame.inc`): QAA's trap numbering converted into

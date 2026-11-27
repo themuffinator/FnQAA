@@ -1612,7 +1612,8 @@ void CL_InitInput( void ) {
 	cl_anglespeedkey = Cvar_Get( "cl_anglespeedkey", "1.5", CVAR_CHEAT );
 	Cvar_SetDescription( cl_anglespeedkey, "Set the speed that the direction keys (not mouse) change the view angle." );
 
-	cl_maxpackets = Cvar_Get( "cl_maxpackets", "125", CVAR_ARCHIVE | CVAR_CHEAT );
+	// QAA: retail CL_Init registers cl_maxpackets "100" (0x8210AAB8).
+	cl_maxpackets = Cvar_Get( "cl_maxpackets", "100", CVAR_ARCHIVE | CVAR_CHEAT );
 	Cvar_CheckRange( cl_maxpackets, "15", "125", CV_INTEGER );
 	Cvar_SetDescription( cl_maxpackets, "Set how many client packets are sent to the server per second, can't exceed \\com_maxFPS." );
 	cl_packetdup = Cvar_Get( "cl_packetdup", "1", CVAR_ARCHIVE_ND | CVAR_CLOUD );

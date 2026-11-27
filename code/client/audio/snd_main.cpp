@@ -613,7 +613,8 @@ extern "C" void S_Init( void )
 	}
 	si = {};
 
-	s_volume = Cvar_Get( "s_volume", "0.8", CVAR_ARCHIVE );
+	// QAA: retail S_Init registers s_volume "1.0" (0x82174958).
+	s_volume = Cvar_Get( "s_volume", "1.0", CVAR_ARCHIVE );
 	Cvar_CheckRange( s_volume, "0", "2", CV_FLOAT );
 	Cvar_SetDescription( s_volume, "Sets master volume for all game audio." );
 	// QAA: retail S_Init (0x82174978) and the Game Settings menu's reset both
