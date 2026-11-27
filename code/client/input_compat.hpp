@@ -1020,6 +1020,65 @@ private:
 	std::uint32_t pendingHighSurrogate_ = 0;
 };
 
+/*
+QAA: the pad's look stick, as Quake Arena Arcade turns it into the view.
+
+Retail's pad input (default.xex 0x82182A08) reads each stick axis, -32768 to
+32767 with up positive, as (raw + 0.5) / 32767.5, takes a dead zone of 0.24
+off its magnitude and stretches the rest back to 0..1. Once a frame it sends
+the look stick as a mouse motion of that times 32768 * in_joyBallScale (0.001)
+counts, truncated, y negated. CL_MouseMove (0x82104900) multiplies the counts
+by xSensitivity and ySensitivity and the cgame's zoom sensitivity (with
+cl_mouseAccel, 0 on the Xbox, adding nothing), scales the horizontal result
+by cl_mouseAccelLowScale up to 140 and by cl_mouseAccelHighScale above 145,
+and turns the view by m_yaw and m_pitch of it. The Xbox runs that 60 times a
+second; here a frame of any length turns the view by its share of 60.
+*/
+struct QaaPadLookParameters {
+	float xSensitivity = 5.0f;
+	float ySensitivity = 2.5f;
+	float lowScale = 0.5f;
+	float highScale = 1.25f;
+	float zoomSensitivity = 1.0f;	// cl.cgameSensitivity
+	float yaw = 0.022f;				// m_yaw
+	float pitch = 0.022f;			// m_pitch; negative inverts
+	float milliseconds = 0.0f;		// the frame's length
+};
+
+struct QaaPadLookDelta {
+	float yaw;
+	float pitch;
+};
+
+/* One stick axis, up or right positive, shaped as retail shapes it: -1..1. */
+inline float QaaPadStickShape( int raw ) noexcept
+{
+	const float value = ( static_cast<float>( raw ) + 0.5f ) * ( 1.0f / 32767.5f );
+	const float magnitude = ( std::fabs( value ) - 0.24f ) * ( 1.0f / 0.76f );
+	if ( !( magnitude > 0.0f ) ) {
+		return 0.0f;
+	}
+	return value >= 0.0f ? magnitude : -magnitude;
+}
+
+/* The view's turn in degrees for the look stick at (right, up) over a frame. */
+inline QaaPadLookDelta QaaPadLook(
+	int right, int up, const QaaPadLookParameters& p ) noexcept
+{
+	const float countsX = std::trunc( QaaPadStickShape( right ) * 32768.0f * 0.001f );
+	const float countsY = std::trunc( QaaPadStickShape( up ) * -32768.0f * 0.001f );
+	float yaw = p.xSensitivity * p.zoomSensitivity * countsX;
+	const float pitch = p.ySensitivity * p.zoomSensitivity * countsY;
+
+	if ( std::fabs( yaw ) <= 140.0f ) {
+		yaw *= p.lowScale;
+	} else if ( std::fabs( yaw ) > 145.0f ) {
+		yaw *= p.highScale;
+	}
+	const float frames = p.milliseconds * ( 60.0f / 1000.0f );
+	return { -p.yaw * yaw * frames, p.pitch * pitch * frames };
+}
+
 } // namespace fnql::input
 
 #endif // FNQL_INPUT_COMPAT_HPP

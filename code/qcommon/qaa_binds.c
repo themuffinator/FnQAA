@@ -92,18 +92,16 @@ const char QAA_PC_BINDINGS[] =
 	"bind KP_HOME \"follow 7\"\n"
 	"bind KP_UPARROW \"follow 8\"\n"
 	"bind KP_PGUP \"follow 9\"\n"
-	// Retail moves and looks with the sticks in the engine, unbound
-	// (cl_southpaw 0); the PC binds them, and in_joystickUseAnalog makes
-	// these binds analog.
-	"// QAA: PC deviation: the pad's sticks, which retail reads unbound\n"
+	// Retail moves and looks with the sticks in the engine, unbound. The
+	// look stick is read so here too (CL_PadLookMove, with xSensitivity,
+	// ySensitivity and m_pitch); the move stick, the left one unless
+	// cl_southpaw swaps them, is bound, and in_joystickUseAnalog makes these
+	// binds analog.
+	"// QAA: PC deviation: the pad's move stick, which retail reads unbound\n"
 	"bind PAD0_LEFTSTICK_UP +forward\n"
 	"bind PAD0_LEFTSTICK_DOWN +back\n"
 	"bind PAD0_LEFTSTICK_LEFT +moveleft\n"
-	"bind PAD0_LEFTSTICK_RIGHT +moveright\n"
-	"bind PAD0_RIGHTSTICK_UP +lookup\n"
-	"bind PAD0_RIGHTSTICK_DOWN +lookdown\n"
-	"bind PAD0_RIGHTSTICK_LEFT +left\n"
-	"bind PAD0_RIGHTSTICK_RIGHT +right\n";
+	"bind PAD0_LEFTSTICK_RIGHT +moveright\n";
 
 static int LowerAscii( int c ) {
 	return c >= 'A' && c <= 'Z' ? c + ( 'a' - 'A' ) : c;
@@ -163,7 +161,20 @@ static int IsBlank( char c ) {
  * at semicolons outside quotes, with // comments running to the end of the
  * line. A command whose first word is bind or unbind has its key renamed.
  */
-size_t QAA_RewritePadConfig( const char *text, char *out, size_t outSize ) {
+/* unbindall as the front end means it: every key of the pad (padKeys). */
+static void EmitPadUnbindAll( writer_t *w ) {
+	size_t i;
+
+	for ( i = 0; i < sizeof( padKeys ) / sizeof( padKeys[0] ); i++ ) {
+		if ( i ) {
+			Emit( w, ";", 1 );
+		}
+		Emit( w, "unbind ", 7 );
+		Emit( w, padKeys[i].pc, strlen( padKeys[i].pc ) );
+	}
+}
+
+static size_t Rewrite( const char *text, char *out, size_t outSize, int frontEnd ) {
 	writer_t w = { out, outSize, 0 };
 	const char *p = text ? text : "";
 	int start = 1;
@@ -187,6 +198,10 @@ size_t QAA_RewritePadConfig( const char *text, char *out, size_t outSize ) {
 				p++;
 			}
 			wordLen = (size_t)( p - word );
+			if ( frontEnd && WordIs( word, wordLen, "unbindall" ) ) {
+				EmitPadUnbindAll( &w );
+				continue;
+			}
 			Emit( &w, word, wordLen );
 			if ( !IsBlank( *p ) || !( WordIs( word, wordLen, "bind" ) || WordIs( word, wordLen, "unbind" ) ) ) {
 				continue;
@@ -237,4 +252,12 @@ size_t QAA_RewritePadConfig( const char *text, char *out, size_t outSize ) {
 		out[w.len < outSize ? w.len : outSize - 1] = '\0';
 	}
 	return w.len;
+}
+
+size_t QAA_RewritePadConfig( const char *text, char *out, size_t outSize ) {
+	return Rewrite( text, out, outSize, 0 );
+}
+
+size_t QAA_RewriteFrontEndCommands( const char *text, char *out, size_t outSize ) {
+	return Rewrite( text, out, outSize, 1 );
 }

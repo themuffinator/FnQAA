@@ -45,6 +45,14 @@ cycle (`python scripts/changelog.py clear-unreleased`).
   option's value steps it left or right. The right mouse button goes back,
   as B, and the wheel moves the selection. The pointer shows over the
   menus and the in-game menu, and the game keeps the mouse while you play.
+- The controller works as on the console: the right stick looks around
+  with the X and Y Sensitivity, Invert Look and Lefty settings of
+  Help & Options, Controls, and the controller vibrates when you fire or
+  take damage unless Vibration is off. The look stick no longer needs
+  binds.
+- Control Scheme binds the controller's buttons without touching the
+  keyboard or mouse: choosing a button no longer rebinds the mouse
+  buttons or arrow keys, and Clear All clears only the controller.
 
 ### Rendering and Display
 - The menus and HUD show at any resolution. Above 2048 pixels wide (for
@@ -69,6 +77,10 @@ cycle (`python scripts/changelog.py clear-unreleased`).
   the same time.
 - The console no longer opens over the menus at start-up and stays stuck
   there; it starts closed and opens and closes with the console key.
+- New players start as James with a red rail, as on the console, and the
+  menus' settings start at the console's defaults (weapon autoswitch on,
+  music at 0.6). The White rail colour in Player Settings can now be
+  chosen, and the HUD places its kill messages for widescreen displays.
 - Select Model now shows every character's portrait, and Change
   Arena/Gametype lists the arenas by name with their level shots,
   suggested players and items; both lists were empty. Run setup again

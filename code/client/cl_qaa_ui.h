@@ -31,6 +31,11 @@ bool QAA_UI_Init( void );
 void QAA_UI_Shutdown( void );
 bool QAA_UI_Active( void );
 
+/* Whether a video mode is "widescreen" for QAA: 16:9 or wider. The front
+ * end's glconfig flag (movie viewports) and r_widescreen (the HUD's layout)
+ * both follow it. */
+bool QAA_UI_IsWidescreen( int width, int height );
+
 /* The console region the front end is told (XGetLocale's country code),
  * two lower-case letters: qaa_country if set, else the operating system's
  * region, else "us". */

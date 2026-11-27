@@ -26,7 +26,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <array>
+#include <utility>
 #include <cmath>
 #include <cstring>
 
@@ -78,6 +80,8 @@ static cvar_t *j_yaw_axis;
 static cvar_t *j_forward_axis;
 static cvar_t *j_side_axis;
 static cvar_t *j_up_axis;
+
+static cvar_t *cl_southpaw;	// QAA: the sticks swapped (cl_input.cpp)
 #endif
 
 #define Com_QueueEvent Sys_QueEvent
@@ -1080,9 +1084,12 @@ struct joystickState_t {
 	int oldTranslatedAxes[MAX_JOYSTICK_AXIS];
 	qboolean gamepadDigitalDirections[SDL_GAMEPAD_AXIS_COUNT * 2];
 	unsigned int oldhats;
+	int oldLook[2];		// QAA: the look stick as last sent (AXIS_YAW, AXIS_PITCH)
 };
 
 static joystickState_t stick_state;
+
+static void IN_UpdatePadRumble( void );	// QAA
 
 static void IN_CloseJoystickHandles( void )
 {
@@ -1099,6 +1106,12 @@ static void IN_CloseJoystickHandles( void )
 	}
 
 	stickInstance = 0;
+	// QAA: the look stick is a held position (cl.joystickAxis); centre it
+	// when the pad goes, or the view would keep turning
+	if ( stick_state.oldLook[0] || stick_state.oldLook[1] ) {
+		Com_QueueEvent( Sys_Milliseconds(), SE_JOYSTICK_AXIS, AXIS_YAW, 0, 0, NULL );
+		Com_QueueEvent( Sys_Milliseconds(), SE_JOYSTICK_AXIS, AXIS_PITCH, 0, 0, NULL );
+	}
 	stick_state = {};
 }
 
@@ -1183,6 +1196,8 @@ static void IN_InitJoystick( void )
 
 	in_joystickUseAnalog = Cvar_Get(
 		"in_joystickUseAnalog", "0", CVAR_ARCHIVE | CVAR_LATCH );
+	// QAA: registered as CL_InitInput registers it
+	cl_southpaw = Cvar_Get( "cl_southpaw", "0", CVAR_ARCHIVE );
 	Cvar_SetDescription( in_joystickUseAnalog,
 		"Do not translate joystick axis events to keyboard commands. "
 		"Changes take effect after an input restart." );
@@ -1361,6 +1376,35 @@ static void IN_GamepadMove( void )
 	}
 
 	/*
+	QAA: retail reads the sticks without binds (its pad input, 0x82182A08):
+	one moves and the other looks, the right one unless cl_southpaw swaps
+	them. The move stick drives the PAD0_LEFTSTICK_* keys whichever stick it
+	is, and the look stick sends no keys: its raw position goes to the client
+	as AXIS_YAW and AXIS_PITCH, which turns it into the view with retail's
+	dead zone, xSensitivity and ySensitivity (CL_PadLookMove). The look
+	stick's Y is SDL's, down positive.
+	*/
+	{
+		const qboolean southpaw = cl_southpaw->integer ? qtrue : qfalse;
+		const SDL_GamepadAxis lookX = southpaw ? SDL_GAMEPAD_AXIS_LEFTX : SDL_GAMEPAD_AXIS_RIGHTX;
+		const SDL_GamepadAxis lookY = southpaw ? SDL_GAMEPAD_AXIS_LEFTY : SDL_GAMEPAD_AXIS_RIGHTY;
+		const int look[2] = { SDL_GetGamepadAxis( gamepad, lookX ), SDL_GetGamepadAxis( gamepad, lookY ) };
+
+		if ( southpaw ) {
+			std::swap( physicalAxes[SDL_GAMEPAD_AXIS_LEFTX], physicalAxes[SDL_GAMEPAD_AXIS_RIGHTX] );
+			std::swap( physicalAxes[SDL_GAMEPAD_AXIS_LEFTY], physicalAxes[SDL_GAMEPAD_AXIS_RIGHTY] );
+		}
+		physicalAxes[SDL_GAMEPAD_AXIS_RIGHTX] = 0;
+		physicalAxes[SDL_GAMEPAD_AXIS_RIGHTY] = 0;
+		for ( i = 0; i < 2; ++i ) {
+			if ( look[i] != stick_state.oldLook[i] ) {
+				Com_QueueEvent( in_eventTime, SE_JOYSTICK_AXIS, i ? AXIS_PITCH : AXIS_YAW, look[i], 0, NULL );
+				stick_state.oldLook[i] = look[i];
+			}
+		}
+	}
+
+	/*
 	Recompute every translated output from the complete physical snapshot.
 	Bindings may change while an axis is held, and multiple physical axes may
 	target the same output; greatest magnitude gives deterministic aggregation.
@@ -1498,6 +1542,7 @@ static void IN_JoyMove( void )
 	if (gamepad)
 	{
 		IN_GamepadMove();
+		IN_UpdatePadRumble();	// QAA: a motor whose time is up stops
 		return;
 	}
 
@@ -1648,7 +1693,66 @@ static void IN_JoyMove( void )
 	/* Save for future generations. */
 	stick_state.oldaxes = axes;
 }
+
+
+/*
+QAA: the pad's two motors as the cgame drives them (IN_PadRumble). Retail
+(0x82183C20) keeps a speed and a time for each, so one can stop before the
+other; SDL takes one time for both, so the pair is sent again whenever a
+motor stops.
+*/
+static struct {
+	Uint16 speed[2];	// low (left) and high (right) frequency
+	int end[2];			// Sys_Milliseconds
+	Uint16 sent[2];
+	qboolean pending;	// a new pulse, sent even at the same speeds
+} padRumble;
+
+static void IN_UpdatePadRumble( void )
+{
+	const int now = Sys_Milliseconds();
+	Uint16 speed[2];
+	int remaining = 0;
+
+	for ( int i = 0; i < 2; ++i ) {
+		const int left = padRumble.end[i] - now;
+		speed[i] = left > 0 ? padRumble.speed[i] : 0;
+		if ( left > remaining && speed[i] ) {
+			remaining = left;
+		}
+	}
+	if ( !padRumble.pending && speed[0] == padRumble.sent[0] && speed[1] == padRumble.sent[1] ) {
+		return;
+	}
+	padRumble.pending = qfalse;
+	padRumble.sent[0] = speed[0];
+	padRumble.sent[1] = speed[1];
+	if ( gamepad ) {
+		SDL_RumbleGamepad( gamepad, speed[0], speed[1], static_cast<Uint32>( remaining ) );
+	}
+}
 #endif  // USE_JOYSTICK
+
+
+void IN_PadRumble( int leftPercent, int leftMsec, int rightPercent, int rightMsec )
+{
+#ifdef USE_JOYSTICK
+	const int percent[2] = { leftPercent, rightPercent };
+	const int msec[2] = { leftMsec, rightMsec };
+	const int now = Sys_Milliseconds();
+
+	for ( int i = 0; i < 2; ++i ) {
+		// retail: percent clamped to 0..100, then percent * 0xFFFF / 100
+		const int p = std::clamp( percent[i], 0, 100 );
+		padRumble.speed[i] = static_cast<Uint16>( p * 0xFFFF / 100 );
+		padRumble.end[i] = now + std::clamp( msec[i], 0, 0xFFFF );
+	}
+	padRumble.pending = qtrue;
+	IN_UpdatePadRumble();
+#else
+	(void)leftPercent; (void)leftMsec; (void)rightPercent; (void)rightMsec;
+#endif
+}
 
 
 

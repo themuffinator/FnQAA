@@ -40,8 +40,17 @@ int QAA_IsPadConfig( const char *filename );
  */
 size_t QAA_RewritePadConfig( const char *text, char *out, size_t outSize );
 
+/*
+ * The same for command text from the front end (its FSCommand "qcmd": the
+ * Custom Controls menu binds the pad under the retail names, as its
+ * keybind_btn_* cvars hold them). Its unbindall, which clears the Xbox's
+ * only bindings, the pad's, unbinds the pad's keys alone, so the keyboard,
+ * the mouse and the sticks keep theirs.
+ */
+size_t QAA_RewriteFrontEndCommands( const char *text, char *out, size_t outSize );
+
 /* What default.cfg runs after QAA's own text: Quake Live's keyboard and mouse
- * defaults, and the pad's sticks. */
+ * defaults, and the pad's move stick (the look stick is read unbound). */
 extern const char QAA_PC_BINDINGS[];
 
 #ifdef __cplusplus

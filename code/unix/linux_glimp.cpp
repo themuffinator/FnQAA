@@ -3646,6 +3646,12 @@ void IN_Init( void )
 }
 
 
+/* QAA: the cgame's pad vibration (client.h); this layer has no gamepad. */
+void IN_PadRumble( int leftPercent, int leftMsec, int rightPercent, int rightMsec ) {
+	(void)leftPercent; (void)leftMsec; (void)rightPercent; (void)rightMsec;
+}
+
+
 void IN_Shutdown( void )
 {
 #ifdef USE_JOYSTICK

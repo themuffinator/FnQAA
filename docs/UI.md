@@ -191,6 +191,78 @@ id 4). The cgame's traps 116-140 are handled as retail's
 (0x82130438) does; the server hands them to the client through
 `QAA_SV_GameUiTrap`, so a dedicated server keeps retail's return values.
 
+## Cvars, binds and commands the menus use
+
+**code** The movies reach the engine through `FgApi.setCvar` (an
+`FSCommand:setCvar`), `getCvarString`, `getCvarValue` and
+`getFeederIndexByCvar`, and run commands with `FSCommand:qcmd`. Most cvar
+names sit in the movies' code; the settings screens' components carry
+theirs as component parameters (`cvar`, with the value list in
+`dataValue`). Every name the 48 movies use was checked against a headless
+client's `cvarlist` (**observed**). Each one retail's engine registers now
+exists with retail's default:
+
+- `CL_Init` (0x8210A860): `xSensitivity` 5, `ySensitivity` 2.5,
+  `cl_southpaw` 0, `cl_vibration` 1, `cl_mouseAccelLowScale` 0.5,
+  `cl_mouseAccelHighScale` 1.25, the leaderboard filters, and the Custom
+  control scheme's 14 `keybind_btn_<action>_custom` (retail pad key names).
+  `model` and `headmodel` start as `james` (ui_modelIndex 22),
+  `cg_autoswitch` as 1, `color1` and `color2` as 4 and 5, without Quake
+  Live's [1, 26] bounds (the rail colours are 0 to 6).
+- `GLimp_Init` (0x8213D6E8): `r_HoldFrame` (every movie sets it; nothing
+  reads it), `r_widescreen` and `r_videowidth`, which the HUD reads to place
+  its obituaries. `r_widescreen` is the front end's glconfig flag (16:9 or
+  wider).
+- `S_Init` (0x82174978): `s_musicVolume` 0.6.
+- The Live start-up and lobby: `xb_liveConnected`, `xb_isInParty`,
+  `xb_primaryLiveConnected`, `xb_signinRunning` (0, ROM) and
+  `ui_inServerBrowser`.
+
+The rest (`ui_pleasewaitCaption`, `keybind_btn_<action>`,
+`cg_forcemodelTemp` and others) are created by the movies' own `setCvar`,
+as on the console. `ui_ControlScheme` picks a file in `controlschemes/`
+(default, basic, dmertz, sniper), which the Controls screen runs with
+`exec controlschemes\<name>.cfg`, so its keys are renamed as `default.cfg`'s
+are (`qaa_binds.h`).
+
+The Custom Controls screen (`customcontrols.gfx`) binds the pad itself:
+`bind <key> "<action>"` and `unbind <key>` with retail key names (JOY1..JOY10,
+MOUSE1 and MOUSE2 for the triggers, the arrows for the D-pad), and Clear All
+sends `unbindall;`, then binds Back and the right trigger again. PC
+deviation: the front end's command text is rewritten as it reaches the
+command buffer (`H_Cbuf_AddText`, `QAA_RewriteFrontEndCommands`): the keys
+take the pad's PC names, and `unbindall` unbinds the pad's buttons only.
+Sent unchanged, the scheme's binds that opening the screen sends would bind
+the PC's mouse buttons and arrow keys, and Clear All would remove every
+binding, Escape and the console key included. **observed**: after opening
+the screen, binding Next Weapon to X and Clear All, `bindlist` shows the
+pad's binds on `PAD0_*` and the keyboard's and mouse's unchanged.
+
+The settings screens' cvars act as on the console:
+
+- **The look stick.** Retail reads both sticks without binds (its pad
+  input, 0x82182A08): the move stick, and the look stick, sent as a mouse
+  motion that `CL_MouseMove` (0x82104900) scales by `xSensitivity` and
+  `ySensitivity` and turns by `m_yaw` and `m_pitch` (Invert Look sets it to
+  -0.022). `cl_southpaw` swaps the sticks. FnQAA's SDL layer sends the look
+  stick's position as joystick axes `AXIS_YAW` and `AXIS_PITCH` and
+  `CL_PadLookMove` turns it with the same dead zone, counts and scales
+  (`fnql::input::QaaPadLook`), the 60 Hz frames of the Xbox spread over the
+  PC's frame time. PC deviation: the move stick keeps its binds
+  (`PAD0_LEFTSTICK_*`, whichever stick moves), and the look stick has none.
+- **Vibration.** The cgame's trap 113 (user, left %, left ms, right %, right
+  ms) vibrates the pad (SDL's rumble) while `cl_vibration` and
+  `sys_titleFocused` are set, as retail's 0x82183C20 does with the
+  profile's setting; trap 112 stops it.
+- Sound, music and brightness are `s_volume`, `s_musicvolume` and
+  `r_gamma`; Zoom is the cgame's `cg_zoomToggle`.
+
+`ready`, `startgame` and `qnet_disconnect` (the lobby's, from `qcmd`) are
+retail's session layer and have no PC command yet
+([NETWORK.md](NETWORK.md)). Retail has no `pause` command either: the
+schemes bind Start to it, and the engine takes Start for the in-game menu
+first.
+
 ## The renderer back end
 
 **code** GFx 2.x's `GRenderer` (SFUI's, vtable 0x820CB800) records commands
@@ -280,6 +352,8 @@ the bare name).
 | Update and render overlap on two threads | one thread | |
 | GPU replay | software rasteriser | |
 | No mouse | the pointer selects, A on a click, B on the right button, the wheel as up and down; sliders take the pointer's place on the track ([the mouse](#frames-input-and-events)) | `RunPointerEvents`, `Key_GetPointerCatcher` |
+| The pad is the only bindable device; the front end binds it under JOY1..JOY10, MOUSE1/2 and the arrows, and its `unbindall` clears it | the front end's commands take the pad's PC key names, and its `unbindall` clears the pad's buttons only ([the menus' binds](#cvars-binds-and-commands-the-menus-use)) | `H_Cbuf_AddText`, `QAA_RewriteFrontEndCommands` |
+| The move stick is read without binds | it drives `PAD0_LEFTSTICK_*` (whichever stick moves); the look stick is read without binds, as retail | `IN_GamepadMove`, `CL_PadLookMove` |
 
 ## Testing
 
@@ -371,6 +445,10 @@ synthetic data. It needs no retail files.
   code) takes about 1.5-3 ms a frame; retail overlapped it with rendering,
   FnQAA runs it with the engine waiting. A GPU replay would replace the
   rasteriser.
-- Rumble (`stopVibration`) and XAM import 752 are unimplemented.
+- The menus' `stopVibration` (0x82190B18) goes to the recompiled XAM
+  helper (0x821F2468) and does not reach the pad; the cgame's rumble does
+  (its pulses last 100 to 400 ms). XAM import 752 is unimplemented. The
+  pad's look and vibration are tested on synthetic values only
+  (`fnqaa_input_compat`); headless runs have no pad.
 - The engine's own feeders (traps 0x6F and 0x70: the Live lists) answer
   nothing.

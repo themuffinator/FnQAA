@@ -3887,6 +3887,15 @@ static void CL_InitRenderer( void ) {
 		Cvar_Set2( "r_lastValidRenderer", cls.glconfig.renderer_string, qtrue );
 	}
 	Cvar_Set2( "r_stereo", Cvar_VariableIntegerValue( "r_stereoEnabled" ) ? "1" : "0", qtrue );
+	// QAA: retail GLimp_Init (0x8213D6E8) registers r_HoldFrame ("0", read by
+	// nothing; every movie sets it to 1 as it loads), and publishes the mode
+	// as r_widescreen (ROM) and r_videowidth, which the HUD reads to place its
+	// obituaries.
+	Cvar_Get( "r_HoldFrame", "0", 0 );
+	Cvar_Get( "r_widescreen", "0", CVAR_ROM );
+	Cvar_Get( "r_videowidth", "1280", 0 );
+	Cvar_Set2( "r_widescreen", QAA_UI_IsWidescreen( cls.glconfig.vidWidth, cls.glconfig.vidHeight ) ? "1" : "0", qtrue );
+	Cvar_Set2( "r_videowidth", va( "%d", cls.glconfig.vidWidth ), qtrue );
 	retailWindowedModeModificationCount = r_windowedMode->modificationCount;
 	retailWindowedWidthModificationCount = r_windowedWidth->modificationCount;
 	retailWindowedHeightModificationCount = r_windowedHeight->modificationCount;
@@ -4889,7 +4898,9 @@ void CL_Init( void ) {
 
 	// init cg_autoswitch so the ui will have it correctly even
 	// if the cgame hasn't been started
-	Cvar_Get ("cg_autoswitch", "0", CVAR_ARCHIVE);
+	// QAA: retail CL_Init (0x8210AC70) registers it as "1", so new weapons
+	// are switched to, as the Player Settings menu shows by default.
+	Cvar_Get ("cg_autoswitch", "1", CVAR_ARCHIVE);
 
 	cl_motdString = Cvar_Get( "cl_motdString", "", CVAR_ROM );
 	Cvar_SetDescription( cl_motdString, "Message of the day string from id's master server, it is a read only variable." );
@@ -4935,20 +4946,19 @@ void CL_Init( void ) {
 	Cvar_Get ("name", "UnnamedPlayer", CVAR_USERINFO | CVAR_ARCHIVE_ND );
 	Cvar_Get ("rate", "25000", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get ("snaps", "40", CVAR_USERINFO | CVAR_ARCHIVE );
-	Cvar_Get ("model", "sarge", CVAR_USERINFO | CVAR_ARCHIVE_ND );
-	Cvar_Get ("headmodel", "sarge", CVAR_USERINFO | CVAR_ARCHIVE_ND );
+	// QAA: retail CL_Init (0x8210AED0, 0x8210AEE4) starts the player as James,
+	// the model ui_modelIndex 22 selects in the Select Model grid.
+	Cvar_Get ("model", "james", CVAR_USERINFO | CVAR_ARCHIVE_ND );
+	Cvar_Get ("headmodel", "james", CVAR_USERINFO | CVAR_ARCHIVE_ND );
  	Cvar_Get ("team_model", "sarge", CVAR_USERINFO | CVAR_ARCHIVE_ND );
 	Cvar_Get ("team_headmodel", "sarge", CVAR_USERINFO | CVAR_ARCHIVE_ND );
 //	Cvar_Get ("g_redTeam", "Stroggs", CVAR_SERVERINFO | CVAR_ARCHIVE);
 //	Cvar_Get ("g_blueTeam", "Pagans", CVAR_SERVERINFO | CVAR_ARCHIVE);
-	// Retail registers the two rail colors as "7" and "25", each bounded to
-	// [1, 26] with flags 0x81803 (quakelive_steam.exe 0x4bcb44, 0x4bcb62), and
-	// teamtask "0" as a userinfo key. Quake III's 4 and 5 gave a new FnQL
-	// player different rail colors from a new retail player.
-	Cvar_CheckRange( Cvar_Get( "color1", "7", CVAR_USERINFO | CVAR_ARCHIVE | CVAR_PROTECTED | CVAR_CLOUD ),
-		"1", "26", CV_INTEGER );
-	Cvar_CheckRange( Cvar_Get( "color2", "25", CVAR_USERINFO | CVAR_ARCHIVE | CVAR_PROTECTED | CVAR_CLOUD ),
-		"1", "26", CV_INTEGER );
+	// QAA: retail CL_Init registers the rail colours as Quake III's "4" and
+	// "5" (0x8210AEFC, 0x8210AF10) without Quake Live's [1, 26] bounds: the
+	// Player Settings menu's rail colours are 0 (white) to 6 (rtr_railColor).
+	Cvar_Get( "color1", "4", CVAR_USERINFO | CVAR_ARCHIVE );
+	Cvar_Get( "color2", "5", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get ("handicap", "100", CVAR_USERINFO | CVAR_ARCHIVE_ND );
 	Cvar_Get( "teamtask", "0", CVAR_USERINFO );
 	Cvar_Get ("sex", "male", CVAR_USERINFO | CVAR_ARCHIVE_ND );
@@ -4965,6 +4975,37 @@ void CL_Init( void ) {
 	// cgame might not be initialized before menu is used
 	Cvar_Get ("cg_viewsize", "100", CVAR_ARCHIVE_ND );
 	Cvar_Get ("cg_stereoSeparation", "0.4", CVAR_ARCHIVE);
+
+	// QAA: the rest of retail CL_Init's cvars that the menus read and write.
+	// The leaderboard filters (0x8210AE2C..0x8210AE54) are the Leaderboards
+	// menu's. Each custom pad binding (0x8210AF8C..0x8210B0C4) holds the
+	// retail key name (JOY1..JOY10, MOUSE1, MOUSE2, the arrows: qaa_binds.h)
+	// of one action of the Custom control scheme; the Custom Controls menu
+	// copies them in and out of keybind_btn_<action> as the scheme changes.
+	Cvar_Get( "ui_leaderboardFilter", "0", 0 );
+	Cvar_Get( "ui_leaderboardGametype", "0", 0 );
+	Cvar_Get( "ui_leaderboardTimeFilter", "0", 0 );
+	{
+		static const char *const customPadBinds[][2] = {
+			{ "keybind_btn_jump_custom", "MOUSE2" },
+			{ "keybind_btn_nextWeapon_custom", "JOY4" },
+			{ "keybind_btn_prevWeapon_custom", "JOY3" },
+			{ "keybind_btn_useItem_custom", "JOY6" },
+			{ "keybind_btn_spin180_custom", "JOY2" },
+			{ "keybind_btn_zoom_custom", "JOY5" },
+			{ "keybind_btn_lastWeapon_custom", "JOY1" },
+			{ "keybind_btn_heavy_custom", "UPARROW" },
+			{ "keybind_btn_close_custom", "RIGHTARROW" },
+			{ "keybind_btn_finisher_custom", "DOWNARROW" },
+			{ "keybind_btn_crouch_custom", "JOY9" },
+			{ "keybind_btn_centerView_custom", "JOY10" },
+			{ "keybind_btn_railgun_custom", "LEFTARROW" },
+			{ "keybind_btn_gauntlet_custom", "unused" },
+		};
+		for ( const auto &bind : customPadBinds ) {
+			Cvar_Get( bind[0], bind[1], CVAR_ARCHIVE );
+		}
+	}
 
 	//
 	// register client commands

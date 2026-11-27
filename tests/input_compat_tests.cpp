@@ -593,8 +593,51 @@ void TestFiniteInputConversions()
 
 } // namespace
 
+// QAA: the pad's look stick, as retail's pad input and CL_MouseMove turn it.
+void TestQaaPadLook()
+{
+	using fnql::input::QaaPadLook;
+	using fnql::input::QaaPadLookParameters;
+	using fnql::input::QaaPadStickShape;
+
+	CHECK( Near( QaaPadStickShape( 32767 ), 1.0f ) );
+	CHECK( Near( QaaPadStickShape( -32768 ), -1.0f ) );
+	CHECK( QaaPadStickShape( 0 ) == 0.0f );
+	CHECK( QaaPadStickShape( 7000 ) == 0.0f );	// inside the 0.24 dead zone
+	CHECK( QaaPadStickShape( -7000 ) == 0.0f );
+	CHECK( Near( QaaPadStickShape( 16384 ), ( 16384.5f / 32767.5f - 0.24f ) / 0.76f ) );
+
+	QaaPadLookParameters p;
+	p.milliseconds = 1000.0f / 60.0f;	// one retail frame
+	// full right: 32 counts, 5 x 32 = 160, past 145 so x 1.25, m_yaw 0.022
+	CHECK( Near( QaaPadLook( 32767, 0, p ).yaw, -4.4f ) );
+	CHECK( Near( QaaPadLook( -32768, 0, p ).yaw, 4.4f ) );
+	CHECK( QaaPadLook( 32767, 0, p ).pitch == 0.0f );
+	// half right: 11 counts, 55, under 140 so x 0.5
+	CHECK( Near( QaaPadLook( 16384, 0, p ).yaw, -0.022f * 27.5f ) );
+	// xSensitivity 4.5: 144, between 140 and 145, unscaled
+	p.xSensitivity = 4.5f;
+	CHECK( Near( QaaPadLook( 32767, 0, p ).yaw, -0.022f * 144.0f ) );
+	p.xSensitivity = 5.0f;
+	// full up looks up (pitch falls) by ySensitivity 2.5 x 32 counts;
+	// m_pitch -0.022 (Invert Y Look) turns it the other way
+	CHECK( Near( QaaPadLook( 0, 32767, p ).pitch, -0.022f * 80.0f ) );
+	p.pitch = -0.022f;
+	CHECK( Near( QaaPadLook( 0, 32767, p ).pitch, 0.022f * 80.0f ) );
+	p.pitch = 0.022f;
+	// the cgame's zoom sensitivity comes before the scales
+	p.zoomSensitivity = 0.5f;
+	CHECK( Near( QaaPadLook( 32767, 0, p ).yaw, -0.022f * 40.0f ) );
+	p.zoomSensitivity = 1.0f;
+	// a second of frames turns as 60 retail frames: 264 degrees at full right
+	p.milliseconds = 1000.0f;
+	CHECK( Near( QaaPadLook( 32767, 0, p ).yaw, -264.0f, 0.01f ) );
+	CHECK( QaaPadLook( 7000, -7000, p ).yaw == 0.0f );
+}
+
 int main()
 {
+	TestQaaPadLook();
 	TestRetailGameplayCatcher();
 	TestDeferredInputCommandGenerationHelpers();
 	TestPointerOwnership();

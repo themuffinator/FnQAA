@@ -109,6 +109,48 @@ static void TestTruncation(void) {
 	CHECK(QAA_RewritePadConfig(NULL, small, sizeof(small)) == 0 && small[0] == '\0');
 }
 
+static const char *RewriteFrontEnd(const char *text) {
+	const size_t len = QAA_RewriteFrontEndCommands(text, NULL, 0);
+	CHECK(len < sizeof(out));
+	CHECK(QAA_RewriteFrontEndCommands(text, out, sizeof(out)) == len);
+	CHECK(strlen(out) == len);
+	return out;
+}
+
+#define FRONT_END_REWRITES(in, expected) do { \
+	const char *got = RewriteFrontEnd(in); \
+	if (strcmp(got, expected) != 0) { \
+		fprintf(stderr, "%s:%d: '%s' became '%s', expected '%s'\n", __FILE__, __LINE__, in, got, expected); \
+		failures++; \
+	} \
+} while (0)
+
+#define PAD_UNBIND_ALL "unbind PAD0_SOUTH;unbind PAD0_EAST;unbind PAD0_WEST;unbind PAD0_NORTH;" \
+	"unbind PAD0_LEFTSHOULDER;unbind PAD0_RIGHTSHOULDER;unbind PAD0_BACK;unbind PAD0_START;" \
+	"unbind PAD0_LEFTSTICK_CLICK;unbind PAD0_RIGHTSTICK_CLICK;unbind PAD0_RIGHTTRIGGER;" \
+	"unbind PAD0_LEFTTRIGGER;unbind PAD0_DPAD_UP;unbind PAD0_DPAD_DOWN;unbind PAD0_DPAD_LEFT;" \
+	"unbind PAD0_DPAD_RIGHT"
+
+/* The Custom Controls menu's commands (customcontrols.gfx: completeSetKeyBind,
+ * unbindButton, unbindAll), as its FSCommand qcmd sends them. */
+static void TestFrontEndCommands(void) {
+	FRONT_END_REWRITES("bind JOY1 \"+moveup;+button11\";", "bind PAD0_SOUTH \"+moveup;+button11\";");
+	FRONT_END_REWRITES("bind MOUSE2 \"+zoom\";", "bind PAD0_LEFTTRIGGER \"+zoom\";");
+	FRONT_END_REWRITES("bind UPARROW \"vstr heavyweapons\";", "bind PAD0_DPAD_UP \"vstr heavyweapons\";");
+	FRONT_END_REWRITES("unbind JOY10;", "unbind PAD0_RIGHTSTICK_CLICK;");
+	FRONT_END_REWRITES("unbindall;", PAD_UNBIND_ALL ";");
+	FRONT_END_REWRITES("unbindall", PAD_UNBIND_ALL);
+	FRONT_END_REWRITES("UNBINDALL\n", PAD_UNBIND_ALL "\n");
+	FRONT_END_REWRITES("bind JOY7 scores;", "bind PAD0_BACK scores;");
+	FRONT_END_REWRITES("exec controlschemes\\sniper.cfg", "exec controlschemes\\sniper.cfg");
+	FRONT_END_REWRITES("disconnect;qnet_disconnect;", "disconnect;qnet_disconnect;");
+	FRONT_END_REWRITES("set closecombat \"weapon 11;unbindall\" ", "set closecombat \"weapon 11;unbindall\" ");
+	FRONT_END_REWRITES("unbindallx", "unbindallx");
+	/* an exec'd config keeps its own unbindall, which default.cfg follows
+	 * with the keyboard's and the mouse's binds */
+	REWRITES("unbindall;", "unbindall;");
+}
+
 /* Quake Live's keyboard and mouse defaults, with QAA's commands. */
 static void TestPcBindings(void) {
 	CHECK(strstr(QAA_PC_BINDINGS, "bind w +forward\n") != NULL);
@@ -117,6 +159,7 @@ static void TestPcBindings(void) {
 	CHECK(strstr(QAA_PC_BINDINGS, "bind f lastweap\n") != NULL);
 	CHECK(strstr(QAA_PC_BINDINGS, "bind KP_PGUP \"follow 9\"\n") != NULL);
 	CHECK(strstr(QAA_PC_BINDINGS, "bind PAD0_LEFTSTICK_UP +forward\n") != NULL);
+	CHECK(strstr(QAA_PC_BINDINGS, "PAD0_RIGHTSTICK") == NULL);	/* the look stick is unbound */
 	CHECK(strstr(QAA_PC_BINDINGS, "drop") == NULL);
 	CHECK(strstr(QAA_PC_BINDINGS, "weapon 14") == NULL);
 	CHECK(strstr(QAA_PC_BINDINGS, "JOY") == NULL);
@@ -131,6 +174,7 @@ int main(void) {
 	TestUntouched();
 	TestCommandSplitting();
 	TestTruncation();
+	TestFrontEndCommands();
 	TestPcBindings();
 	if (failures) {
 		fprintf(stderr, "%d failure(s)\n", failures);

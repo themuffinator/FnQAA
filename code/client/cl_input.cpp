@@ -114,6 +114,13 @@ static cvar_t *m_side;
 static cvar_t *m_filter;
 static cvar_t *m_cpi;
 
+// QAA: the pad's look (CL_PadLookMove) and rumble, as retail CL_Init
+// registers them
+static cvar_t *cl_xSensitivity;
+static cvar_t *cl_ySensitivity;
+static cvar_t *cl_padLookLowScale;
+static cvar_t *cl_padLookHighScale;
+
 static fnql::input::RetailViewAngleFilter retailMouseFilter;
 static ScopedFileHandle mouseAccelDebugLog;
 static bool mouseAccelDebugOpenFailed;
@@ -907,6 +914,43 @@ static void CL_RetailMouseMove( usercmd_t *cmd ) {
 
 /*
 =================
+CL_PadLookMove
+
+QAA: the pad's look stick, which retail reads without binds. sdl_input.cpp
+sends its position as AXIS_YAW (right positive) and AXIS_PITCH (SDL's, down
+positive); it turns the view as retail's pad input and CL_MouseMove turn it
+(fnql::input::QaaPadLook), with the Controller Settings menu's xSensitivity,
+ySensitivity and "invert Y" (m_pitch). It reaches the view only where
+retail's mouse motion would: in a game with no menu, cgame or console
+holding the input.
+=================
+*/
+static void CL_PadLookMove( void ) {
+	const int right = cl.joystickAxis[AXIS_YAW];
+	const int down = cl.joystickAxis[AXIS_PITCH];
+
+	if ( ( !right && !down ) || ( Key_GetCatcher() & ~KEYCATCH_RETAIL_MOUSEPASS ) ) {
+		return;
+	}
+	fnql::input::QaaPadLookParameters parameters;
+	parameters.xSensitivity = cl_xSensitivity->value;
+	parameters.ySensitivity = cl_ySensitivity->value;
+	parameters.lowScale = cl_padLookLowScale->value;
+	parameters.highScale = cl_padLookHighScale->value;
+	parameters.zoomSensitivity = cl.cgameSensitivity;
+	parameters.yaw = m_yaw->value;
+	parameters.pitch = m_pitch->value;
+	parameters.milliseconds = static_cast<float>( frame_msec );
+	// SDL negates XInput's Y as -1 - y; undo it for retail's up-positive axis
+	const fnql::input::QaaPadLookDelta turn = fnql::input::QaaPadLook(
+		right, std::clamp( -1 - down, -32768, 32767 ), parameters );
+	CL_AddViewAngleDelta( YAW, turn.yaw );
+	CL_AddViewAngleDelta( PITCH, turn.pitch );
+}
+
+
+/*
+=================
 CL_MouseMove
 =================
 */
@@ -1176,6 +1220,9 @@ static usercmd_t CL_CreateCmd( void ) {
 
 	// get basic movement from joystick
 	CL_JoystickMove( &cmd );
+
+	// QAA: the pad's look stick
+	CL_PadLookMove();
 
 	// check to make sure the angles haven't wrapped
 	if ( cl.viewangles[PITCH] - oldAngles[PITCH] > 90 ) {
@@ -1636,6 +1683,21 @@ void CL_InitInput( void ) {
 	m_cpi = Cvar_Get( "m_cpi", "0", CVAR_ARCHIVE | CVAR_PROTECTED | CVAR_CLOUD );
 	Cvar_CheckRange( m_cpi, "0", "100000", CV_FLOAT );
 	Cvar_SetDescription( m_cpi, "Physical mouse counts per inch for Quake Live input normalization; zero preserves count-based input." );
+
+	// QAA: the pad, as retail CL_Init registers it (0x8210AB3C..0x8210AD2C).
+	// The Controller Settings menu sets the look sensitivities (4.5 to 7.5,
+	// 1 to 7), "invert Y" (m_pitch), "southpaw" and vibration.
+	cl_xSensitivity = Cvar_Get( "xSensitivity", "5", CVAR_ARCHIVE );
+	Cvar_SetDescription( cl_xSensitivity, "The controller's horizontal look sensitivity." );
+	cl_ySensitivity = Cvar_Get( "ySensitivity", "2.5", CVAR_ARCHIVE );
+	Cvar_SetDescription( cl_ySensitivity, "The controller's vertical look sensitivity." );
+	cl_padLookLowScale = Cvar_Get( "cl_mouseAccelLowScale", "0.5", 0 );
+	Cvar_SetDescription( cl_padLookLowScale, "Scales the controller's slower horizontal look (QAA's name)." );
+	cl_padLookHighScale = Cvar_Get( "cl_mouseAccelHighScale", "1.25", 0 );
+	Cvar_SetDescription( cl_padLookHighScale, "Scales the controller's fastest horizontal look (QAA's name)." );
+	Cvar_SetDescription( Cvar_Get( "cl_southpaw", "0", CVAR_ARCHIVE ),
+		"Swaps the controller's sticks: the left one looks and the right one moves." );
+	Cvar_SetDescription( Cvar_Get( "cl_vibration", "1", CVAR_ARCHIVE ), "Lets the game vibrate the controller." );
 }
 
 

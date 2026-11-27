@@ -698,6 +698,11 @@ void	GLimp_SetGamma(unsigned char red[256], unsigned char green[256], unsigned c
 void	GLimp_QueryDisplayOutput(rendererDisplayOutput_t *output);
 void	GLimp_InvalidateConfig( void );
 
+// QAA: the pad's vibration, as the cgame asks for it (trap 113): each motor's
+// speed in percent (left, the low-frequency one, and right) for its own
+// time in milliseconds; all zero stops it. A layer without a gamepad ignores it.
+void	IN_PadRumble( int leftPercent, int leftMsec, int rightPercent, int rightMsec );
+
 // OpenGL
 #ifdef USE_OPENGL_API
 void	GLimp_Init( glconfig_t *config );

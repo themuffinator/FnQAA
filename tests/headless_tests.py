@@ -273,7 +273,8 @@ class HeadlessTests(unittest.TestCase):
         self.assertEqual(binds.get("PAD0_LEFTTRIGGER"), "+moveup;+button12;")
         self.assertEqual(binds.get("PAD0_DPAD_UP"), "vstr heavyweapons")
         self.assertEqual(binds.get("PAD0_LEFTSTICK_UP"), "+forward")
-        self.assertEqual(binds.get("PAD0_RIGHTSTICK_RIGHT"), "+right")
+        # the look stick is read unbound, as retail reads it
+        self.assertFalse([k for k in binds if k.startswith("PAD0_RIGHTSTICK_") and k != "PAD0_RIGHTSTICK_CLICK"], binds)
         # Quake Live's keyboard and mouse
         self.assertEqual(binds.get("MOUSE1"), "+attack")
         self.assertEqual(binds.get("MOUSE2"), "+zoom")

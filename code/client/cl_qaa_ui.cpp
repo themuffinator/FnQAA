@@ -30,6 +30,7 @@ Structure:
 
 #include "../qaa/qaa_guest_host.h"
 #include "../qaa/qaa_structs.h"
+#include "../qcommon/qaa_binds.h"
 
 #include <algorithm>
 #include <limits>
@@ -405,9 +406,18 @@ void GuestCommand( void ) {
 	UiCall( it->second, {} );
 }
 
+/* QAA: PC deviation. The front end's command text (FSCommand "qcmd") binds
+ * the pad under the Xbox 360's key names, and its unbindall clears the
+ * Xbox's only bindings, the pad's: the Custom Controls menu runs
+ * "unbindall;", then binds Back and the right trigger again. The keys are
+ * renamed and unbindall is kept to the pad, so the keyboard, the mouse and
+ * the sticks keep their binds (qaa_binds.h). */
 void H_Cbuf_AddText( void *, qaa_hook_call *c ) {
 	Trace( c, "Cbuf_AddText" );
-	Cbuf_AddText( QAA_Str( R( c, 0 ) ) );
+	const char *text = QAA_Str( R( c, 0 ) );
+	std::string rewritten( QAA_RewriteFrontEndCommands( text, nullptr, 0 ) + 1, '\0' );
+	QAA_RewriteFrontEndCommands( text, rewritten.data(), rewritten.size() );
+	Cbuf_AddText( rewritten.c_str() );
 }
 
 void H_Cmd_AddCommand( void *, qaa_hook_call *c ) {
@@ -2165,7 +2175,7 @@ void InstallCallTracing() {
 void PublishGlconfig() {
 	const uint32_t copies[2] = { addr::CLS_GLCONFIG, addr::RENDERER_GLCONFIG };
 	const int w = cls.glconfig.vidWidth, h = cls.glconfig.vidHeight;
-	const bool widescreen = w * 9 >= h * 16 - 16;
+	const bool widescreen = QAA_UI_IsWidescreen( w, h );
 	for ( uint32_t g : copies ) {
 		// GFx sizes its glyph cache from the renderer caps' maxTextureSize (0x82166E88)
 		QAA_StoreS32( g + 0x2C00, 4096 );
@@ -2904,6 +2914,15 @@ bool QAA_UI_Init( void ) {
 	Cvar_SetDescription( qaa_uiProfile, "Print the front end's average cost per client frame once a second: "
 		"pointer events, update thread, SFUI render, recording, rasterising, upload." );
 	Cvar_Get( "sys_titleFocused", "1", CVAR_ROM );
+	// QAA: the Live state the menus test, as retail's Live start-up registers
+	// it (0x82185E28..0x82185E68, ROM | TEMP) and its session code leaves it
+	// without a Live sign-in: not connected, not in a party. The movies read
+	// them with getCvarValue, a number from the cvar's string.
+	for ( const char *name : { "xb_signinRunning", "xb_liveConnected", "xb_isInParty", "xb_primaryLiveConnected" } ) {
+		Cvar_Get( name, "0", CVAR_ROM | CVAR_TEMP );
+	}
+	// the server browser flag (0x8217B6C0), which the menus set and clear
+	Cvar_Get( "ui_inServerBrowser", "0", 0 );
 	Cmd_AddCommand( "qaa_uiDump", UI_Dump_f );
 	Cmd_AddCommand( "qaa_uiTestPointer", UI_TestPointer_f );
 	Cmd_AddCommand( "qaa_uiGet", UI_Get_f );
@@ -2950,6 +2969,10 @@ void QAA_UI_Shutdown( void ) {
 
 bool QAA_UI_Active( void ) {
 	return uiReady && !uiFailed;
+}
+
+bool QAA_UI_IsWidescreen( int width, int height ) {
+	return width * 9 >= height * 16 - 16;
 }
 
 #ifdef _WIN32

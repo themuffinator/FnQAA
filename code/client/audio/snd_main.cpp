@@ -616,7 +616,9 @@ extern "C" void S_Init( void )
 	s_volume = Cvar_Get( "s_volume", "0.8", CVAR_ARCHIVE );
 	Cvar_CheckRange( s_volume, "0", "2", CV_FLOAT );
 	Cvar_SetDescription( s_volume, "Sets master volume for all game audio." );
-	s_musicVolume = Cvar_Get( "s_musicVolume", "0.25", CVAR_ARCHIVE );
+	// QAA: retail S_Init (0x82174978) and the Game Settings menu's reset both
+	// put the music at 0.6.
+	s_musicVolume = Cvar_Get( "s_musicVolume", "0.6", CVAR_ARCHIVE );
 	Cvar_CheckRange( s_musicVolume, "0", "2", CV_FLOAT );
 	Cvar_SetDescription( s_musicVolume, "Sets volume for in-game music only." );
 	// QAA: PC deviation. QAA has no Steam voice chat; FnQL's s_voiceVolume and

@@ -562,6 +562,17 @@ static int64_t QAA_CgameSyscall( void *, qaa_module *, const qaa_syscall *call )
 	case 108: return QAA_CG_Trunc( ceil( QAA_ArgF( a[0] ) ) );
 	case 111: return QAA_CG_Trunc( Q_acos( QAA_ArgF( a[0] ) ) );
 
+	case 112:	// stop the active user's vibration (retail 0x821837A0)
+		IN_PadRumble( 0, 0, 0, 0 );
+		return 0;
+	case 113:	// vibration: user, left motor %, left ms, right motor %, right ms
+		// QAA: retail 0x82183C20 vibrates a connected pad only while the
+		// title has focus and the profile allows it, which on the PC is
+		// cl_vibration (the Controller Settings menu's Vibration)
+		if ( Cvar_VariableIntegerValue( "cl_vibration" ) && Cvar_VariableIntegerValue( "sys_titleFocused" ) ) {
+			IN_PadRumble( a[1], a[2], a[3], a[4] );
+		}
+		return 0;
 	case 115:	// the active controller: the PC has one user
 		return 0;
 	case 141: {	// the game's scoreboard mailbox (game trap 72)
@@ -579,11 +590,11 @@ static int64_t QAA_CgameSyscall( void *, qaa_module *, const qaa_syscall *call )
 			return QAA_UI_CgameTrap( t, a );
 		}
 		if ( t >= 112 && t <= 142 ) {
-			// Rumble, achievements and Xbox Live: without Live the member
-			// queries answer 0, as retail answers without a session.
-			if ( !qaaCgameWarnedLive && ( t == 113 || t == 114 ) ) {
+			// Achievements and Xbox Live: without Live the member queries
+			// answer 0, as retail answers without a session.
+			if ( !qaaCgameWarnedLive && t == 114 ) {
 				qaaCgameWarnedLive = true;
-				Com_DPrintf( "QAA: rumble and achievements are not on the PC yet\n" );
+				Com_DPrintf( "QAA: achievements are not on the PC yet\n" );
 			}
 			return 0;
 		}
