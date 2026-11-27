@@ -32,6 +32,10 @@ struct Texture {
 	int width = 0, height = 0;
 	std::vector<uint8_t> rgba;
 	bool alphaOnly = false;
+	/* Changes whenever the texels do (the owner sets it, from a counter
+	 * that never repeats): a triangle records it, so a band of the canvas
+	 * that samples a changed texture is drawn again. */
+	uint64_t version = 0;
 };
 
 /* GFx 2.x's 2x3 matrix: x' = m[0]x + m[1]y + m[2], y' = m[3]x + m[4]y + m[5]. */
@@ -99,16 +103,43 @@ struct BitmapQuad {
 	float color[4];				/* straight RGBA */
 };
 
+/*
+ * Drawing is recorded: each call resolves its triangles against the current
+ * state (matrices, colour transform, blend mode, mask, clip) and queues
+ * them. Flush() rasterises the queue in bands of rows on worker threads;
+ * each band runs the queued triangles that reach it in order over its own
+ * rows, so the result is the same as drawing one triangle at a time on one
+ * thread. Pixels(), ToStraight() and Flush() all flush first. Textures a
+ * queued triangle samples must stay unchanged until the next flush.
+ *
+ * Bands are kept between frames: a frame flushed in one go after Clear()
+ * leaves a band's pixels alone when the triangles that reach it are the
+ * same as last frame's (positions, fills, state and texture versions), so
+ * a frame that repeats, or animates a small part of the screen, redraws
+ * only what changed.
+ */
 class Canvas {
 public:
 	void Resize( int width, int height );
 	int Width() const { return width_; }
 	int Height() const { return height_; }
 	/* premultiplied RGBA, row-major, top row first */
-	const uint8_t *Pixels() const { return pixels_.data(); }
-	/* straight RGBA, for presenting with ordinary alpha blending */
+	const uint8_t *Pixels() const { Flush(); return pixels_.data(); }
+	/* straight RGBA, for presenting with ordinary alpha blending (flushes,
+	 * converting each band as it finishes) */
 	void ToStraight( std::vector<uint8_t> &out ) const;
+	/* Rasterise everything queued. */
+	void Flush() const { Flush( nullptr ); }
+	/* Triangles are queued and not yet rasterised. */
+	bool HasQueued() const { return !ops_.empty(); }
+	/* The rows the last ToStraight() wrote into the buffer it was given, as
+	 * ranges [y0, y1) in pairs, top to bottom; the rest of it is as before. */
+	const std::vector<int> &ChangedRows() const { return changed_; }
+	/* Rows rasterised since Clear(), as of the last flush (0: the frame
+	 * repeated the last one), for profiling. */
+	int RowsDrawn() const { return rowsDrawn_; }
 
+	/* Start a frame: the canvas clears to transparent at the next flush. */
 	void Clear();
 	/* Transform from movie space to canvas pixels, and the clip rectangle. */
 	void SetView( const Matrix &toPixels, int clipX0, int clipY0, int clipX1, int clipY1 );
@@ -128,12 +159,44 @@ public:
 	void DrawBitmaps( const BitmapQuad *quads, int count, const Matrix &m, const Texture *tex );
 
 	int Triangles() const { return triangles_; }
-	/* pixels the rasteriser tested since Clear(), for profiling */
+	/* pixels the rasteriser tested since Clear(), as of the last flush, for profiling */
 	int64_t PixelsTested() const { return pixelsTested_; }
 	/* for tracing: the current movie-to-pixel transform, blend mode and mask state */
 	Matrix FullMatrix() const { return Full(); }
 	int BlendMode() const { return blend_.empty() ? BLEND_NORMAL : blend_.back(); }
 	int MaskState() const { return static_cast<int>( maskState_ ) * 16 + stencilLevel_; }
+
+	/* ---- internal: the queue Flush() runs ---- */
+	/* A value interpolated over a triangle, as a plane in canvas pixels:
+	 * value(px, py) = dx * px + dy * py + c. */
+	struct Plane {
+		float dx = 0, dy = 0, c = 0;
+		float At( float px, float py ) const { return dx * px + dy * py + c; }
+	};
+	struct TexRef {
+		const Texture *texture = nullptr;
+		bool clamp = false, linear = true;
+	};
+	/* A queued triangle (or a stencil clear), with everything the
+	 * rasteriser needs resolved when it was drawn. */
+	struct Op {
+		uint8_t type = 0;		/* OP_* */
+		uint8_t shade = 0;		/* SHADE_* */
+		uint8_t mode = 0;		/* blend mode */
+		uint8_t mask = 0;		/* MASK_* */
+		uint8_t level = 0;		/* stencil level */
+		bool tl[3] = {};		/* top-left edges */
+		int x0 = 0, y0 = 0, x1 = 0, y1 = 0;	/* clipped bounds, [x0, x1) x [y0, y1) */
+		float sx[3] = {}, sy[3] = {};
+		Plane col[4], facLerp, facAlpha, u0, v0, u1, v1;
+		float color[4] = {};
+		TexRef tex0, tex1;
+		uint64_t version0 = 0, version1 = 0;	/* the textures' versions */
+		Cxform cx;
+	};
+	/* Rows per band: what a flush splits the canvas into, and the unit a
+	 * frame that repeats in part redraws. */
+	static constexpr int BAND_ROWS = 16;
 
 private:
 	struct ScreenVertex {
@@ -144,12 +207,38 @@ private:
 		float u, v;			/* explicit UVs (bitmaps) */
 	};
 	void Raster( const ScreenVertex &a, const ScreenVertex &b, const ScreenVertex &c, const Fill &fill, bool explicitUV );
-	void Shade( int x, int y, const float rgba[4], int mode );	/* premultiplied in, blended out */
+	Op &NewOp();
+	void Flush( std::vector<uint8_t> *straight ) const;
+	struct BandResult {
+		int64_t tested = 0;
+		int rows = 0;				/* rows rasterised */
+		std::vector<int> changed;	/* straight rows written, [y0, y1) pairs */
+	};
+	void RunBand( int band, bool raster, bool clear, std::vector<uint8_t> *straight, bool sameStraight,
+		BandResult *out ) const;
 	Matrix Full() const;
 
 	int width_ = 0, height_ = 0;
-	std::vector<uint8_t> pixels_;
-	std::vector<uint8_t> stencil_;
+	mutable std::vector<uint8_t> pixels_;
+	mutable std::vector<uint8_t> stencil_;
+	mutable std::vector<Op> ops_;
+	mutable bool clearPending_ = false;
+	/* Per row: the row of pixels_ is all transparent (no triangle has
+	 * touched it since a clear), and the row of the last straight copy is
+	 * all zero. Rows that stay empty are neither cleared nor converted
+	 * again: in a game most of the screen is. */
+	mutable std::vector<uint8_t> rowBlank_, straightBlank_;
+	mutable const uint8_t *lastStraight_ = nullptr;
+	mutable size_t lastStraightSize_ = 0;
+	mutable std::vector<int> changed_;
+	/* Per band: the hash of the triangles that drew it, valid while
+	 * bandsValid_ (whole frames, flushed in one go, since the last resize);
+	 * and whether its pixels changed since the last straight copy. */
+	mutable std::vector<uint64_t> bandHash_;
+	mutable std::vector<uint8_t> bandStale_;
+	mutable bool bandsValid_ = false;
+	mutable std::vector<std::vector<uint32_t>> bandOps_;	/* the queued triangles reaching each band */
+	mutable int rowsDrawn_ = 0;
 	Matrix view_, matrix_, user_;
 	Cxform cx_;
 	int clip_[4] = { 0, 0, 0, 0 };
@@ -157,7 +246,7 @@ private:
 	int stencilLevel_ = 0;
 	enum { MASK_OFF, MASK_SUBMIT_INCR, MASK_SUBMIT_DECR, MASK_TEST } maskState_ = MASK_OFF;
 	int triangles_ = 0;
-	int64_t pixelsTested_ = 0;
+	mutable int64_t pixelsTested_ = 0;
 };
 
 /* Sample a texture (straight RGBA out, 0..1). */

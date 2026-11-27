@@ -19,104 +19,106 @@ See cl_qaa_ui_raster.h.
 #include <functional>
 #include <mutex>
 #include <thread>
+#include <type_traits>
+
+#if defined( _M_X64 ) || defined( _M_AMD64 ) || defined( __SSE2__ ) || ( defined( _M_IX86_FP ) && _M_IX86_FP >= 2 )
+#define QAA_UI_SSE2 1
+#include <emmintrin.h>
+#endif
 
 namespace qaa_ui {
 
-/* ---- row bands --------------------------------------------------------------
+/* ---- worker pool ------------------------------------------------------------
 
-Large triangles (full-screen backgrounds and panels, most of a menu's cost)
-are split into bands of rows run on a few worker threads. A triangle's rows
-never overlap, each pixel is written by one band, and the triangles still
-run one after another, so the result is the same as on one thread. The pool
+Flush() splits the canvas into bands of rows and runs them on a few worker
+threads and the calling thread. One dispatch per flush (normally one per
+frame), so the workers sleep between frames instead of spinning. The pool
 is created on first use and never destroyed: its threads wait for work and
-end with the process. */
-class RowPool {
+end with the process. QAA_UI_THREADS (total threads, 1 = none) overrides
+the count, for diagnostics. */
+class Workers {
 public:
-	static RowPool &Get() {
-		static RowPool *pool = new RowPool();
+	static Workers &Get() {
+		static Workers *pool = new Workers();
 		return *pool;
 	}
-	int Bands() const { return bands_; }
-	/* Run fn(y0, y1) over [y0, y1) in pieces and wait for all of them. Rows
-	 * are handed out in small chunks, so bands of uneven cost (a triangle's
-	 * rows differ in length) still finish together. */
-	void Run( int y0, int y1, const std::function<void( int, int )> &fn ) {
-		if ( bands_ <= 1 ) {
-			fn( y0, y1 );
+	int Threads() const { return threads_ + 1; }
+	/* Run fn(i) for every i in [0, count), and wait for all of them. */
+	void Run( int count, const std::function<void( int )> &fn ) {
+		if ( threads_ == 0 || count <= 1 ) {
+			for ( int i = 0; i < count; i++ ) {
+				fn( i );
+			}
 			return;
 		}
-		job_ = &fn;
-		end_ = y1;
-		chunk_ = std::max( 1, ( y1 - y0 ) / ( bands_ * 8 ) );
-		next_.store( y0, std::memory_order_relaxed );
-		busy_.store( bands_ - 1, std::memory_order_relaxed );
+		std::lock_guard<std::mutex> serial( run_ );	// one dispatch at a time
 		{
 			std::lock_guard<std::mutex> lock( mutex_ );
-			generation_.fetch_add( 1, std::memory_order_release );
+			job_ = &fn;
+			count_ = count;
+			next_.store( 0, std::memory_order_relaxed );
+			busy_ = threads_;
+			generation_++;
 		}
 		wake_.notify_all();
-		Take();
-		// the workers finish their last chunks; spin briefly, they are short
-		while ( busy_.load( std::memory_order_acquire ) > 0 ) {
-			std::this_thread::yield();
-		}
+		Take( fn, count );
+		std::unique_lock<std::mutex> lock( mutex_ );
+		done_.wait( lock, [this] { return busy_ == 0; } );
 		job_ = nullptr;
 	}
 
 private:
-	RowPool() {
-		const unsigned hw = std::thread::hardware_concurrency();
-		int threads = std::max( 0, std::min( 7, static_cast<int>( hw ) - 1 ) );
-		if ( const char *env = std::getenv( "QAA_UI_THREADS" ) ) {	// diagnostics: total threads, 1 = none
+	Workers() {
+		const int hw = static_cast<int>( std::thread::hardware_concurrency() );
+		// leave a core for the engine's other threads (sound, the GL driver)
+		int threads = std::max( 0, std::min( 11, hw - 2 ) );
+		if ( const char *env = std::getenv( "QAA_UI_THREADS" ) ) {
 			threads = std::max( 0, std::min( 31, std::atoi( env ) - 1 ) );
 		}
-		bands_ = threads + 1;
+		threads_ = threads;
 		for ( int i = 0; i < threads; i++ ) {
 			std::thread( [this] { Work(); } ).detach();
 		}
 	}
-	/* Run chunks of rows until none are left. */
-	void Take() {
+	void Take( const std::function<void( int )> &fn, int count ) {
 		for ( ;; ) {
-			const int a = next_.fetch_add( chunk_, std::memory_order_relaxed );
-			if ( a >= end_ ) {
+			const int i = next_.fetch_add( 1, std::memory_order_relaxed );
+			if ( i >= count ) {
 				return;
 			}
-			( *job_ )( a, std::min( end_, a + chunk_ ) );
+			fn( i );
 		}
 	}
 	void Work() {
 		unsigned seen = 0;
 		for ( ;; ) {
-			// Spin a little before sleeping: the next triangle usually comes
-			// within microseconds, and waking a sleeping thread takes longer.
-			unsigned gen = generation_.load( std::memory_order_acquire );
-			for ( int spin = 0; gen == seen && spin < 4000; spin++ ) {
-				std::this_thread::yield();
-				gen = generation_.load( std::memory_order_acquire );
-			}
-			if ( gen == seen ) {
+			const std::function<void( int )> *job;
+			int count;
+			{
 				std::unique_lock<std::mutex> lock( mutex_ );
-				wake_.wait( lock, [&] { return generation_.load( std::memory_order_acquire ) != seen; } );
-				gen = generation_.load( std::memory_order_acquire );
+				wake_.wait( lock, [&] { return generation_ != seen; } );
+				seen = generation_;
+				job = job_;
+				count = count_;
 			}
-			seen = gen;
-			Take();
-			busy_.fetch_sub( 1, std::memory_order_acq_rel );
+			Take( *job, count );
+			std::lock_guard<std::mutex> lock( mutex_ );
+			if ( --busy_ == 0 ) {
+				done_.notify_one();
+			}
 		}
 	}
-	int bands_ = 1;
+	int threads_ = 0;
+	std::mutex run_;
 	std::mutex mutex_;
-	std::condition_variable wake_;
-	std::atomic<unsigned> generation_{ 0 };
-	std::atomic<int> next_{ 0 }, busy_{ 0 };
-	const std::function<void( int, int )> *job_ = nullptr;
-	int end_ = 0, chunk_ = 1;
+	std::condition_variable wake_, done_;
+	unsigned generation_ = 0;
+	const std::function<void( int )> *job_ = nullptr;
+	int count_ = 0;
+	int busy_ = 0;
+	std::atomic<int> next_{ 0 };
 };
 
-/* Triangles covering at least this many pixels of their bounding box are
- * split into row bands. */
-static const int PARALLEL_PIXELS = 1 << 15;
 
 Matrix Matrix::Mul( const Matrix &a, const Matrix &b ) {
 	Matrix r;
@@ -278,118 +280,186 @@ bool DecodeDXT( int format, const uint8_t *data, int width, int height, std::vec
 
 /* ---- canvas ---------------------------------------------------------------------- */
 
-void Canvas::Resize( int width, int height ) {
-	if ( width == width_ && height == height_ ) {
-		return;
+namespace {
+
+enum { OP_TRIANGLE, OP_CLEAR_STENCIL };
+/* What a triangle's pixels take (see Canvas::Raster). */
+enum { SHADE_SUBMIT, SHADE_COLOR, SHADE_TEXTURE, SHADE_GOURAUD, SHADE_GOURAUD_TEX, SHADE_GOURAUD_TEX2, SHADE_GLYPH, SHADE_COUNT };
+/* Canvas's mask states, in its enum's order */
+enum { M_OFF, M_SUBMIT_INCR, M_SUBMIT_DECR, M_TEST };
+
+/* Four floats, one pixel's RGBA. SSE2 where the target has it (every
+ * x86-64), else plain floats; the arithmetic is the same either way, lane
+ * by lane, in the same order as the scalar code it replaced. */
+#ifdef QAA_UI_SSE2
+struct F4 {
+	__m128 v;
+};
+inline F4 Load4( const float *p ) { return { _mm_loadu_ps( p ) }; }
+inline void Store4( F4 a, float *p ) { _mm_storeu_ps( p, a.v ); }
+inline F4 Splat( float f ) { return { _mm_set1_ps( f ) }; }
+inline F4 Set4( float a, float b, float c, float d ) { return { _mm_set_ps( d, c, b, a ) }; }
+inline F4 operator+( F4 a, F4 b ) { return { _mm_add_ps( a.v, b.v ) }; }
+inline F4 operator-( F4 a, F4 b ) { return { _mm_sub_ps( a.v, b.v ) }; }
+inline F4 operator*( F4 a, F4 b ) { return { _mm_mul_ps( a.v, b.v ) }; }
+inline F4 Clamp4( F4 a ) { return { _mm_min_ps( _mm_max_ps( a.v, _mm_setzero_ps() ), _mm_set1_ps( 1.0f ) ) }; }
+inline float Alpha( F4 a ) { return _mm_cvtss_f32( _mm_shuffle_ps( a.v, a.v, _MM_SHUFFLE( 3, 3, 3, 3 ) ) ); }
+/* four bytes as four floats, 0..255 */
+inline F4 Bytes( const uint8_t *p ) {
+	int32_t u;
+	std::memcpy( &u, p, 4 );
+	const __m128i z = _mm_setzero_si128();
+	const __m128i i = _mm_unpacklo_epi16( _mm_unpacklo_epi8( _mm_cvtsi32_si128( u ), z ), z );
+	return { _mm_cvtepi32_ps( i ) };
+}
+/* four floats in 0..255.5, truncated to bytes */
+inline void PutBytes( F4 a, uint8_t *p ) {
+	__m128i i = _mm_cvttps_epi32( a.v );
+	i = _mm_packs_epi32( i, i );
+	i = _mm_packus_epi16( i, i );
+	const int32_t u = _mm_cvtsi128_si32( i );
+	std::memcpy( p, &u, 4 );
+}
+#else
+struct F4 {
+	float v[4];
+};
+inline F4 Load4( const float *p ) { return { { p[0], p[1], p[2], p[3] } }; }
+inline void Store4( F4 a, float *p ) { std::memcpy( p, a.v, sizeof( a.v ) ); }
+inline F4 Splat( float f ) { return { { f, f, f, f } }; }
+inline F4 Set4( float a, float b, float c, float d ) { return { { a, b, c, d } }; }
+inline F4 operator+( F4 a, F4 b ) { return { { a.v[0] + b.v[0], a.v[1] + b.v[1], a.v[2] + b.v[2], a.v[3] + b.v[3] } }; }
+inline F4 operator-( F4 a, F4 b ) { return { { a.v[0] - b.v[0], a.v[1] - b.v[1], a.v[2] - b.v[2], a.v[3] - b.v[3] } }; }
+inline F4 operator*( F4 a, F4 b ) { return { { a.v[0] * b.v[0], a.v[1] * b.v[1], a.v[2] * b.v[2], a.v[3] * b.v[3] } }; }
+inline F4 Clamp4( F4 a ) { return { { Clamp01( a.v[0] ), Clamp01( a.v[1] ), Clamp01( a.v[2] ), Clamp01( a.v[3] ) } }; }
+inline float Alpha( F4 a ) { return a.v[3]; }
+inline F4 Bytes( const uint8_t *p ) {
+	return { { static_cast<float>( p[0] ), static_cast<float>( p[1] ), static_cast<float>( p[2] ), static_cast<float>( p[3] ) } };
+}
+inline void PutBytes( F4 a, uint8_t *p ) {
+	for ( int k = 0; k < 4; k++ ) {
+		p[k] = static_cast<uint8_t>( a.v[k] );
 	}
-	width_ = std::max( width, 1 );
-	height_ = std::max( height, 1 );
-	pixels_.assign( static_cast<size_t>( width_ ) * height_ * 4, 0 );
-	stencil_.assign( static_cast<size_t>( width_ ) * height_, 0 );
-	clip_[0] = clip_[1] = 0;
-	clip_[2] = width_;
-	clip_[3] = height_;
+}
+#endif
+
+inline float Edge( float ax, float ay, float bx, float by, float px, float py ) {
+	return ( bx - ax ) * ( py - ay ) - ( by - ay ) * ( px - ax );
 }
 
-void Canvas::Clear() {
-	std::fill( pixels_.begin(), pixels_.end(), uint8_t( 0 ) );
-	std::fill( stencil_.begin(), stencil_.end(), uint8_t( 0 ) );
-	blend_.clear();
-	stencilLevel_ = 0;
-	maskState_ = MASK_OFF;
-	matrix_ = Matrix();
-	user_ = Matrix();
-	cx_ = Cxform();
-	triangles_ = 0;
-	pixelsTested_ = 0;
+/* Top-left rule: a pixel exactly on a shared edge belongs to one triangle. */
+inline bool TopLeft( float ax, float ay, float bx, float by ) {
+	return ( ay == by && bx < ax ) || by < ay;
 }
 
-void Canvas::ToStraight( std::vector<uint8_t> &out ) const {
-	out.resize( pixels_.size() );
-	const size_t n = pixels_.size() / 4;
-	for ( size_t i = 0; i < n; i++ ) {
-		const uint8_t *p = &pixels_[i * 4];
-		uint8_t *o = &out[i * 4];
-		const int a = p[3];
-		if ( a == 0 ) {
-			o[0] = o[1] = o[2] = o[3] = 0;
-		} else if ( a == 255 ) {
-			std::memcpy( o, p, 4 );
+using Plane = Canvas::Plane;
+
+/* The planes of the three barycentric weights of (v0, v1, v2), whose
+ * signed area (Edge(v0, v1, v2)) is 1 / inv. Weight i is Edge of the
+ * opposite edge over the area, as the per-pixel coverage test uses. */
+void WeightPlanes( const float sx[3], const float sy[3], float inv, Plane w[3] ) {
+	for ( int i = 0; i < 3; i++ ) {
+		const int a = ( i + 1 ) % 3, b = ( i + 2 ) % 3;
+		// Edge(a, b, p) = (bx - ax)(py - ay) - (by - ay)(px - ax)
+		w[i].dx = -( sy[b] - sy[a] ) * inv;
+		w[i].dy = ( sx[b] - sx[a] ) * inv;
+		w[i].c = ( ( sy[b] - sy[a] ) * sx[a] - ( sx[b] - sx[a] ) * sy[a] ) * inv;
+	}
+}
+
+Plane Interpolate( const Plane w[3], float f0, float f1, float f2 ) {
+	Plane p;
+	p.dx = w[0].dx * f0 + w[1].dx * f1 + w[2].dx * f2;
+	p.dy = w[0].dy * f0 + w[1].dy * f1 + w[2].dy * f2;
+	p.c = w[0].c * f0 + w[1].c * f1 + w[2].c * f2;
+	return p;
+}
+
+/* Texture coordinate planes: the UV matrix applied to the shape-space planes. */
+void UvPlanes( const Matrix &m, const Plane &x, const Plane &y, Plane *u, Plane *v ) {
+	u->dx = m.m[0] * x.dx + m.m[1] * y.dx;
+	u->dy = m.m[0] * x.dy + m.m[1] * y.dy;
+	u->c = m.m[0] * x.c + m.m[1] * y.c + m.m[2];
+	v->dx = m.m[3] * x.dx + m.m[4] * y.dx;
+	v->dy = m.m[3] * x.dy + m.m[4] * y.dy;
+	v->c = m.m[3] * x.c + m.m[4] * y.c + m.m[5];
+}
+
+inline int FloorInt( float f ) {
+	const int i = static_cast<int>( f );
+	return f < static_cast<float>( i ) ? i - 1 : i;
+}
+
+/* A texel coordinate inside [0, size): clamped, or wrapped for Wrap_Repeat. */
+inline int Address( int i, int size, bool clamp ) {
+	if ( static_cast<unsigned>( i ) < static_cast<unsigned>( size ) ) {
+		return i;
+	}
+	if ( clamp ) {
+		return i < 0 ? 0 : size - 1;
+	}
+	i %= size;
+	return i < 0 ? i + size : i;
+}
+
+/* A texture as the inner loops read it: SampleTexture's results, in
+ * integer texel addressing, from locals (a pixel store may alias anything
+ * reached through a pointer, which would reload it per pixel). */
+struct Sampler {
+	const uint8_t *base = nullptr;
+	int w = 0, h = 0;
+	float fw = 0, fh = 0;
+	bool clamp = false, linear = true, valid = false;
+
+	explicit Sampler( const Canvas::TexRef &t ) : clamp( t.clamp ), linear( t.linear ) {
+		const Texture *tex = t.texture;
+		if ( tex && tex->width > 0 && tex->height > 0 && !tex->rgba.empty() ) {
+			base = tex->rgba.data();
+			w = tex->width;
+			h = tex->height;
+			fw = static_cast<float>( w );
+			fh = static_cast<float>( h );
+			valid = true;
+		}
+	}
+	/* the texel point sampling takes: SampleTexture's floor(u * w - 0.5 + 0.5) */
+	const uint8_t *Point( float u, float v ) const {
+		const int x = Address( FloorInt( u * fw ), w, clamp );
+		const int y = Address( FloorInt( v * fh ), h, clamp );
+		return base + ( static_cast<size_t>( y ) * w + x ) * 4;
+	}
+	F4 Sample( float u, float v ) const {
+		if ( !valid ) {
+			return Splat( 1.0f );
+		}
+		if ( !linear ) {
+			return Bytes( Point( u, v ) ) * Splat( 1.0f / 255.0f );
+		}
+		const float fx = u * fw - 0.5f, fy = v * fh - 0.5f;
+		const int ix = FloorInt( fx ), iy = FloorInt( fy );
+		const float ax = fx - ix, ay = fy - iy;
+		int xa, xb, ya, yb;
+		if ( static_cast<unsigned>( ix ) < static_cast<unsigned>( w - 1 ) && static_cast<unsigned>( iy ) < static_cast<unsigned>( h - 1 ) ) {
+			xa = ix;
+			xb = ix + 1;
+			ya = iy;
+			yb = iy + 1;
 		} else {
-			o[0] = static_cast<uint8_t>( std::min( 255, p[0] * 255 / a ) );
-			o[1] = static_cast<uint8_t>( std::min( 255, p[1] * 255 / a ) );
-			o[2] = static_cast<uint8_t>( std::min( 255, p[2] * 255 / a ) );
-			o[3] = static_cast<uint8_t>( a );
+			xa = Address( ix, w, clamp );
+			xb = Address( ix + 1, w, clamp );
+			ya = Address( iy, h, clamp );
+			yb = Address( iy + 1, h, clamp );
 		}
+		const uint8_t *rowA = base + static_cast<size_t>( ya ) * w * 4, *rowB = base + static_cast<size_t>( yb ) * w * 4;
+		const float w11 = ax * ay, w10 = ax - w11, w01 = ay - w11, w00 = 1.0f - ax - ay + w11;
+		return ( Bytes( rowA + xa * 4 ) * Splat( w00 ) + Bytes( rowA + xb * 4 ) * Splat( w10 )
+			+ Bytes( rowB + xa * 4 ) * Splat( w01 ) + Bytes( rowB + xb * 4 ) * Splat( w11 ) ) * Splat( 1.0f / 255.0f );
 	}
-}
+};
 
-void Canvas::SetView( const Matrix &toPixels, int clipX0, int clipY0, int clipX1, int clipY1 ) {
-	view_ = toPixels;
-	clip_[0] = std::max( 0, clipX0 );
-	clip_[1] = std::max( 0, clipY0 );
-	clip_[2] = std::min( width_, clipX1 );
-	clip_[3] = std::min( height_, clipY1 );
-}
-
-void Canvas::PushBlend( int mode ) {
-	blend_.push_back( mode );
-}
-
-void Canvas::PopBlend() {
-	if ( !blend_.empty() ) {
-		blend_.pop_back();
-	}
-}
-
-void Canvas::BeginSubmitMask( int mode ) {
-	if ( mode == 0 ) {
-		std::fill( stencil_.begin(), stencil_.end(), uint8_t( 0 ) );
-		stencilLevel_ = 0;
-	}
-	maskState_ = mode == 2 ? MASK_SUBMIT_DECR : MASK_SUBMIT_INCR;
-}
-
-void Canvas::EndSubmitMask() {
-	if ( maskState_ == MASK_SUBMIT_INCR ) {
-		stencilLevel_++;
-	} else if ( maskState_ == MASK_SUBMIT_DECR ) {
-		stencilLevel_ = std::max( 0, stencilLevel_ - 1 );
-	}
-	maskState_ = stencilLevel_ > 0 ? MASK_TEST : MASK_OFF;
-}
-
-void Canvas::DisableMask() {
-	maskState_ = MASK_OFF;
-	stencilLevel_ = 0;
-}
-
-Matrix Canvas::Full() const {
-	return Matrix::Mul( view_, Matrix::Mul( user_, matrix_ ) );
-}
-
-void Canvas::Shade( int x, int y, const float s[4], int mode ) {
-	const size_t i = static_cast<size_t>( y ) * width_ + x;
-	switch ( maskState_ ) {
-	case MASK_SUBMIT_INCR:
-		if ( stencil_[i] == stencilLevel_ ) {
-			stencil_[i] = static_cast<uint8_t>( stencilLevel_ + 1 );
-		}
-		return;
-	case MASK_SUBMIT_DECR:
-		if ( stencil_[i] == stencilLevel_ && stencilLevel_ > 0 ) {
-			stencil_[i] = static_cast<uint8_t>( stencilLevel_ - 1 );
-		}
-		return;
-	case MASK_TEST:
-		if ( stencil_[i] != stencilLevel_ ) {
-			return;
-		}
-		break;
-	default:
-		break;
-	}
-	uint8_t *p = &pixels_[i * 4];
+/* Blend a premultiplied pixel by a mode other than normal (the retail
+ * shaders' blend states), straight into p. */
+void BlendSpecial( uint8_t *p, const float s[4], int mode ) {
 	float d[4] = { p[0] * ( 1.0f / 255.0f ), p[1] * ( 1.0f / 255.0f ), p[2] * ( 1.0f / 255.0f ), p[3] * ( 1.0f / 255.0f ) };
 	float o[4];
 	switch ( mode ) {
@@ -441,103 +511,571 @@ void Canvas::Shade( int x, int y, const float s[4], int mode ) {
 	}
 }
 
-static inline float Edge( float ax, float ay, float bx, float by, float px, float py ) {
-	return ( bx - ax ) * ( py - ay ) - ( by - ay ) * ( px - ax );
+/* Blend modes the retail shaders treat as normal (GFx draws most shapes as
+ * "none" or "layer"). */
+inline bool NormalBlend( int mode ) {
+	return mode != BLEND_ADD && mode != BLEND_SUBTRACT && mode != BLEND_MULTIPLY && mode != BLEND_DARKEN
+		&& mode != BLEND_LIGHTEN && mode != BLEND_SCREEN;
 }
 
-/* Top-left rule: a pixel exactly on a shared edge belongs to one triangle. */
-static inline bool TopLeft( float ax, float ay, float bx, float by ) {
-	return ( ay == by && bx < ax ) || by < ay;
-}
+/*
+ * One queued triangle over rows [ya, yb). Each row is walked only over the
+ * span the triangle can cover (from each edge's crossing, widened by a
+ * pixel); pixels a pixel inside every edge skip the coverage test, the rest
+ * take the exact test with the top-left rule. Values are planes stepped
+ * along the row. SHADE picks the fill; NORMAL blends inline.
+ *
+ * Everything the loops read is copied to locals first: the pixel stores
+ * are bytes, which may alias anything, so values read through op would be
+ * loaded again for every pixel.
+ */
+template <int SHADE, bool NORMAL>
+void RasterRows( const Canvas::Op &op, uint8_t *pixels, uint8_t *stencil, int width, int ya, int yb, int64_t &testedOut ) {
+	constexpr bool colour = SHADE == SHADE_GLYPH || SHADE == SHADE_GOURAUD || SHADE == SHADE_GOURAUD_TEX;
+	constexpr bool gouraud = SHADE == SHADE_GOURAUD || SHADE == SHADE_GOURAUD_TEX || SHADE == SHADE_GOURAUD_TEX2;
+	constexpr bool tex0 = SHADE == SHADE_TEXTURE || SHADE == SHADE_GOURAUD_TEX || SHADE == SHADE_GOURAUD_TEX2 || SHADE == SHADE_GLYPH;
+	constexpr bool tex1 = SHADE == SHADE_GOURAUD_TEX2;
+	const float sx[3] = { op.sx[0], op.sx[1], op.sx[2] }, sy[3] = { op.sy[0], op.sy[1], op.sy[2] };
+	const bool tl[3] = { op.tl[0], op.tl[1], op.tl[2] };
+	const int opX0 = op.x0, opX1 = op.x1;
+	static const int ea[3] = { 1, 2, 0 }, eb[3] = { 2, 0, 1 };
+	const int mask = op.mask, mode = op.mode;
+	const bool stencilTest = mask == M_TEST;
+	const uint8_t level = op.level;
+	const F4 mul = Load4( op.cx.mul ), add = Load4( op.cx.add );
+	const bool identity = op.cx.mul[0] == 1.0f && op.cx.mul[1] == 1.0f && op.cx.mul[2] == 1.0f && op.cx.mul[3] == 1.0f
+		&& op.cx.add[0] == 0.0f && op.cx.add[1] == 0.0f && op.cx.add[2] == 0.0f && op.cx.add[3] == 0.0f;
+	const F4 fillColour = Load4( op.color );
+	const Plane col[4] = { op.col[0], op.col[1], op.col[2], op.col[3] };
+	const F4 colDx = Set4( col[0].dx, col[1].dx, col[2].dx, col[3].dx );
+	const Plane facLerp = op.facLerp, facAlpha = op.facAlpha, pu0 = op.u0, pv0 = op.v0, pu1 = op.u1, pv1 = op.v1;
+	const Sampler s0( op.tex0 ), s1( op.tex1 );
 
-/* A value interpolated over a triangle, as a plane in canvas pixels:
- * value(px, py) = dx * px + dy * py + c. */
-struct Plane {
-	float dx = 0, dy = 0, c = 0;
-	float At( float px, float py ) const { return dx * px + dy * py + c; }
-};
-
-/* The planes of the three barycentric weights of (v0, v1, v2), whose
- * signed area (Edge(v0, v1, v2)) is 1 / inv. Weight i is Edge of the
- * opposite edge over the area, as the per-pixel coverage test uses. */
-static void WeightPlanes( const float sx[3], const float sy[3], float inv, Plane w[3] ) {
-	for ( int i = 0; i < 3; i++ ) {
-		const int a = ( i + 1 ) % 3, b = ( i + 2 ) % 3;
-		// Edge(a, b, p) = (bx - ax)(py - ay) - (by - ay)(px - ax)
-		w[i].dx = -( sy[b] - sy[a] ) * inv;
-		w[i].dy = ( sx[b] - sx[a] ) * inv;
-		w[i].c = ( ( sy[b] - sy[a] ) * sx[a] - ( sx[b] - sx[a] ) * sy[a] ) * inv;
-	}
-}
-
-static Plane Interpolate( const Plane w[3], float f0, float f1, float f2 ) {
-	Plane p;
-	p.dx = w[0].dx * f0 + w[1].dx * f1 + w[2].dx * f2;
-	p.dy = w[0].dy * f0 + w[1].dy * f1 + w[2].dy * f2;
-	p.c = w[0].c * f0 + w[1].c * f1 + w[2].c * f2;
-	return p;
-}
-
-/* Texture coordinate planes: the UV matrix applied to the shape-space planes. */
-static void UvPlanes( const Matrix &m, const Plane &x, const Plane &y, Plane *u, Plane *v ) {
-	u->dx = m.m[0] * x.dx + m.m[1] * y.dx;
-	u->dy = m.m[0] * x.dy + m.m[1] * y.dy;
-	u->c = m.m[0] * x.c + m.m[1] * y.c + m.m[2];
-	v->dx = m.m[3] * x.dx + m.m[4] * y.dx;
-	v->dy = m.m[3] * x.dy + m.m[4] * y.dy;
-	v->c = m.m[3] * x.c + m.m[4] * y.c + m.m[5];
-}
-
-static inline int FloorInt( float f ) {
-	const int i = static_cast<int>( f );
-	return f < static_cast<float>( i ) ? i - 1 : i;
-}
-
-/* A texel coordinate inside [0, size): clamped, or wrapped for Wrap_Repeat. */
-static inline int Address( int i, int size, bool clamp ) {
-	if ( static_cast<unsigned>( i ) < static_cast<unsigned>( size ) ) {
-		return i;
-	}
-	if ( clamp ) {
-		return i < 0 ? 0 : size - 1;
-	}
-	i %= size;
-	return i < 0 ? i + size : i;
-}
-
-/* SampleTexture, in integer texel addressing: the same results, without
- * per-texel float conversion and function calls. */
-static inline void Sample( const TextureFill &t, float u, float v, float out[4] ) {
-	const Texture *tex = t.texture;
-	if ( !tex || tex->width <= 0 || tex->height <= 0 || tex->rgba.empty() ) {
-		out[0] = out[1] = out[2] = out[3] = 1.0f;
-		return;
-	}
-	const int w = tex->width, h = tex->height;
-	const uint8_t *base = tex->rgba.data();
-	if ( !t.linear ) {
-		// SampleTexture's floor(u * w - 0.5 + 0.5)
-		const int x = Address( FloorInt( u * w ), w, t.clamp );
-		const int y = Address( FloorInt( v * h ), h, t.clamp );
-		const uint8_t *p = base + ( static_cast<size_t>( y ) * w + x ) * 4;
-		for ( int k = 0; k < 4; k++ ) {
-			out[k] = p[k] * ( 1.0f / 255.0f );
+	// A solid colour blended normally is the same for every pixel: nothing
+	// when transparent, and when opaque the same bytes whatever is under it
+	// (checked over black and white: the blend is monotonic in the pixel).
+	bool solid = false;
+	uint8_t solidPx[4] = {};
+	if constexpr ( SHADE == SHADE_COLOR && NORMAL ) {
+		F4 out = Clamp4( fillColour * mul + add );
+		const float alpha = Alpha( out );
+		if ( alpha <= 0.0f ) {
+			return;
 		}
+		out = out * Set4( alpha, alpha, alpha, 1.0f );
+		const float keep = ( 1.0f - alpha ) * ( 1.0f / 255.0f );
+		uint8_t over[2][4];
+		for ( int k = 0; k < 2; k++ ) {
+			const uint8_t v = static_cast<uint8_t>( k * 255 );
+			const uint8_t under[4] = { v, v, v, v };
+			PutBytes( Clamp4( out + Bytes( under ) * Splat( keep ) ) * Splat( 255.0f ) + Splat( 0.5f ), over[k] );
+		}
+		if ( !std::memcmp( over[0], over[1], 4 ) ) {
+			solid = true;
+			std::memcpy( solidPx, over[0], 4 );
+		}
+	}
+	// Point-sampled texels with no colour transform: an opaque texel is its
+	// own bytes (the general path gives the same), a transparent one nothing.
+	const bool copyTexels = SHADE == SHADE_TEXTURE && NORMAL && identity && s0.valid && !s0.linear;
+
+	int64_t tested = 0;
+	for ( int y = ya; y < yb; y++ ) {
+		const float py = y + 0.5f;
+		// Where each edge crosses the row: px <= cross (dy > 0) or px >= cross
+		// (dy < 0). [xa, xb) widens that by a pixel and [inA, inB) narrows it
+		// by one: pixels in [inA, inB) are inside every edge and skip the test.
+		float lo = static_cast<float>( opX0 ), hi = static_cast<float>( opX1 );
+		bool interior = true;
+		for ( int e = 0; e < 3; e++ ) {
+			const int a = ea[e], b = eb[e];
+			// Edge(a, b, px, py) = (b.x - a.x)(py - a.y) - (b.y - a.y)(px - a.x) >= 0
+			const float dy = sy[b] - sy[a];
+			const float k = ( sx[b] - sx[a] ) * ( py - sy[a] );
+			if ( dy == 0 ) {
+				interior = interior && k > 0;	// the same sign along the whole row
+				continue;
+			}
+			const float cross = sx[a] + k / dy;
+			if ( !( std::fabs( cross ) < 1.0e6f ) ) {
+				interior = false;	// too far out to trust to a pixel
+				continue;
+			}
+			if ( dy > 0 ) {
+				hi = std::min( hi, cross );
+			} else {
+				lo = std::max( lo, cross );
+			}
+		}
+		const int xa = std::max( opX0, static_cast<int>( std::floor( lo - 1.0f ) ) );
+		const int xb = std::min( opX1, static_cast<int>( std::ceil( hi + 1.0f ) ) + 1 );
+		if ( xa >= xb ) {
+			continue;
+		}
+		const int inA = interior ? std::max( xa, static_cast<int>( std::ceil( lo + 1.0f ) ) ) : xb;
+		const int inB = interior ? std::min( xb, static_cast<int>( std::floor( hi - 1.0f ) ) ) : xb;
+		tested += xb - xa;
+		// the planes at the row's first pixel, stepped by dx per pixel
+		const float pxa = xa + 0.5f;
+		F4 c = Splat( 0.0f );
+		float fl = 0, fa = 0, uu = 0, vv = 0, uu1 = 0, vv1 = 0;
+		if constexpr ( colour ) {
+			c = Set4( col[0].At( pxa, py ), col[1].At( pxa, py ), col[2].At( pxa, py ), col[3].At( pxa, py ) );
+		}
+		if constexpr ( gouraud ) {
+			fl = facLerp.At( pxa, py );
+			fa = facAlpha.At( pxa, py );
+		}
+		if constexpr ( tex0 ) {
+			uu = pu0.At( pxa, py );
+			vv = pv0.At( pxa, py );
+		}
+		if constexpr ( tex1 ) {
+			uu1 = pu1.At( pxa, py );
+			vv1 = pv1.At( pxa, py );
+		}
+		uint8_t *row = pixels + static_cast<size_t>( y ) * width * 4;
+		uint8_t *srow = stencil + static_cast<size_t>( y ) * width;
+		for ( int x = xa; x < xb; x++ ) {
+			if ( x != xa ) {
+				if constexpr ( colour ) {
+					c = c + colDx;
+				}
+				if constexpr ( gouraud ) {
+					fl += facLerp.dx;
+					fa += facAlpha.dx;
+				}
+				if constexpr ( tex0 ) {
+					uu += pu0.dx;
+					vv += pv0.dx;
+				}
+				if constexpr ( tex1 ) {
+					uu1 += pu1.dx;
+					vv1 += pv1.dx;
+				}
+			}
+			if ( x < inA || x >= inB ) {
+				const float px = x + 0.5f;
+				const float e0 = Edge( sx[1], sy[1], sx[2], sy[2], px, py );
+				const float e1 = Edge( sx[2], sy[2], sx[0], sy[0], px, py );
+				const float e2 = Edge( sx[0], sy[0], sx[1], sy[1], px, py );
+				if ( e0 < 0 || e1 < 0 || e2 < 0 ) {
+					continue;
+				}
+				if ( ( e0 == 0 && !tl[0] ) || ( e1 == 0 && !tl[1] ) || ( e2 == 0 && !tl[2] ) ) {
+					continue;
+				}
+			}
+			if constexpr ( SHADE == SHADE_SUBMIT ) {
+				uint8_t &s = srow[x];
+				if ( mask == M_SUBMIT_INCR ) {
+					if ( s == level ) {
+						s = static_cast<uint8_t>( level + 1 );
+					}
+				} else if ( s == level && level > 0 ) {
+					s = static_cast<uint8_t>( level - 1 );
+				}
+				continue;
+			} else {
+				if ( stencilTest && srow[x] != level ) {
+					continue;
+				}
+				uint8_t *p = row + x * 4;
+				if constexpr ( SHADE == SHADE_COLOR && NORMAL ) {
+					if ( solid ) {
+						std::memcpy( p, solidPx, 4 );
+						continue;
+					}
+				}
+				if constexpr ( SHADE == SHADE_TEXTURE && NORMAL ) {
+					if ( copyTexels ) {
+						const uint8_t *t = s0.Point( uu, vv );
+						if ( t[3] == 255 ) {
+							std::memcpy( p, t, 4 );
+							continue;
+						}
+						if ( t[3] == 0 ) {
+							continue;
+						}
+					}
+				}
+				F4 out;
+				if constexpr ( SHADE == SHADE_GLYPH ) {
+					// DrawBitmaps (glyphs): the quad's colour, alpha from the texture
+					out = c * Set4( 1.0f, 1.0f, 1.0f, Alpha( s0.Sample( uu, vv ) ) );
+				} else if constexpr ( SHADE == SHADE_COLOR ) {
+					out = fillColour;
+				} else if constexpr ( SHADE == SHADE_TEXTURE ) {
+					out = s0.Sample( uu, vv );
+				} else if constexpr ( SHADE == SHADE_GOURAUD ) {
+					out = c;
+				} else {
+					const F4 t0 = s0.Sample( uu, vv );
+					F4 other;
+					if constexpr ( SHADE == SHADE_GOURAUD_TEX2 ) {
+						other = s1.Sample( uu1, vv1 );
+					} else {
+						other = c;
+					}
+					out = other + ( t0 - other ) * Splat( fl );
+				}
+				out = Clamp4( out * mul + add );
+				if constexpr ( gouraud ) {
+					out = out * Set4( 1.0f, 1.0f, 1.0f, Clamp01( fa ) );	// edge anti-aliasing
+				}
+				const float alpha = Alpha( out );
+				if ( alpha <= 0.0f ) {
+					continue;
+				}
+				out = out * Set4( alpha, alpha, alpha, 1.0f );
+				if constexpr ( NORMAL ) {
+					const float keep = ( 1.0f - alpha ) * ( 1.0f / 255.0f );
+					PutBytes( Clamp4( out + Bytes( p ) * Splat( keep ) ) * Splat( 255.0f ) + Splat( 0.5f ), p );
+				} else {
+					float o[4];
+					Store4( out, o );
+					BlendSpecial( p, o, mode );
+				}
+			}
+		}
+	}
+	testedOut += tested;
+}
+
+using RasterFn = void ( * )( const Canvas::Op &, uint8_t *, uint8_t *, int, int, int, int64_t & );
+
+template <int SHADE>
+constexpr RasterFn Pick( bool normal ) {
+	return normal ? &RasterRows<SHADE, true> : &RasterRows<SHADE, false>;
+}
+
+RasterFn RasterFor( int shade, bool normal ) {
+	switch ( shade ) {
+	case SHADE_SUBMIT: return Pick<SHADE_SUBMIT>( normal );
+	case SHADE_COLOR: return Pick<SHADE_COLOR>( normal );
+	case SHADE_TEXTURE: return Pick<SHADE_TEXTURE>( normal );
+	case SHADE_GOURAUD: return Pick<SHADE_GOURAUD>( normal );
+	case SHADE_GOURAUD_TEX: return Pick<SHADE_GOURAUD_TEX>( normal );
+	case SHADE_GOURAUD_TEX2: return Pick<SHADE_GOURAUD_TEX2>( normal );
+	default: return Pick<SHADE_GLYPH>( normal );
+	}
+}
+
+/* A queued triangle's bytes, hashed: every field is set the same way for
+ * the same triangle (NewOp zeroes the padding, Raster leaves the fields its
+ * fill does not use at zero), so equal hashes mean the same pixels. */
+uint64_t HashOp( const Canvas::Op &op ) {
+	static_assert( sizeof( Canvas::Op ) % 8 == 0, "an Op hashes in 8-byte words" );
+	const unsigned char *p = reinterpret_cast<const unsigned char *>( &op );
+	uint64_t h = 0x243F6A8885A308D3ull;
+	for ( size_t i = 0; i < sizeof( Canvas::Op ); i += 8 ) {
+		uint64_t v;
+		std::memcpy( &v, p + i, 8 );
+		h = ( h ^ v ) * 0x9E3779B97F4A7C15ull;
+		h ^= h >> 32;
+	}
+	return h;
+}
+
+/* Premultiplied to straight colour: min(255, c * 255 / a), by alpha then
+ * colour. */
+const uint8_t *Unpremultiply() {
+	static const std::vector<uint8_t> table = [] {
+		std::vector<uint8_t> t( 256 * 256 );
+		for ( int a = 1; a < 256; a++ ) {
+			for ( int c = 0; c < 256; c++ ) {
+				t[a * 256 + c] = static_cast<uint8_t>( std::min( 255, c * 255 / a ) );
+			}
+		}
+		return t;
+	}();
+	return table.data();
+}
+
+}	// namespace
+
+void Canvas::Resize( int width, int height ) {
+	if ( width == width_ && height == height_ ) {
 		return;
 	}
-	const float fx = u * w - 0.5f, fy = v * h - 0.5f;
-	const int ix = FloorInt( fx ), iy = FloorInt( fy );
-	const float ax = fx - ix, ay = fy - iy;
-	const int xa = Address( ix, w, t.clamp ), xb = Address( ix + 1, w, t.clamp );
-	const int ya = Address( iy, h, t.clamp ), yb = Address( iy + 1, h, t.clamp );
-	const uint8_t *p00 = base + ( static_cast<size_t>( ya ) * w + xa ) * 4;
-	const uint8_t *p10 = base + ( static_cast<size_t>( ya ) * w + xb ) * 4;
-	const uint8_t *p01 = base + ( static_cast<size_t>( yb ) * w + xa ) * 4;
-	const uint8_t *p11 = base + ( static_cast<size_t>( yb ) * w + xb ) * 4;
-	const float w11 = ax * ay, w10 = ax - w11, w01 = ay - w11, w00 = 1.0f - ax - ay + w11;
-	for ( int k = 0; k < 4; k++ ) {
-		out[k] = ( p00[k] * w00 + p10[k] * w10 + p01[k] * w01 + p11[k] * w11 ) * ( 1.0f / 255.0f );
+	width_ = std::max( width, 1 );
+	height_ = std::max( height, 1 );
+	pixels_.assign( static_cast<size_t>( width_ ) * height_ * 4, 0 );
+	stencil_.assign( static_cast<size_t>( width_ ) * height_, 0 );
+	rowBlank_.assign( static_cast<size_t>( height_ ), 1 );
+	straightBlank_.assign( static_cast<size_t>( height_ ), 0 );
+	lastStraight_ = nullptr;
+	lastStraightSize_ = 0;
+	ops_.clear();
+	clearPending_ = false;
+	const int bands = ( height_ + BAND_ROWS - 1 ) / BAND_ROWS;
+	bandHash_.assign( static_cast<size_t>( bands ), 0 );
+	bandStale_.assign( static_cast<size_t>( bands ), 1 );
+	bandsValid_ = false;	// the old frame is gone
+	clip_[0] = clip_[1] = 0;
+	clip_[2] = width_;
+	clip_[3] = height_;
+}
+
+void Canvas::Clear() {
+	ops_.clear();
+	clearPending_ = true;
+	blend_.clear();
+	stencilLevel_ = 0;
+	maskState_ = MASK_OFF;
+	matrix_ = Matrix();
+	user_ = Matrix();
+	cx_ = Cxform();
+	triangles_ = 0;
+	pixelsTested_ = 0;
+	rowsDrawn_ = 0;
+}
+
+void Canvas::ToStraight( std::vector<uint8_t> &out ) const {
+	Flush( &out );
+}
+
+/* One band: when raster, the pending clear and the queued triangles that
+ * reach it, in order; then, when it changed since the straight copy was
+ * last made (or the copy goes to another buffer), its straight copy. Rows
+ * no triangle touches and that are already transparent are left alone, in
+ * the pixels and, when the copy goes to the same buffer as last time, in
+ * the copy. */
+void Canvas::RunBand( int band, bool raster, bool clear, std::vector<uint8_t> *straight, bool sameStraight,
+	BandResult *out ) const {
+	const int ya = band * BAND_ROWS, yb = std::min( height_, ya + BAND_ROWS );
+	const size_t rowBytes = static_cast<size_t>( width_ ) * 4;
+	if ( raster ) {
+		const std::vector<uint32_t> &list = bandOps_[band];
+		// the rows the triangles cover
+		uint8_t touched[BAND_ROWS] = {};
+		for ( uint32_t i : list ) {
+			const Op &op = ops_[i];
+			if ( op.type == OP_TRIANGLE ) {
+				const int r0 = std::max( ya, op.y0 ), r1 = std::min( yb, op.y1 );
+				std::memset( touched + ( r0 - ya ), 1, static_cast<size_t>( r1 - r0 ) );
+			}
+		}
+		for ( int y = ya; y < yb; y++ ) {
+			const bool used = touched[y - ya] != 0;
+			if ( clear ) {
+				if ( used || !rowBlank_[y] ) {
+					std::memset( pixels_.data() + y * rowBytes, 0, rowBytes );
+				}
+				rowBlank_[y] = !used;
+			} else if ( used ) {
+				rowBlank_[y] = 0;
+			}
+		}
+		// The stencil is cleared at a frame's start and by a mask's first
+		// submit; it is only written when a triangle reads it.
+		bool stencilZero = clear;
+		for ( uint32_t i : list ) {
+			const Op &op = ops_[i];
+			if ( op.type == OP_CLEAR_STENCIL ) {
+				stencilZero = true;
+				continue;
+			}
+			if ( op.mask != M_OFF && stencilZero ) {
+				std::memset( stencil_.data() + static_cast<size_t>( ya ) * width_, 0, static_cast<size_t>( yb - ya ) * width_ );
+				stencilZero = false;
+			}
+			const RasterFn fn = RasterFor( op.shade, NormalBlend( op.mode ) );
+			fn( op, pixels_.data(), stencil_.data(), width_, std::max( ya, op.y0 ), std::min( yb, op.y1 ), out->tested );
+		}
+		out->rows = yb - ya;
+		bandStale_[band] = 1;
 	}
+	if ( !straight || ( sameStraight && !bandStale_[band] ) ) {
+		return;
+	}
+	bandStale_[band] = 0;
+	const uint8_t *unpremultiply = Unpremultiply();
+	auto mark = [out]( int y ) {
+		if ( !out->changed.empty() && out->changed.back() == y ) {
+			out->changed.back() = y + 1;
+		} else {
+			out->changed.push_back( y );
+			out->changed.push_back( y + 1 );
+		}
+	};
+	for ( int y = ya; y < yb; y++ ) {
+		uint8_t *o = straight->data() + y * rowBytes;
+		if ( rowBlank_[y] ) {
+			if ( sameStraight && straightBlank_[y] ) {
+				continue;	// transparent before and now
+			}
+			std::memset( o, 0, rowBytes );
+			straightBlank_[y] = 1;
+		} else {
+			const uint8_t *p = pixels_.data() + y * rowBytes;
+			for ( int x = 0; x < width_; x++, p += 4, o += 4 ) {
+				const int a = p[3];
+				if ( a == 0 ) {
+					std::memset( o, 0, 4 );
+				} else if ( a == 255 ) {
+					std::memcpy( o, p, 4 );
+				} else {
+					const uint8_t *t = unpremultiply + a * 256;
+					o[0] = t[p[0]];
+					o[1] = t[p[1]];
+					o[2] = t[p[2]];
+					o[3] = static_cast<uint8_t>( a );
+				}
+			}
+			straightBlank_[y] = 0;
+		}
+		mark( y );
+	}
+}
+
+void Canvas::Flush( std::vector<uint8_t> *straight ) const {
+	const bool sameStraight = straight && straight->data() == lastStraight_ && straight->size() == pixels_.size()
+		&& lastStraightSize_ == pixels_.size();
+	if ( straight ) {
+		straight->resize( pixels_.size() );
+	}
+	const bool clear = clearPending_;
+	if ( !clear && ops_.empty() && !straight ) {
+		return;
+	}
+	const int bands = ( height_ + BAND_ROWS - 1 ) / BAND_ROWS;
+	bandOps_.resize( static_cast<size_t>( bands ) );
+	for ( std::vector<uint32_t> &list : bandOps_ ) {
+		list.clear();
+	}
+	for ( size_t i = 0; i < ops_.size(); i++ ) {
+		const Op &op = ops_[i];
+		for ( int b = op.y0 / BAND_ROWS; b <= ( op.y1 - 1 ) / BAND_ROWS; b++ ) {
+			bandOps_[b].push_back( static_cast<uint32_t>( i ) );
+		}
+	}
+	// Which bands to rasterise. A frame flushed in one go after Clear()
+	// leaves alone the bands whose triangles hash the same as the last
+	// frame's; a flush that continues a frame invalidates every band, as
+	// their hashes then describe only part of what they hold.
+	std::vector<uint8_t> raster( static_cast<size_t>( bands ), 0 );
+	if ( clear ) {
+		const bool reuse = bandsValid_;
+		std::vector<uint64_t> opHash( ops_.size() );
+		for ( size_t i = 0; i < ops_.size(); i++ ) {
+			opHash[i] = HashOp( ops_[i] );
+		}
+		for ( int b = 0; b < bands; b++ ) {
+			uint64_t h = 0x13198A2E03707344ull;
+			for ( uint32_t i : bandOps_[b] ) {
+				h = ( h ^ opHash[i] ) * 0x9E3779B97F4A7C15ull;
+				h ^= h >> 29;
+			}
+			raster[b] = !reuse || h != bandHash_[b];
+			bandHash_[b] = h;
+		}
+		bandsValid_ = true;
+	} else if ( !ops_.empty() ) {
+		for ( int b = 0; b < bands; b++ ) {
+			raster[b] = !bandOps_[b].empty();
+		}
+		bandsValid_ = false;
+	}
+	std::vector<int> work;
+	for ( int b = 0; b < bands; b++ ) {
+		if ( raster[b] || ( straight && ( !sameStraight || bandStale_[b] ) ) ) {
+			work.push_back( b );
+		}
+	}
+	std::vector<BandResult> results( work.size() );
+	Workers &workers = Workers::Get();
+	auto run = [&]( int i ) {
+		RunBand( work[i], raster[work[i]] != 0, clear, straight, sameStraight, &results[i] );
+	};
+	if ( workers.Threads() <= 1 || work.size() <= 1 || static_cast<int64_t>( width_ ) * height_ < ( 1 << 16 ) ) {
+		for ( size_t i = 0; i < work.size(); i++ ) {
+			run( static_cast<int>( i ) );
+		}
+	} else {
+		workers.Run( static_cast<int>( work.size() ), run );
+	}
+	if ( straight ) {
+		// ranges of written rows, joined over small gaps (an upload per
+		// range costs more than a few extra rows)
+		changed_.clear();
+		for ( const BandResult &r : results ) {
+			for ( size_t i = 0; i + 1 < r.changed.size(); i += 2 ) {
+				if ( !changed_.empty() && r.changed[i] - changed_.back() <= 16 ) {
+					changed_.back() = r.changed[i + 1];
+				} else {
+					changed_.push_back( r.changed[i] );
+					changed_.push_back( r.changed[i + 1] );
+				}
+			}
+		}
+		lastStraight_ = straight->data();
+		lastStraightSize_ = straight->size();
+	}
+	for ( const BandResult &r : results ) {
+		pixelsTested_ += r.tested;
+		rowsDrawn_ += r.rows;
+	}
+	ops_.clear();
+	clearPending_ = false;
+}
+
+void Canvas::SetView( const Matrix &toPixels, int clipX0, int clipY0, int clipX1, int clipY1 ) {
+	view_ = toPixels;
+	clip_[0] = std::max( 0, clipX0 );
+	clip_[1] = std::max( 0, clipY0 );
+	clip_[2] = std::min( width_, clipX1 );
+	clip_[3] = std::min( height_, clipY1 );
+}
+
+void Canvas::PushBlend( int mode ) {
+	blend_.push_back( mode );
+}
+
+void Canvas::PopBlend() {
+	if ( !blend_.empty() ) {
+		blend_.pop_back();
+	}
+}
+
+void Canvas::BeginSubmitMask( int mode ) {
+	if ( mode == 0 ) {
+		Op &op = NewOp();
+		op.type = OP_CLEAR_STENCIL;
+		op.x0 = 0;
+		op.y0 = 0;
+		op.x1 = width_;
+		op.y1 = height_;
+		stencilLevel_ = 0;
+	}
+	maskState_ = mode == 2 ? MASK_SUBMIT_DECR : MASK_SUBMIT_INCR;
+}
+
+void Canvas::EndSubmitMask() {
+	if ( maskState_ == MASK_SUBMIT_INCR ) {
+		stencilLevel_++;
+	} else if ( maskState_ == MASK_SUBMIT_DECR ) {
+		stencilLevel_ = std::max( 0, stencilLevel_ - 1 );
+	}
+	maskState_ = stencilLevel_ > 0 ? MASK_TEST : MASK_OFF;
+}
+
+void Canvas::DisableMask() {
+	maskState_ = MASK_OFF;
+	stencilLevel_ = 0;
+}
+
+Matrix Canvas::Full() const {
+	return Matrix::Mul( view_, Matrix::Mul( user_, matrix_ ) );
+}
+
+/* A queued op, all zero (padding too: the flush hashes its bytes). */
+Canvas::Op &Canvas::NewOp() {
+	static_assert( std::is_trivially_copyable<Op>::value, "an Op is plain data" );
+	ops_.emplace_back();
+	Op &op = ops_.back();
+	std::memset( static_cast<void *>( &op ), 0, sizeof( op ) );
+	return op;
 }
 
 void Canvas::Raster( const ScreenVertex &a, const ScreenVertex &b, const ScreenVertex &c, const Fill &fill, bool explicitUV ) {
@@ -566,185 +1104,114 @@ void Canvas::Raster( const ScreenVertex &a, const ScreenVertex &b, const ScreenV
 		return;
 	}
 	triangles_++;
-	const bool tl0 = TopLeft( v1->sx, v1->sy, v2->sx, v2->sy );
-	const bool tl1 = TopLeft( v2->sx, v2->sy, v0->sx, v0->sy );
-	const bool tl2 = TopLeft( v0->sx, v0->sy, v1->sx, v1->sy );
-	const int mode = blend_.empty() ? BLEND_NORMAL : blend_.back();
-	// Blend modes Shade treats as normal (GFx draws most shapes as "none" or
-	// "layer"), unmasked or stencil-tested: blended inline below.
-	const bool normalBlend = mode != BLEND_ADD && mode != BLEND_SUBTRACT && mode != BLEND_MULTIPLY
-		&& mode != BLEND_DARKEN && mode != BLEND_LIGHTEN && mode != BLEND_SCREEN;
-	const bool plain = normalBlend && ( maskState_ == MASK_OFF || maskState_ == MASK_TEST );
-	const bool stencilTest = maskState_ == MASK_TEST;
-	const uint8_t level = static_cast<uint8_t>( stencilLevel_ );
 
-	// What the fill needs, as planes over the triangle.
+	// Only the fields the fill uses are set; the rest stay zero, so state
+	// left over from earlier commands (the fill colour under a gouraud fill,
+	// say) does not make a repeated triangle look new.
+	Op &op = NewOp();
+	op.type = OP_TRIANGLE;
+	op.mask = static_cast<uint8_t>( maskState_ );
+	op.x0 = x0;
+	op.y0 = y0;
+	op.x1 = x1;
+	op.y1 = y1;
 	const ScreenVertex *vs[3] = { v0, v1, v2 };
-	const float sx[3] = { v0->sx, v1->sx, v2->sx }, sy[3] = { v0->sy, v1->sy, v2->sy };
+	for ( int k = 0; k < 3; k++ ) {
+		op.sx[k] = vs[k]->sx;
+		op.sy[k] = vs[k]->sy;
+	}
+	op.tl[0] = TopLeft( v1->sx, v1->sy, v2->sx, v2->sy );
+	op.tl[1] = TopLeft( v2->sx, v2->sy, v0->sx, v0->sy );
+	op.tl[2] = TopLeft( v0->sx, v0->sy, v1->sx, v1->sy );
+	if ( submit ) {
+		op.shade = SHADE_SUBMIT;
+		op.level = static_cast<uint8_t>( stencilLevel_ );
+		return;
+	}
+	if ( maskState_ == MASK_TEST ) {
+		op.level = static_cast<uint8_t>( stencilLevel_ );
+	}
+	const int mode = blend_.empty() ? BLEND_NORMAL : blend_.back();
+	op.mode = static_cast<uint8_t>( NormalBlend( mode ) ? BLEND_NORMAL : mode );
+	op.cx = cx_;
+
+	// The fill. Gouraud fills whose factors are the same at every vertex
+	// are drawn as what they reduce to: texture only (factor.b 1), colour
+	// only (factor.b 0), a solid colour (one colour); with factor.a 1 edge
+	// anti-aliasing changes nothing.
+	auto all = [&]( auto test ) {
+		return test( *vs[0] ) && test( *vs[1] ) && test( *vs[2] );
+	};
+	const bool opaqueEdges = all( []( const ScreenVertex &v ) { return v.factor[3] >= 1.0f; } );
+	const bool lerpTexture = all( []( const ScreenVertex &v ) { return v.factor[2] == 1.0f; } );
+	const bool lerpColour = all( []( const ScreenVertex &v ) { return v.factor[2] == 0.0f; } );
+	const bool oneColour = all( [&]( const ScreenVertex &v ) { return !std::memcmp( v.color, vs[0]->color, sizeof( v.color ) ); } );
+	const bool gouraudTex = !explicitUV && fill.kind == FILL_GOURAUD && fill.texCount > 0 && fill.gouraud != GFILL_COLOR;
+	const bool twoTex = gouraudTex && fill.texCount > 1
+		&& ( fill.gouraud == GFILL_2TEXTURE || fill.gouraud == GFILL_2TEXTURE_COLOR || fill.gouraud == GFILL_3TEXTURE );
+	if ( explicitUV ) {
+		op.shade = SHADE_GLYPH;
+	} else if ( fill.kind == FILL_COLOR ) {
+		op.shade = SHADE_COLOR;
+	} else if ( fill.kind == FILL_TEXTURE ) {
+		op.shade = SHADE_TEXTURE;
+	} else if ( gouraudTex && lerpTexture && opaqueEdges ) {
+		op.shade = SHADE_TEXTURE;
+	} else if ( twoTex ) {
+		op.shade = SHADE_GOURAUD_TEX2;
+	} else if ( gouraudTex && !lerpColour ) {
+		op.shade = SHADE_GOURAUD_TEX;
+	} else if ( oneColour && opaqueEdges ) {
+		op.shade = SHADE_COLOR;
+	} else {
+		op.shade = SHADE_GOURAUD;
+	}
+
+	if ( op.shade == SHADE_COLOR ) {
+		std::memcpy( op.color, fill.kind == FILL_COLOR ? fill.color : vs[0]->color, sizeof( op.color ) );
+		return;
+	}
+	// What the fill needs, as planes over the triangle.
 	Plane w[3];
-	WeightPlanes( sx, sy, 1.0f / area, w );
+	WeightPlanes( op.sx, op.sy, 1.0f / area, w );
 	auto attr = [&]( float ScreenVertex::*field ) {
 		return Interpolate( w, vs[0]->*field, vs[1]->*field, vs[2]->*field );
 	};
 	auto attrK = [&]( float ( ScreenVertex::*field )[4], int k ) {
 		return Interpolate( w, ( vs[0]->*field )[k], ( vs[1]->*field )[k], ( vs[2]->*field )[k] );
 	};
-	const bool gouraudTex = !explicitUV && fill.kind == FILL_GOURAUD && fill.texCount > 0 && fill.gouraud != GFILL_COLOR;
-	const bool twoTex = gouraudTex && fill.texCount > 1
-		&& ( fill.gouraud == GFILL_2TEXTURE || fill.gouraud == GFILL_2TEXTURE_COLOR || fill.gouraud == GFILL_3TEXTURE );
-	const bool needColor = explicitUV || ( fill.kind == FILL_GOURAUD && !twoTex );
-	Plane col[4], facLerp, facAlpha, u0, v0p, u1, v1p;
-	if ( needColor ) {
-		for ( int k = 0; k < 4; k++ ) {
-			col[k] = attrK( &ScreenVertex::color, k );
-		}
-	}
-	if ( !explicitUV && fill.kind == FILL_GOURAUD ) {
-		facLerp = attrK( &ScreenVertex::factor, 2 );
-		facAlpha = attrK( &ScreenVertex::factor, 3 );
-	}
-	if ( explicitUV ) {
-		u0 = attr( &ScreenVertex::u );
-		v0p = attr( &ScreenVertex::v );
-	} else if ( fill.kind == FILL_TEXTURE || gouraudTex ) {
-		const Plane shapeX = attr( &ScreenVertex::x ), shapeY = attr( &ScreenVertex::y );
-		UvPlanes( fill.tex[0].uv, shapeX, shapeY, &u0, &v0p );
-		if ( twoTex ) {
-			UvPlanes( fill.tex[1].uv, shapeX, shapeY, &u1, &v1p );
-		}
-	}
-	const Cxform cx = cx_;
-
-	// The x range a row can cover, from each edge's half-plane, widened by a
-	// pixel: the exact per-pixel test below still decides every pixel.
-	const ScreenVertex *ev[3][2] = { { v1, v2 }, { v2, v0 }, { v0, v1 } };
-	std::atomic<int64_t> testedAll{ 0 };
-	auto rows = [&]( int ya, int yb ) {
-		int64_t tested = 0;
-		for ( int y = ya; y < yb; y++ ) {
-			const float py = y + 0.5f;
-			// Where each edge crosses the row: px <= cross (dy > 0) or px >= cross
-			// (dy < 0). [xa, xb) widens that by a pixel and [inA, inB) narrows it
-			// by one: pixels in [inA, inB) are inside every edge and skip the test.
-			float lo = static_cast<float>( x0 ), hi = static_cast<float>( x1 );
-			bool interior = true;
-			for ( const auto &e : ev ) {
-				// Edge(a, b, px, py) = (b.x - a.x)(py - a.y) - (b.y - a.y)(px - a.x) >= 0
-				const float dy = e[1]->sy - e[0]->sy;
-				const float k = ( e[1]->sx - e[0]->sx ) * ( py - e[0]->sy );
-				if ( dy == 0 ) {
-					interior = interior && k > 0;	// the same sign along the whole row
-					continue;
-				}
-				const float cross = e[0]->sx + k / dy;
-				if ( !( std::fabs( cross ) < 1.0e6f ) ) {
-					interior = false;	// too far out to trust to a pixel
-					continue;
-				}
-				if ( dy > 0 ) {
-					hi = std::min( hi, cross );
-				} else {
-					lo = std::max( lo, cross );
-				}
-			}
-			const int xa = std::max( x0, static_cast<int>( std::floor( lo - 1.0f ) ) );
-			const int xb = std::min( x1, static_cast<int>( std::ceil( hi + 1.0f ) ) + 1 );
-			if ( xa >= xb ) {
-				continue;
-			}
-			const int inA = interior ? std::max( xa, static_cast<int>( std::ceil( lo + 1.0f ) ) ) : xb;
-			const int inB = interior ? std::min( xb, static_cast<int>( std::floor( hi - 1.0f ) ) ) : xb;
-			tested += xb - xa;
-			// the planes at the row's first pixel, stepped by dx per pixel
-			const float pxa = xa + 0.5f;
-			float c[4];
-			for ( int k = 0; k < 4; k++ ) {
-				c[k] = col[k].At( pxa, py );
-			}
-			float fl = facLerp.At( pxa, py ), fa = facAlpha.At( pxa, py );
-			float uu = u0.At( pxa, py ), vv = v0p.At( pxa, py );
-			float uu1 = u1.At( pxa, py ), vv1 = v1p.At( pxa, py );
-			uint8_t *row = &pixels_[( static_cast<size_t>( y ) * width_ ) * 4];
-			for ( int x = xa; x < xb; x++, fl += facLerp.dx, fa += facAlpha.dx, uu += u0.dx, vv += v0p.dx,
-				uu1 += u1.dx, vv1 += v1p.dx, c[0] += col[0].dx, c[1] += col[1].dx, c[2] += col[2].dx, c[3] += col[3].dx ) {
-				if ( x < inA || x >= inB ) {
-					const float px = x + 0.5f;
-					const float e0 = Edge( v1->sx, v1->sy, v2->sx, v2->sy, px, py );
-					const float e1 = Edge( v2->sx, v2->sy, v0->sx, v0->sy, px, py );
-					const float e2 = Edge( v0->sx, v0->sy, v1->sx, v1->sy, px, py );
-					if ( e0 < 0 || e1 < 0 || e2 < 0 ) {
-						continue;
-					}
-					if ( ( e0 == 0 && !tl0 ) || ( e1 == 0 && !tl1 ) || ( e2 == 0 && !tl2 ) ) {
-						continue;
-					}
-				}
-				if ( submit ) {
-					const float none[4] = { 0, 0, 0, 0 };
-					Shade( x, y, none, mode );
-					continue;
-				}
-				float out[4];
-				if ( explicitUV ) {
-					// DrawBitmaps (glyphs): the quad's colour, alpha from the texture
-					float t[4];
-					Sample( fill.tex[0], uu, vv, t );
-					std::memcpy( out, c, sizeof( out ) );
-					out[3] *= t[3];
-				} else if ( fill.kind == FILL_COLOR ) {
-					std::memcpy( out, fill.color, sizeof( out ) );
-				} else if ( fill.kind == FILL_TEXTURE ) {
-					Sample( fill.tex[0], uu, vv, out );
-				} else if ( !gouraudTex ) {
-					std::memcpy( out, c, sizeof( out ) );
-				} else {
-					float t0[4], t1[4];
-					Sample( fill.tex[0], uu, vv, t0 );
-					const float *other = c;
-					if ( twoTex ) {
-						Sample( fill.tex[1], uu1, vv1, t1 );
-						other = t1;
-					}
-					for ( int k = 0; k < 4; k++ ) {
-						out[k] = other[k] + ( t0[k] - other[k] ) * fl;
-					}
-				}
-				for ( int k = 0; k < 4; k++ ) {
-					out[k] = Clamp01( out[k] * cx.mul[k] + cx.add[k] );
-				}
-				if ( !explicitUV && fill.kind == FILL_GOURAUD ) {
-					out[3] *= Clamp01( fa );	// edge anti-aliasing
-				}
-				if ( out[3] <= 0.0f ) {
-					continue;
-				}
-				out[0] *= out[3];
-				out[1] *= out[3];
-				out[2] *= out[3];
-				if ( plain ) {
-					// Shade's mask test and normal blend, inline
-					if ( stencilTest && stencil_[static_cast<size_t>( y ) * width_ + x] != level ) {
-						continue;
-					}
-					uint8_t *p = row + x * 4;
-					const float keep = ( 1.0f - out[3] ) * ( 1.0f / 255.0f );
-					for ( int k = 0; k < 4; k++ ) {
-						p[k] = static_cast<uint8_t>( Clamp01( out[k] + p[k] * keep ) * 255.0f + 0.5f );
-					}
-				} else {
-					Shade( x, y, out, mode );
-				}
-			}
-		}
-		testedAll += tested;
+	auto ref = []( const TextureFill &t, TexRef *r, uint64_t *version ) {
+		r->texture = t.texture;
+		r->clamp = t.clamp;
+		r->linear = t.linear;
+		*version = t.texture ? t.texture->version : 0;
 	};
-	if ( static_cast<int64_t>( x1 - x0 ) * ( y1 - y0 ) >= PARALLEL_PIXELS && y1 - y0 >= 8 ) {
-		RowPool::Get().Run( y0, y1, rows );
-	} else {
-		rows( y0, y1 );
+	if ( op.shade == SHADE_GLYPH || op.shade == SHADE_GOURAUD || op.shade == SHADE_GOURAUD_TEX ) {
+		for ( int k = 0; k < 4; k++ ) {
+			op.col[k] = attrK( &ScreenVertex::color, k );
+		}
 	}
-	pixelsTested_ += testedAll;
+	if ( op.shade == SHADE_GOURAUD || op.shade == SHADE_GOURAUD_TEX || op.shade == SHADE_GOURAUD_TEX2 ) {
+		op.facAlpha = attrK( &ScreenVertex::factor, 3 );
+		if ( op.shade != SHADE_GOURAUD ) {
+			op.facLerp = attrK( &ScreenVertex::factor, 2 );
+		}
+	}
+	if ( op.shade == SHADE_GLYPH ) {
+		op.u0 = attr( &ScreenVertex::u );
+		op.v0 = attr( &ScreenVertex::v );
+		ref( fill.tex[0], &op.tex0, &op.version0 );
+	} else if ( op.shade != SHADE_GOURAUD ) {
+		const Plane shapeX = attr( &ScreenVertex::x ), shapeY = attr( &ScreenVertex::y );
+		UvPlanes( fill.tex[0].uv, shapeX, shapeY, &op.u0, &op.v0 );
+		ref( fill.tex[0], &op.tex0, &op.version0 );
+		if ( op.shade == SHADE_GOURAUD_TEX2 ) {
+			UvPlanes( fill.tex[1].uv, shapeX, shapeY, &op.u1, &op.v1 );
+			ref( fill.tex[1], &op.tex1, &op.version1 );
+		}
+	}
 }
+
 
 void Canvas::DrawTriangles( const Vertex *v, const uint32_t *indices, int triangles, const Fill &fill ) {
 	if ( fill.kind == FILL_NONE && maskState_ != MASK_SUBMIT_INCR && maskState_ != MASK_SUBMIT_DECR ) {

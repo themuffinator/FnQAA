@@ -266,10 +266,142 @@ void TestTGA() {
 	Check( !DecodeTGA( rle, 10, t ), "a truncated TGA is refused" );
 }
 
+/* A canvas big enough to flush in bands of rows on the worker threads: a
+ * half-opaque rectangle split along its diagonal covers every pixel exactly
+ * once, a mask drawn first still clips what follows, and the bands' straight
+ * copy matches the premultiplied pixels. */
+void TestBands() {
+	const int w = 640, h = 480;
+	Canvas c = Fresh( w, h );
+	c.BeginSubmitMask( 0 );
+	Rect( c, 0, 0, 320, 480, Fill() );	// the mask: the left half
+	c.EndSubmitMask();
+	Rect( c, 0, 0, 640, 480, Solid( 1, 0, 0, 0.5f ) );
+	c.DisableMask();
+	const Vertex v[4] = { V( 0, 0 ), V( 640, 0 ), V( 640, 480 ), V( 0, 480 ) };
+	const uint32_t idx[6] = { 0, 1, 2, 0, 2, 3 };
+	c.DrawTriangles( v, idx, 2, Solid( 0, 0, 1, 0.5f ) );
+	std::vector<uint8_t> straight;
+	c.ToStraight( straight );
+	int wrong = 0;
+	for ( int y = 0; y < h; y++ ) {
+		for ( int x = 0; x < w; x++ ) {
+			const uint8_t *p = Px( c, x, y );
+			// left: red at half, then blue at half over it; right: blue only
+			const bool left = x < 320;
+			const int a = left ? 192 : 128, r = left ? 64 : 0;
+			wrong += p[3] != a || p[0] != r || p[2] != 128 || straight[( static_cast<size_t>( y ) * w + x ) * 4 + 3] != a;
+		}
+	}
+	Check( wrong == 0, "banded flush: each pixel once, masks and order kept across bands" );
+
+	// the same frame again: no band is drawn or converted
+	auto drawFrame = [&]( bool extra ) {
+		c.Clear();
+		c.BeginSubmitMask( 0 );
+		Rect( c, 0, 0, 320, 480, Fill() );
+		c.EndSubmitMask();
+		Rect( c, 0, 0, 640, 480, Solid( 1, 0, 0, 0.5f ) );
+		c.DisableMask();
+		c.DrawTriangles( v, idx, 2, Solid( 0, 0, 1, 0.5f ) );
+		if ( extra ) {
+			Rect( c, 100, 200, 110, 210, Solid( 0, 1, 0, 1 ) );
+		}
+	};
+	drawFrame( false );
+	c.ToStraight( straight );
+	Check( c.RowsDrawn() == 0 && c.ChangedRows().empty() && Px( c, 10, 10 )[3] == 192,
+		"a frame that repeats draws and converts nothing" );
+	// one small change: only the bands it reaches
+	drawFrame( true );
+	c.ToStraight( straight );
+	const std::vector<int> &one = c.ChangedRows();
+	Check( c.RowsDrawn() == 2 * Canvas::BAND_ROWS && one.size() == 2 && one[0] == 192 && one[1] == 224
+		&& Px( c, 105, 205 )[1] == 255 && Px( c, 105, 220 )[3] == 192 && Px( c, 400, 205 )[2] == 128
+		&& straight[( 205 * w + 105 ) * 4 + 1] == 255, "a change redraws only the bands it reaches" );
+	drawFrame( false );
+	c.ToStraight( straight );
+	Check( c.RowsDrawn() == 2 * Canvas::BAND_ROWS && Px( c, 105, 205 )[1] == 0 && Px( c, 105, 205 )[3] == 192
+		&& straight[( 205 * w + 105 ) * 4 + 1] == 0, "and taking it away redraws them again" );
+	// a frame flushed in two parts is not taken for one that repeats its first
+	c.Clear();
+	Rect( c, 0, 0, 640, 480, Solid( 1, 1, 1, 1 ) );
+	c.Flush();
+	Rect( c, 0, 0, 640, 480, Solid( 0, 0, 0, 1 ) );
+	c.ToStraight( straight );
+	c.Clear();
+	Rect( c, 0, 0, 640, 480, Solid( 1, 1, 1, 1 ) );
+	c.ToStraight( straight );
+	Check( Px( c, 300, 300 )[0] == 255 && straight[( 300 * w + 300 ) * 4] == 255,
+		"a frame flushed in parts is drawn again in full" );
+	// a texture's new version redraws what samples it
+	Texture tex;
+	tex.width = tex.height = 1;
+	tex.rgba = { 255, 0, 0, 255 };
+	tex.version = 1;
+	Fill tf;
+	tf.kind = FILL_TEXTURE;
+	tf.texCount = 1;
+	tf.tex[0].texture = &tex;
+	tf.tex[0].linear = false;
+	tf.tex[0].uv.m[0] = 1.0f / 640;
+	tf.tex[0].uv.m[4] = 1.0f / 480;
+	c.Clear();
+	Rect( c, 0, 0, 640, 480, tf );
+	c.ToStraight( straight );
+	tex.rgba = { 0, 255, 0, 255 };
+	tex.version = 2;
+	c.Clear();
+	Rect( c, 0, 0, 640, 480, tf );
+	c.ToStraight( straight );
+	Check( Px( c, 50, 50 )[1] == 255 && Px( c, 50, 50 )[0] == 0 && straight[( 50 * w + 50 ) * 4 + 1] == 255,
+		"a texture's new version redraws the bands that sample it" );
+	// a straight copy into another buffer gets every row
+	std::vector<uint8_t> other;
+	c.ToStraight( other );
+	Check( other.size() == straight.size() && other[( 50 * w + 50 ) * 4 + 1] == 255
+		&& other[( 470 * w + 600 ) * 4 + 1] == 255, "a copy into a new buffer converts every band" );
+
+	// a HUD-like strip: only its rows are rewritten in the same straight buffer
+	auto span = [&c]( int *y0, int *y1 ) {
+		const std::vector<int> &r = c.ChangedRows();
+		*y0 = r.size() == 2 ? r[0] : -1;
+		*y1 = r.size() == 2 ? r[1] : -1;
+		return static_cast<int>( r.size() / 2 );
+	};
+	int y0, y1;
+	c.Clear();
+	Rect( c, 0, 400, 640, 440, Solid( 1, 1, 1, 1 ) );
+	c.ToStraight( straight );
+	c.Clear();
+	Rect( c, 0, 400, 640, 440, Solid( 1, 0, 0, 1 ) );
+	c.ToStraight( straight );
+	span( &y0, &y1 );
+	Check( y0 == 400 && y1 == 440 && straight[( 420 * w ) * 4] == 255 && straight[( 420 * w ) * 4 + 1] == 0
+		&& straight[( 100 * w ) * 4 + 3] == 0, "only the rows a frame draws are converted again" );
+	c.Clear();
+	c.ToStraight( straight );
+	span( &y0, &y1 );
+	Check( y0 == 400 && y1 == 440 && straight[( 420 * w ) * 4 + 3] == 0 && Px( c, 5, 420 )[3] == 0,
+		"rows drawn last frame are cleared when nothing covers them" );
+	c.Clear();
+	c.ToStraight( straight );
+	Check( span( &y0, &y1 ) == 0, "an empty frame after an empty frame changes no rows" );
+
+	// two strips far apart are two ranges, not one covering the gap
+	c.Clear();
+	Rect( c, 0, 10, 640, 20, Solid( 1, 1, 1, 1 ) );
+	Rect( c, 0, 400, 640, 440, Solid( 1, 1, 1, 1 ) );
+	c.ToStraight( straight );
+	const std::vector<int> &r = c.ChangedRows();
+	Check( r.size() == 4 && r[0] == 10 && r[1] == 20 && r[2] == 400 && r[3] == 440, "separate strips upload separately" );
+}
+
 }
 
 int main() {
 	TestCoverageAndTopLeft();
+	TestBands();
 	TestCxformAndStraight();
 	TestBlendAdd();
 	TestMask();

@@ -1466,23 +1466,28 @@ static qboolean RB_DlightShadowsNeeded( void )
 }
 
 void RE_DrawWebUISurface( int x, int y, int w, int h, int cols, int rows,
-	const byte *data, qboolean dirty ) {
+	const byte *data, const int *changed, int numChanged ) {
 	image_t *image;
+	int i;
 
 	if ( !tr.registered || !data || cols <= 0 || rows <= 0 ) {
 		return;
 	}
 
 	if ( !tr.webUIImage ) {
+		// Created at 1x1 and sized below: R_CreateImage scales an image larger
+		// than glConfig.maxTextureSize (2048) down, so the surface would be
+		// smaller than the canvas and every later sub-image update would fail.
+		static byte placeholder[4];
 		tr.webUIImage = R_CreateImage(
-			"*webui", NULL, (byte *)data, cols, rows,
+			"*webui", NULL, placeholder, 1, 1,
 			IMGFLAG_CLAMPTOEDGE | IMGFLAG_NO_COMPRESSION | IMGFLAG_NOSCALE );
 		if ( !tr.webUIImage ) {
 			return;
 		}
 		tr.webUIShader = RE_RegisterShaderFromImage(
 			"*webui", LIGHTMAP_2D, tr.webUIImage, qfalse );
-		dirty = qfalse;
+		numChanged = 0;
 	}
 
 	image = tr.webUIImage;
@@ -1502,14 +1507,22 @@ void RE_DrawWebUISurface( int x, int y, int w, int h, int cols, int rows,
 		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gl_clamp_mode );
 		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gl_clamp_mode );
 #endif
-	} else if ( dirty ) {
+		numChanged = 0;	// all uploaded
+	}
+	// only the rows that changed (the HUD is a strip of the screen)
+	for ( i = 0; i < numChanged; i++ ) {
+		const int y0 = MAX( changed[i * 2], 0 ), y1 = MIN( changed[i * 2 + 1], rows );
+		const byte *span = data + (size_t)y0 * cols * 4;
+		if ( y1 <= y0 ) {
+			continue;
+		}
 #ifdef USE_VULKAN
-		vk_upload_image_data( image, 0, 0, cols, rows, 1,
-			(byte *)data, cols * rows * 4, qtrue );
+		vk_upload_image_data( image, 0, y0, cols, y1 - y0, 1,
+			(byte *)span, cols * ( y1 - y0 ) * 4, qtrue );
 #else
 		GL_Bind( image );
-		qglTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0,
-			cols, rows, GL_RGBA, GL_UNSIGNED_BYTE, data );
+		qglTexSubImage2D( GL_TEXTURE_2D, 0, 0, y0,
+			cols, y1 - y0, GL_RGBA, GL_UNSIGNED_BYTE, span );
 #endif
 	}
 

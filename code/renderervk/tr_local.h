@@ -2393,7 +2393,7 @@ void	GL_Cull( cullType_t cullType );
 
 void		RE_StretchRaw( int x, int y, int w, int h, int cols, int rows, const byte *data, int client, qboolean dirty );
 void		RE_UploadCinematic( int w, int h, int cols, int rows, const byte *data, int client, qboolean dirty );
-void		RE_DrawWebUISurface( int x, int y, int w, int h, int cols, int rows, const byte *data, qboolean dirty );
+void		RE_DrawWebUISurface( int x, int y, int w, int h, int cols, int rows, const byte *data, const int *changed, int numChanged );
 
 void		RE_BeginFrame( stereoFrame_t stereoFrame );
 void		RE_BeginRegistration( glconfig_t *glconfig );

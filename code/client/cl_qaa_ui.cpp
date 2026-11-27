@@ -31,14 +31,17 @@ Structure:
 #include "../qaa/qaa_guest_host.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstdarg>
 #include <cstdlib>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -808,27 +811,79 @@ void H_R_GetCommandBuffer( void *, qaa_hook_call *c ) {
 
 /* ==== textures ===================================================================== */
 
-std::vector<std::unique_ptr<qaa_ui::Texture>> textures;	// id = index + 1
+/*
+ * Host textures, by id (index + 1). SFUI creates, changes and frees them on
+ * its update thread and on its own loader threads, which run alongside the
+ * engine, while QAA_UI_Draw looks them up and the canvas samples them. So:
+ * - the table is locked;
+ * - every change gives the texture a new version once its texels are
+ *   written (TextureChanged), and the canvas redraws the bands whose
+ *   triangles sampled an older one;
+ * - on the drawing thread, triangles the canvas has queued are rasterised
+ *   before a texture they may sample changes or goes (TexturesChanging);
+ * - a texture freed on another thread is kept until the next draw starts,
+ *   when nothing queued can point at it.
+ */
+std::mutex textureLock;
+std::vector<std::unique_ptr<qaa_ui::Texture>> textures;	// under textureLock
+std::vector<std::unique_ptr<qaa_ui::Texture>> retired;		// under textureLock
+std::atomic<uint64_t> textureVersions;
+std::atomic<std::thread::id> drawThread;	// QAA_UI_Draw's
+
+bool OnDrawThread() {
+	return std::this_thread::get_id() == drawThread.load( std::memory_order_relaxed );
+}
+
+void TexturesChanging();
+
+void TextureChanged( qaa_ui::Texture *t ) {
+	if ( t ) {
+		t->version = ++textureVersions;
+	}
+}
 
 uint32_t NewTexture() {
+	std::unique_ptr<qaa_ui::Texture> t( new qaa_ui::Texture );
+	t->version = ++textureVersions;
+	std::lock_guard<std::mutex> lock( textureLock );
 	for ( size_t i = 0; i < textures.size(); i++ ) {
 		if ( !textures[i] ) {
-			textures[i].reset( new qaa_ui::Texture );
+			textures[i] = std::move( t );
 			return static_cast<uint32_t>( i + 1 );
 		}
 	}
-	textures.emplace_back( new qaa_ui::Texture );
+	textures.push_back( std::move( t ) );
 	return static_cast<uint32_t>( textures.size() );
 }
 
 qaa_ui::Texture *TextureById( uint32_t id ) {
+	std::lock_guard<std::mutex> lock( textureLock );
 	return id && id <= textures.size() ? textures[id - 1].get() : nullptr;
 }
 
 void FreeTexture( uint32_t id ) {
-	if ( id && id <= textures.size() ) {
-		textures[id - 1].reset();
+	if ( !id ) {
+		return;
 	}
+	const bool here = OnDrawThread();
+	if ( here ) {
+		TexturesChanging();
+	}
+	std::unique_ptr<qaa_ui::Texture> gone;	// deleted after the lock is let go
+	std::lock_guard<std::mutex> lock( textureLock );
+	if ( id <= textures.size() ) {
+		gone = std::move( textures[id - 1] );
+		if ( !here && gone ) {
+			retired.push_back( std::move( gone ) );
+		}
+	}
+}
+
+/* At the start of a draw, when nothing queued points at a retired texture. */
+void ReleaseRetiredTextures() {
+	std::vector<std::unique_ptr<qaa_ui::Texture>> gone;
+	std::lock_guard<std::mutex> lock( textureLock );
+	gone.swap( retired );
 }
 
 /* GFx 2.x GImage formats (GImageBase: format, width, height, pitch, data,
@@ -942,6 +997,7 @@ uint32_t NewD3DTexture( int w, int h ) {
 	t->width = w;
 	t->height = h;
 	t->rgba.assign( static_cast<size_t>( w ) * h * 4, 0 );
+	TextureChanged( t );
 	QAA_StoreU32( g + d3dtex::OFF_MAGIC, d3dtex::MAGIC );
 	QAA_StoreU32( g + d3dtex::OFF_ID, id );
 	QAA_StoreS32( g + d3dtex::OFF_W, w );
@@ -984,7 +1040,9 @@ void H_D3D_Unlock( void *, qaa_hook_call *c ) {
 	qaa_ui::Texture *t = TextureById( QAA_LoadU32( g + d3dtex::OFF_ID ) );
 	const uint32_t px = QAA_LoadU32( g + d3dtex::OFF_PIXELS );
 	if ( t && px && !t->rgba.empty() ) {
+		TexturesChanging();
 		std::memcpy( t->rgba.data(), QAA_Ptr( px ), t->rgba.size() );
+		TextureChanged( t );
 	}
 }
 
@@ -1050,7 +1108,9 @@ void H_D3DX_TextureFromMemory( void *, qaa_hook_call *c ) {
 	}
 	const uint32_t g = NewD3DTexture( decoded.width, decoded.height );
 	if ( g ) {
-		TextureById( QAA_LoadU32( g + d3dtex::OFF_ID ) )->rgba = std::move( decoded.rgba );
+		qaa_ui::Texture *t = TextureById( QAA_LoadU32( g + d3dtex::OFF_ID ) );
+		t->rgba = std::move( decoded.rgba );
+		TextureChanged( t );
 	}
 	if ( out ) {
 		QAA_StoreU32( out, g );
@@ -1123,6 +1183,7 @@ int64_t DT_InitDynamic( void *, qaa_module *, const qaa_syscall *c ) {
 			t->rgba[i] = t->rgba[i + 1] = t->rgba[i + 2] = 255;
 		}
 	}
+	TextureChanged( t );
 	QAA_StoreU32( self + devtex::TEX, id );
 	QAA_StoreS32( self + devtex::W, w );
 	QAA_StoreS32( self + devtex::H, h );
@@ -1145,6 +1206,7 @@ int64_t DT_InitFromImage( void *, qaa_module *, const qaa_syscall *c ) {
 		return 0;
 	}
 	qaa_ui::Texture *t = TextureById( id );
+	TextureChanged( t );
 	QAA_StoreU32( self + devtex::TEX, id );
 	QAA_StoreS32( self + devtex::W, c->args[1] ? c->args[1] : t->width );
 	QAA_StoreS32( self + devtex::H, c->args[2] ? c->args[2] : t->height );
@@ -1163,7 +1225,11 @@ int64_t DT_InitFromD3D( void *, qaa_module *, const qaa_syscall *c ) {
 	}
 	// share the D3D texture's pixels: a copy, as the device texture owns its id
 	const uint32_t id = NewTexture();
-	*TextureById( id ) = *TextureById( QAA_LoadU32( g + d3dtex::OFF_ID ) );
+	qaa_ui::Texture *t = TextureById( id );
+	if ( const qaa_ui::Texture *from = TextureById( QAA_LoadU32( g + d3dtex::OFF_ID ) ) ) {
+		*t = *from;
+	}
+	TextureChanged( t );	// a version of its own
 	QAA_StoreU32( self + devtex::TEX, id );
 	QAA_StoreS32( self + devtex::W, c->args[1] );
 	QAA_StoreS32( self + devtex::H, c->args[2] );
@@ -1200,6 +1266,7 @@ int64_t DT_Update( void *, qaa_module *, const qaa_syscall *c ) {
 	if ( !t || !rect || !src ) {
 		return 0;
 	}
+	TexturesChanging();
 	const int l = QAA_LoadS32( rect + 8 ), tp = QAA_LoadS32( rect + 12 ), r = QAA_LoadS32( rect + 16 ), b = QAA_LoadS32( rect + 20 );
 	const int bpp = format == GIMG_RGBA ? 4 : format == GIMG_RGB ? 3 : 1;
 	const int w = r - l;
@@ -1221,6 +1288,7 @@ int64_t DT_Update( void *, qaa_module *, const qaa_syscall *c ) {
 			}
 		}
 	}
+	TextureChanged( t );
 	return 1;
 }
 
@@ -1256,8 +1324,10 @@ int64_t BE_UpdateTexture( void *, qaa_module *, const qaa_syscall *c ) {
 	if ( !t || !rect || !img ) {
 		return 0;
 	}
+	TexturesChanging();
 	UpdateFromGImage( *t, img, QAA_LoadS32( rect + 0 ), QAA_LoadS32( rect + 4 ), QAA_LoadS32( rect + 8 ),
 		QAA_LoadS32( rect + 12 ), QAA_LoadS32( rect + 16 ), QAA_LoadS32( rect + 20 ) );
+	TextureChanged( t );
 	return 1;
 }
 
@@ -1297,6 +1367,16 @@ void H_BackendCtor( void *, qaa_hook_call *c ) {
 qaa_ui::Canvas canvas;
 std::vector<uint8_t> presentBuffer;
 bool canvasDrawn;
+bool presentValid;		// presentBuffer holds the last frame drawn
+
+/* Before a texture changes or goes: on the drawing thread, rasterise the
+ * triangles still queued, which may sample its old texels. */
+void TexturesChanging() {
+	if ( OnDrawThread() && canvas.HasQueued() ) {
+		canvas.Flush();
+	}
+}
+
 int dumpRequests;		// qaa_uiDump
 int framesDrawn;
 bool updatesPending;	// the movies advanced since the last draw
@@ -2280,11 +2360,11 @@ const char *QAA_UI_CountryCode( void ) {
 
 /* qaa_uiProfile 1: average microseconds per client frame, once a second. */
 namespace uiprof {
-enum Stage { UPDATE, RENDER, REPLAY, PRESENT, COUNT };
-const char *const names[COUNT] = { "update", "render", "replay", "present" };
+enum Stage { UPDATE, RENDER, RECORD, RASTER, UPLOAD, COUNT };
+const char *const names[COUNT] = { "update", "render", "record", "raster", "upload" };
 int64_t total[COUNT];
-int frames, updates, redraws, started;
-int64_t tested, tris;
+int frames, updates, redraws, repeats, started;
+int64_t tested, tris, rowsDrawn, uploadedRows;
 
 int64_t Now() {
 	return Sys_Microseconds();
@@ -2311,12 +2391,14 @@ void EndFrame() {
 		line += va( " %s %lld", names[i], static_cast<long long>( total[i] / frames ) );
 		total[i] = 0;
 	}
-	Com_Printf( "QAA ui profile: %d frames/s, %d updates, %d redraws, us/frame:%s, per redraw %lld triangles "
-		"%lld kpixels (canvas %dx%d)\n", frames, updates, redraws, line.c_str(),
+	Com_Printf( "QAA ui profile: %d frames/s, %d updates, %d redraws, %d repeated, us/frame:%s, per redraw %lld "
+		"triangles %lld kpixels %lld rows drawn %lld rows uploaded (canvas %dx%d)\n", frames, updates, redraws, repeats, line.c_str(),
 		static_cast<long long>( redraws ? tris / redraws : 0 ),
-		static_cast<long long>( redraws ? tested / redraws / 1000 : 0 ), canvas.Width(), canvas.Height() );
-	frames = updates = redraws = 0;
-	tested = tris = 0;
+		static_cast<long long>( redraws ? tested / redraws / 1000 : 0 ),
+		static_cast<long long>( redraws ? rowsDrawn / redraws : 0 ),
+		static_cast<long long>( redraws ? uploadedRows / redraws : 0 ), canvas.Width(), canvas.Height() );
+	frames = updates = redraws = repeats = 0;
+	tested = tris = rowsDrawn = uploadedRows = 0;
 	started = now;
 }
 }
@@ -2440,19 +2522,36 @@ void QAA_UI_Draw( void ) {
 		return;
 	}
 	struct EndFrame {
-		~EndFrame() { uiprof::EndFrame(); }
+		~EndFrame() {
+			// Nothing stays queued past the draw: queued triangles point at
+			// textures, which may be freed before the next one.
+			canvas.Flush();
+			uiprof::EndFrame();
+		}
 	} endFrame;
+	drawThread = std::this_thread::get_id();
+	ReleaseRetiredTextures();
+	// The canvas is the size of the video mode, up to 4096 pixels a side
+	// (scaled to fit, keeping the aspect); the renderer stretches it over the
+	// screen.
+	const int vidW = cls.glconfig.vidWidth, vidH = cls.glconfig.vidHeight;
+	const float fit = std::min( 1.0f, 4096.0f / static_cast<float>( std::max( { vidW, vidH, 1 } ) ) );
+	const int canvasW = std::max( 1, static_cast<int>( vidW * fit ) ), canvasH = std::max( 1, static_cast<int>( vidH * fit ) );
+	// with the ranges of rows of presentBuffer that changed since the last call
+	static const std::vector<int> unchanged;
+	auto present = [&]( const std::vector<int> &changed ) {
+		re.DrawWebUISurface( 0, 0, vidW, vidH, canvas.Width(), canvas.Height(), presentBuffer.data(),
+			changed.data(), static_cast<int>( changed.size() / 2 ) );
+	};
 	// a frame with no update shows the last one again
-	if ( !updatesPending && canvas.Width() == cls.glconfig.vidWidth && canvas.Height() == cls.glconfig.vidHeight
-		&& !presentBuffer.empty() ) {
-		re.DrawWebUISurface( 0, 0, cls.glconfig.vidWidth, cls.glconfig.vidHeight, canvas.Width(), canvas.Height(),
-			presentBuffer.data(), qfalse );
+	if ( !updatesPending && presentValid && canvas.Width() == canvasW && canvas.Height() == canvasH ) {
+		present( unchanged );
 		return;
 	}
 	updatesPending = false;
-	uiprof::redraws++;
+	presentValid = false;
 	int64_t stageStart = uiprof::Now();
-	canvas.Resize( cls.glconfig.vidWidth, cls.glconfig.vidHeight );
+	canvas.Resize( canvasW, canvasH );
 	canvas.Clear();
 	canvasDrawn = false;
 	if ( !UiCall( addr::SFUI_RENDER, {} ) ) {
@@ -2461,9 +2560,7 @@ void QAA_UI_Draw( void ) {
 	uiprof::Add( uiprof::RENDER, stageStart );
 	stageStart = uiprof::Now();
 	ExecuteCommands();
-	uiprof::Add( uiprof::REPLAY, stageStart );
-	uiprof::tested += canvas.PixelsTested();
-	uiprof::tris += canvas.Triangles();
+	uiprof::Add( uiprof::RECORD, stageStart );
 	if ( qaa_uiTrace->integer > 1 ) {
 		Com_Printf( "QAA ui: draw %s, %d triangles, movies %d\n", canvasDrawn ? "recorded" : "empty",
 			canvas.Triangles(), QAA_LoadS32( sfui + 0x21E8 ) );
@@ -2483,11 +2580,27 @@ void QAA_UI_Draw( void ) {
 		dumpRequests--;
 		DumpCanvas( va( "screenshots/qaa_ui_%04d.tga", framesDrawn ) );
 	}
-	const int64_t presentStart = uiprof::Now();
+	// Rasterises the bands whose triangles differ from the last frame's
+	// (none when the frame repeats), then converts what changed.
+	stageStart = uiprof::Now();
 	canvas.ToStraight( presentBuffer );
-	re.DrawWebUISurface( 0, 0, cls.glconfig.vidWidth, cls.glconfig.vidHeight, canvas.Width(), canvas.Height(),
-		presentBuffer.data(), qtrue );
-	uiprof::Add( uiprof::PRESENT, presentStart );
+	uiprof::Add( uiprof::RASTER, stageStart );
+	if ( canvas.RowsDrawn() ) {
+		uiprof::redraws++;
+		uiprof::tris += canvas.Triangles();
+		uiprof::tested += canvas.PixelsTested();
+		uiprof::rowsDrawn += canvas.RowsDrawn();
+	} else {
+		uiprof::repeats++;
+	}
+	stageStart = uiprof::Now();
+	const std::vector<int> &changed = canvas.ChangedRows();
+	for ( size_t i = 0; i + 1 < changed.size(); i += 2 ) {
+		uiprof::uploadedRows += changed[i + 1] - changed[i];
+	}
+	present( changed );
+	presentValid = true;
+	uiprof::Add( uiprof::UPLOAD, stageStart );
 }
 
 /*

@@ -162,8 +162,40 @@ texture's size (0x82169490). Colours differ by source:
 Masks are stencil levels. Blend modes follow the shaders
 (multiply/darken/lighten/screen mix the source toward white by its
 coverage). `cl_qaa_ui_raster.cpp` draws all of this into a canvas the size
-of the video mode. The client presents the canvas over the frame with
-`re.DrawWebUISurface` (a renderer surface blit; there is no WebUI). A frame with no update shows the last canvas again.
+of the video mode (up to 4096 pixels a side, scaled to fit beyond that).
+Replaying a frame only queues its triangles, resolved against the state
+of the moment; the canvas then rasterises the queue in bands of 16 rows on
+worker threads, every band running the triangles that reach it in order
+over its own rows, and converts each band it drew to straight alpha. Rows
+no triangle touches and that were already transparent are neither cleared
+nor converted again, and only the ranges of rows that were written are
+uploaded: in a game the HUD is a strip of the screen. The client presents
+the canvas over the frame with `re.DrawWebUISurface` (a renderer surface
+blit; there is no WebUI), passing those ranges. The renderers keep that
+surface at the canvas size: their image loader scales anything over 2048
+pixels down, so it is created at 1x1 and sized on first use.
+
+Frames are skipped two ways. A client frame with no SFUI update shows the
+last canvas again. Otherwise each band is hashed from the triangles that
+reach it, as queued: positions, the fill and its planes, colour
+transform, blend mode, mask and the versions of the textures sampled.
+A band whose hash matches the last frame's keeps its pixels and is not
+converted or uploaded: a frame that repeats draws nothing, and an
+animation redraws only the bands it covers (in the menus, the selection's
+glint: about 110 of 1440 rows). Only fields a fill uses enter its hash.
+The command lists themselves change every frame where nothing visible
+does (**observed**: a colour transform replaced before anything is drawn
+with it, and stale data in a gouraud fill's unused texture slots), so
+hashing them redrew the whole main menu, and the HUD after the in-game
+menu, on every frame. A frame flushed in two parts (a texture changed
+while triangles were queued) redraws every band of the next one.
+
+Textures are host objects SFUI creates, changes and frees on its update
+thread and on its own loader threads, which run alongside the engine. The
+table is locked. Every change gives the texture a new version once its
+texels are written, so the bands that sample it redraw. On the drawing
+thread, a texture change first rasterises what is queued; a texture
+freed on another thread is kept until the next draw starts.
 
 Images: the movies' own bitmaps arrive as GImages (RGBA, RGB, A8, DXT1/3/5).
 External images (`ui/*.dds`: the title and menu art, level shots, portraits,
@@ -200,9 +232,18 @@ Every run is headless (`com_headless 2`, no sound, no input grab).
   changes. Higher levels add traps, draws, recorder calls and per-command
   replay.
 - `qaa_ui 0` (latched): run without the front end, console only.
-- `qaa_uiProfile 1`: once a second, the front end's frame rate and average
-  cost per frame (update thread, SFUI render, replay, present), with the
-  triangles and pixels each redraw rasterised.
+- `qaa_uiProfile 1`: once a second, the front end's frame rate, how many
+  frames drew some band and how many repeated the one on screen, and the
+  average cost per frame (update thread, SFUI render, recording the
+  commands, rasterising, upload), with the triangles each redraw queued and
+  the pixels, rows drawn and rows uploaded.
+- `QAA_UI_THREADS=N` (environment): rasterise on N threads in all (1: on
+  the calling thread only).
+- A windowless client (`com_headless 2`) never changes the display mode,
+  so it uses the windowed size: `r_windowedMode -1` with
+  `r_windowedWidth`/`r_windowedHeight` tests other sizes (2560x1440 found
+  the 2048-pixel surface limit). `screenshot` saves what the renderer
+  presented, `qaa_uiDump` only the canvas.
 - `qaa_country <cc>`: the region the start-up movies see (`us` shows the
   ESRB screen).
 
@@ -230,11 +271,22 @@ synthetic data. It needs no retail files.
   "none". Achievements and gamer pictures are partial.
 - The map name in the scoreboard is "null" when a map is started from the
   console rather than from the menus.
-- Performance: the rasteriser is a CPU path, redrawn only when SFUI
-  updates. Large triangles are split into row bands on worker threads, and
-  each row is walked only over the span the triangle covers. **observed**
-  with `qaa_uiProfile` at 1600×1024 on a 20-thread laptop: the title
-  replays in about 13 ms (it took about 140 ms on one thread with a
-  per-pixel bounding-box walk), the start-up movies in about 45 ms, and the
-  HUD in about 6 ms. A GPU replay would replace it.
+- Performance: the rasteriser is a CPU path. Each row is walked only over
+  the span a triangle covers, the common fills (colour, texture, gouraud,
+  glyphs, normal blending) run four channels at once with SSE2, opaque
+  point-sampled texels and opaque solid colours are copied as bytes, and
+  gouraud fills whose factors are the same at every vertex are drawn as the
+  texture or colour they reduce to. **observed** with `qaa_uiProfile` at
+  2560×1440 on a 20-thread laptop (12 raster threads): the main menu
+  redraws its glint in about 2-3 ms a frame at 63 frames a second (it
+  redrew all 1440 rows every frame in about 28 ms, at about 30 frames a
+  second); a full redraw of it takes about 9.5 ms, of the title about 6.5
+  ms; frames that repeat cost about 0.1 ms; in a game the HUD redraws a
+  few times a second, about 100 rows. Every frame of a run through the
+  start-up movies, the title, the menus, a game and the in-game menu
+  matched a full redraw of the same triangles byte for byte. In a game,
+  SFUI's update thread itself (the HUD's ActionScript, recompiled guest
+  code) takes about 1.5-3 ms a frame; retail overlapped it with rendering,
+  FnQAA runs it with the engine waiting. A GPU replay would replace the
+  rasteriser.
 - Rumble (`stopVibration`) and XAM import 752 are unimplemented.

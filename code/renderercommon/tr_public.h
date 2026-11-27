@@ -89,7 +89,10 @@ typedef struct {
 	void	(*UploadCinematic)( int w, int h, int cols, int rows, const byte *data, int client, qboolean dirty );
 	// Dedicated arbitrary-size RGBA surface for the client-owned WebUI. This
 	// avoids cinematic handle collisions and legacy power-of-two constraints.
-	void	(*DrawWebUISurface)( int x, int y, int w, int h, int cols, int rows, const byte *data, qboolean dirty );
+	// QAA front end: a cols x rows RGBA surface stretched over (x, y, w, h);
+	// changed holds numChanged row ranges [y0, y1) that changed since the
+	// last call
+	void	(*DrawWebUISurface)( int x, int y, int w, int h, int cols, int rows, const byte *data, const int *changed, int numChanged );
 
 	void	(*BeginFrame)( stereoFrame_t stereoFrame );
 

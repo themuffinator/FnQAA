@@ -35,7 +35,9 @@ cycle (`python scripts/changelog.py clear-unreleased`).
   alone.
 
 ### Rendering and Display
-- _None yet._
+- The menus and HUD show at any resolution. Above 2048 pixels wide (for
+  example 2560x1440) the screen used to stay black, or freeze on one menu
+  over the game after starting a map.
 
 ### Audio
 - _None yet._
@@ -46,7 +48,13 @@ cycle (`python scripts/changelog.py clear-unreleased`).
 
 ### Fixes
 - The menus are many times faster: the title and menus no longer crawl at
-  a few frames a second.
+  a few frames a second. They are drawn on every core, and only the parts
+  of the screen that changed are drawn again: the main menu runs at full
+  frame rate at 2560x1440 instead of about 30 frames a second, and the HUD
+  no longer redraws on every frame after the in-game menu.
+- Fixed a crash risk when the menus load many images at once: the game's
+  image-loading threads and the menus could change the list of images at
+  the same time.
 - The console no longer opens over the menus at start-up and stays stuck
   there; it starts closed and opens and closes with the console key.
 
