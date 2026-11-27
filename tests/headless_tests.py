@@ -246,6 +246,45 @@ class HeadlessTests(unittest.TestCase):
         out = self.synthetic_run(CLIENT, self.package)
         self.assertIn("Client Shutdown (Client quit)", out)
 
+    def test_client_binds_the_pad_as_qaa_and_the_keyboard_as_quake_live(self):
+        # QAA's pad binds, under the Xbox 360's key names (default.cfg, then
+        # its control scheme and the scheme's D-pad include)
+        cfg = (b"unbindall\nbind UPARROW +forward\nbind MOUSE1 +attack\nbind MOUSE2 +strafe\n"
+               b"exec controlschemes\\default.cfg\n")
+        scheme = (b'bind JOY1 "lastweap;+button11;" // A button\n'
+                  b'bind JOY8 "pause"           // start button\n'
+                  b'bind MOUSE2 "+moveup;+button12;"       // left trigger\n'
+                  b"exec controlschemes\\_dpadquick.cfg\n")
+        dpad = b'bind UPARROW "vstr heavyweapons" \t// D-pad up arrow\n'
+        bpk = make_bpk([(bpk_name_hash("default.cfg"), cfg),
+                        (bpk_name_hash("controlschemes/default.cfg"), scheme),
+                        (bpk_name_hash("controlschemes/_dpadquick.cfg"), dpad)])
+        package = self.work / "binds"
+        package.write_bytes(make_stfs([("default.xex", b"synthetic"), ("baseq3/pak0.bpk", bpk)]))
+        out = self.engine.run(CLIENT, ["+set", "fs_qaaPackage", str(package), "+bindlist", "+wait", "3", "+quit"])
+        binds = {}
+        for line in out.splitlines():
+            key, sep, rest = line.partition(' "')
+            if sep and rest.endswith('"') and " " not in key:
+                binds[key] = rest[:-1]
+        self.assertEqual(binds.get("PAD0_SOUTH"), "lastweap;+button11;", out[-3000:])
+        self.assertEqual(binds.get("PAD0_START"), "pause")
+        self.assertEqual(binds.get("PAD0_RIGHTTRIGGER"), "+attack")
+        self.assertEqual(binds.get("PAD0_LEFTTRIGGER"), "+moveup;+button12;")
+        self.assertEqual(binds.get("PAD0_DPAD_UP"), "vstr heavyweapons")
+        self.assertEqual(binds.get("PAD0_LEFTSTICK_UP"), "+forward")
+        self.assertEqual(binds.get("PAD0_RIGHTSTICK_RIGHT"), "+right")
+        # Quake Live's keyboard and mouse
+        self.assertEqual(binds.get("MOUSE1"), "+attack")
+        self.assertEqual(binds.get("MOUSE2"), "+zoom")
+        self.assertEqual(binds.get("w"), "+forward")
+        self.assertEqual(binds.get("SPACE"), "+moveup")
+        self.assertEqual(binds.get("f"), "lastweap")
+        self.assertEqual(binds.get("TAB"), "+scores")
+        self.assertEqual(binds.get("KP_PGUP"), "follow 9")
+        self.assertNotIn("UPARROW", binds)
+        self.assertFalse([k for k in binds if k.startswith("JOY")], binds)
+
     # With fs_qaaPackage empty the engine finds the package where users put it.
     PACKAGE_NAME = "0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458"
 

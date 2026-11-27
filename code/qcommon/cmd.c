@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "q_shared.h"
 #include "qcommon.h"
+#include "qaa_binds.h"
 
 // Preserve the historical command-text capacity while reserving additional
 // storage for engine-owned key transitions. A saturated script/console queue
@@ -464,6 +465,25 @@ static void Cmd_Exec_f( void ) {
 	if (!quiet)
 		Com_Printf ("execing %s\n", filename);
 
+#ifndef DEDICATED
+	// QAA: PC deviation: QAA's configs bind its pad under the Xbox 360's key
+	// names; they run with the PC's, and default.cfg then binds the keyboard
+	// and the mouse as Quake Live's does (qaa_binds.h).
+	if ( QAA_IsPadConfig( filename ) ) {
+		const qboolean defaults = !Q_stricmp( filename, "default.cfg" ) ? qtrue : qfalse;
+		const size_t len = QAA_RewritePadConfig( f.c, NULL, 0 );
+		const size_t size = len + ( defaults ? 1 + strlen( QAA_PC_BINDINGS ) : 0 ) + 1;
+		char *text = Z_Malloc( (int)size );
+
+		QAA_RewritePadConfig( f.c, text, len + 1 );
+		if ( defaults ) {
+			Q_strcat( text, (int)size, "\n" );
+			Q_strcat( text, (int)size, QAA_PC_BINDINGS );
+		}
+		Cbuf_InsertText( text );
+		Z_Free( text );
+	} else
+#endif
 	Cbuf_InsertText( f.c );
 
 #ifdef DELAY_WRITECONFIG

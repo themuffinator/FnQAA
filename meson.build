@@ -276,6 +276,7 @@ qcommon_src = qaa_src + [
   'code/qcommon/huffman_static.c',
   'code/qcommon/huffman.c',
   'code/qcommon/keys.c',
+  'code/qcommon/qaa_binds.c',
   'code/qcommon/md4.c',
   'code/qcommon/md5.c',
   'code/qcommon/msg.cpp',
@@ -1101,6 +1102,13 @@ cvar_integer_tests = executable('fnqaa_cvar_integer_tests',
   c_args: common_c_args,
 )
 test('fnqaa_cvar_integer', cvar_integer_tests)
+
+qaa_binds_tests = executable('fnqaa_qaa_binds_tests',
+  ['tests/qaa_binds_tests.c', 'code/qcommon/qaa_binds.c'],
+  include_directories: include_directories('code/qcommon'),
+  c_args: common_c_args,
+)
+test('fnqaa_qaa_binds', qaa_binds_tests)
 
 cvar_retail_bounds_tests = executable('fnqaa_cvar_retail_bounds_tests',
   'tests/cvar_retail_bounds_tests.c',

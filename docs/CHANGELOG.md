@@ -33,6 +33,11 @@ cycle (`python scripts/changelog.py clear-unreleased`).
 - The engine reads the game's data inside your package, in place, and never
   changes it; saved games and title updates stored beside the game are left
   alone.
+- The keyboard and mouse start with Quake Live's default binds (WASD, mouse
+  to fire and zoom, number keys for weapons, F to switch back to your last
+  weapon), and the controller keeps Quake Arena Arcade's own layout,
+  D-pad weapon shortcuts included. A config you saved earlier keeps the
+  binds it holds.
 - The menus work with the mouse. Pointing at an item selects it, as the
   D-pad would; clicking presses A on it, including a list's rows, a grid's
   squares and the title; clicking a slider's track sets its value, and
