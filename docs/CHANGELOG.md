@@ -60,7 +60,9 @@ cycle (`python scripts/changelog.py clear-unreleased`).
   over the game after starting a map.
 
 ### Audio
-- _None yet._
+- Sounds no longer bend in pitch as you move: the Doppler effect is off by
+  default, since Quake Arena Arcade has none. A config saved earlier keeps
+  `s_doppler 1`; set `s_doppler 0` to match the console.
 
 ### Builds and Packaging
 - Releases are built for Windows x86_64 and Linux x86_64 and hold the engine
@@ -85,6 +87,13 @@ cycle (`python scripts/changelog.py clear-unreleased`).
   Arena/Gametype lists the arenas by name with their level shots,
   suggested players and items; both lists were empty. Run setup again
   after updating so the menus are recompiled with the fix.
+- Start Match in System Link's Host Match now starts the match, with the
+  arena, game type, limits, bot fill and bot skill you chose; it did
+  nothing. There is no lobby yet: the game starts at once as a listen
+  server that others on your network join with `connect`. The Contestants
+  setting now sets the server's size (at most 16), as on the console.
+- Pressing Escape in a game no longer crashes the game when the key is
+  still held as the in-game menu opens.
 
 ### Documentation and Tooling
 - The setup checks for every tool the recompile needs before it starts, and

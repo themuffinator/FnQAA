@@ -192,3 +192,10 @@ replaced is the session layer: hosting, finding and joining a match, the
 lobby, invites and leaderboards. Each part becomes a documented PC deviation.
 Keeping 1010 as the default `net_port` would match retail; whether to do that
 or keep FnQL's 27960 is a choice for M8.
+
+Until then, Host Match's Start Match runs the host's half of the match start
+at once, without QNET: "Joining server", then ui_main's server start
+(0x8219F5D8) as the host does on reaching `QNET_STATE_GAME_PLAY`
+([UI.md](UI.md#pc-deviations)). The server's size comes from the menu's
+`ui_maxclients` as retail's SV_SetMaxClients (0x82133CD8) takes it, at
+most 16.

@@ -101,6 +101,11 @@ engine's copy and the guest's are merged, and whichever changed since the
 last merge wins, the guest first. The update thread can change its copy
 between two merges, and copying the engine's value over it would undo a
 `restorePlayerInput` (**observed**: the in-game menu would not reopen).
+Applying a change through `Key_SetCatcher` releases the keys held at that
+moment through `CL_KeyEvent`, and the front end takes those releases, so the
+merge does not run again while it applies one (**observed**: run again, it
+re-applied the same change without end; Escape held down while the in-game
+menu opened overflowed the stack).
 
 ## Frames, input and events
 
@@ -258,7 +263,8 @@ The settings screens' cvars act as on the console:
   `r_gamma`; Zoom is the cgame's `cg_zoomToggle`.
 
 `ready`, `startgame` and `qnet_disconnect` (the lobby's, from `qcmd`) are
-retail's session layer and have no PC command yet
+retail's session layer and have no PC command yet (Host Match's Start Match
+starts the match without the lobby, [PC deviations](#pc-deviations))
 ([NETWORK.md](NETWORK.md)). Retail has no `pause` command either: the
 schemes bind Start to it, and the engine takes Start for the in-game menu
 first.
@@ -346,6 +352,7 @@ the bare name).
 | Sign-in through the Guide; profile records filled by XAM | controller 0 is signed in, gamertag = `name` | 0x821869D8, profile records |
 | `XShowDeviceSelectorUI`, completed by the frame poll 0x8218C890 | one device (the home path), chosen at once; `DeviceSelectionComplete` is queued from the next frame | 0x8218CA70 |
 | Profile settings in a save container (`startLoad` 0x8218BCE8, `startSave` 0x8218BDB0, completion `ConfigLoadComplete`/`ConfigSaveComplete`) | the settings are the engine's cvars and config; the container operations succeed with nothing to read or write | |
+| Host Match's Start Match (`startServer`, 0x82192740) signals QNET's session thread, which hosts, opens the lobby and, once the host starts the match there, runs ui_main's server start (0x8219F5D8: `g_gametype`, the bots, `map`) ([NETWORK.md](NETWORK.md)) | no session layer yet (M8): the match starts at once, as the host's session does on reaching play. "Joining server" shows, then closes (`WaitEnd`) as the session's steps close it, and 0x8219F5D8 runs. No lobby, invites or session; others join the listen server with `connect` | `H_QnetJoinWait`, `PollHostStart` |
 | `exitGame` flags the Live session (bit 3 at +0x1FC); the session manager (0x82176370) ends it: disconnect, `gotoStackPath(..., "mainmenu")`, client state reset (0x82177AB0, 0x821779E0, 0x821771F0) | the flag is polled; FnQL's `disconnect`, then the same stack path and resets. The course-results path variant is not taken | |
 | `sys_titleFocused` from Guide focus notifications | follows the game window's focus; a windowless client is always focused | |
 | A game can only start from the menus, after the title | a game can also start from the command line (`+map`, `+devmap`) while the start-up movies play. The first snapshot's HUD request then finds no scene manager, and the title would load over the game. When the front end reaches the title (`setGameState(2)`, 0x82C01C48) with a game running, the HUD is requested again, and the title's music is not started over the game's | `PollGameStartedBeforeTitle`, `H_S_StartBackgroundTrack` |

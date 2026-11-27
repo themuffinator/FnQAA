@@ -38,6 +38,10 @@ extern "C" {
 
 #define	MAX_ENT_CLUSTERS	16
 
+// QAA: retail clamps sv_maxclients to 16 (0x82133D60); QAA's qagame holds
+// 16 clients (docs/ABI.md)
+#define	QAA_MAX_CLIENTS		16
+
 typedef struct svEntity_s {
 	struct worldSector_s *worldSector;
 	struct svEntity_s *nextEntityInWorldSector;

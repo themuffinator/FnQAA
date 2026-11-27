@@ -241,10 +241,23 @@ static int SV_BoundMaxClients( int minimum ) {
 	// get the current maxclients value
 	Cvar_Get( "sv_maxclients", "8", 0 );
 
+	// QAA: retail behaviour (SV_SetMaxClients 0x82133CD8): the server takes
+	// its size from the menus' ui_maxclients (Contestants) and holds at most
+	// QAA_MAX_CLIENTS, all QAA's qagame has room for. PC deviation: only
+	// where the menus registered ui_maxclients, so a dedicated server, or a
+	// client without the front end, keeps its own sv_maxclients.
+	if ( Cvar_Flags( "ui_maxclients" ) != CVAR_NONEXISTENT ) {
+		Cvar_Set2( "sv_maxclients", Cvar_VariableString( "ui_maxclients" ), qtrue );
+	}
+
 	if ( sv_maxclients->integer < minimum ) {
 		Cvar_SetIntegerValue( "sv_maxclients", minimum );
 		sv_maxclients->modified = qfalse;
 		return minimum;
+	}
+
+	if ( sv_maxclients->integer > QAA_MAX_CLIENTS ) {
+		Cvar_SetIntegerValue( "sv_maxclients", QAA_MAX_CLIENTS );
 	}
 
 	sv_maxclients->modified = qfalse;
@@ -296,7 +309,8 @@ static void SV_Startup( void ) {
 		Com_Error( ERR_FATAL, "SV_Startup: svs.initialized" );
 	}
 
-	SV_AllocClients( sv_maxclients->integer );
+	// QAA: retail behaviour, SV_Startup (0x82133DA0) sizes the server first
+	SV_AllocClients( SV_BoundMaxClients( 1 ) );
 	SV_ResetServerCvarRuntime();
 
 	sv_maxclients->modified = qfalse;

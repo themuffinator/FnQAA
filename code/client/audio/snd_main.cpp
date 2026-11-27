@@ -623,9 +623,17 @@ extern "C" void S_Init( void )
 	Cvar_SetDescription( s_musicVolume, "Sets volume for in-game music only." );
 	// QAA: PC deviation. QAA has no Steam voice chat; FnQL's s_voiceVolume and
 	// s_voiceStep, which only drove remote-voice playback, are removed.
-	s_doppler = Cvar_Get( "s_doppler", "1", CVAR_ARCHIVE_ND );
+	// QAA: retail behaviour. QAA's engine has no doppler: it registers no
+	// s_doppler (S_Init 0x82174770 registers s_volume, s_musicvolume,
+	// s_musicVolume, s_distanceCutoff, s_distanceVolumeCurve, s_memory and
+	// s_debug), and its
+	// looping-sound call drops the velocity (cgame trap 32). FnQL's doppler
+	// stays as an option, off by default: with source velocities gone it shifts
+	// only by the listener's own motion, estimated from the view's movement,
+	// so every stationary sound bends in pitch as the player moves.
+	s_doppler = Cvar_Get( "s_doppler", "0", CVAR_ARCHIVE_ND );
 	Cvar_CheckRange( s_doppler, "0", "1", CV_INTEGER );
-	Cvar_SetDescription( s_doppler, "Enables doppler effect on moving projectiles." );
+	Cvar_SetDescription( s_doppler, "Enables doppler effect from the listener's and sources' motion. QAA has none, so it is off by default." );
 	s_pvs = Cvar_Get( "s_pvs", "0", CVAR_ARCHIVE_ND );
 	Cvar_CheckRange( s_pvs, "0", "1", CV_INTEGER );
 	Cvar_SetDescription( s_pvs, "Optionally culls world sounds outside the listener's BSP visibility set, matching retail QL's compatibility control." );

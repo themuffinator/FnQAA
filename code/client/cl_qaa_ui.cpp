@@ -121,6 +121,7 @@ constexpr uint32_t SFUI_BACKEND_CTOR = 0x821687F0;
 constexpr uint32_t S_STARTLOCALSOUND = 0x82173418;
 constexpr uint32_t S_STARTBACKGROUNDTRACK = 0x82173470;
 constexpr uint32_t S_REGISTERSOUND = 0x82173DC0;
+constexpr uint32_t QNET_JOIN_WAIT = 0x82175A28;		// "Joining server", then the session thread
 constexpr uint32_t LANGUAGE_CODE = 0x82184DA8;
 constexpr uint32_t COUNTRY_CODE = 0x82184E58;
 constexpr uint32_t SYS_MILLISECONDS = 0x82185850;
@@ -826,6 +827,46 @@ void PollSessionEnd() {
 	SyncKeyCatchers();
 	Cvar_Set( "ui_messageReady", "1" );
 	Cvar_Set( "team", "" );
+}
+
+/* Hosting a match. Host Match's Start Match (FSCommand "startServer",
+ * 0x82192740) signals QNET's session thread to host (the event at +0x778
+ * of QNET's globals, 0x82C01E20) and calls 0x82175A28, which shows
+ * "Joining server" (the WaitBegin event), gives the keys back to the game
+ * and signals the session block's event at +0xBC. The session thread hosts
+ * (0x8217D8D8), opens the lobby (JoinServer) and, when the host starts the
+ * match there, reaches QNET_STATE_GAME_PLAY, where the host runs ui_main's
+ * server start (0x8219F5D8: g_gametype, the bots, then "wait ; wait ; map
+ * <arena>"; docs/NETWORK.md). The session's own steps close the wait box
+ * again (WaitEnd, e.g. 0x82176E1C, or popWait, 0x82180C90). Within
+ * the front end only startServer calls 0x82175A28 (its other callers are
+ * QNET's and the engine's).
+ * PC deviation: there is no QNET session layer yet (M8), so the match
+ * starts as soon as it is hosted, as the host's session does on reaching
+ * play: a listen server that others join with connect, with no lobby,
+ * invites or session. */
+namespace hosting {
+constexpr uint32_t START_SERVER = 0x8219F5D8;		// ui_main: the host's server start
+constexpr uint32_t QUEUE_EVENT = 0x82191098;		// (name, format, ...)
+constexpr uint32_t FIRE_EVENT = 0x82190FE8;		// (name), queued after QUEUE_EVENT's
+constexpr uint32_t S_WAIT_BEGIN = 0x820CF568, S_D_S = 0x820BAD10, S_JOINING_SERVER = 0x820CF558;
+constexpr uint32_t S_WAIT_END = 0x820CF574;
+bool pending;
+}
+
+void H_QnetJoinWait( void *, qaa_hook_call * ) {
+	UiCall( hosting::QUEUE_EVENT, { hosting::S_WAIT_BEGIN, hosting::S_D_S, 0, hosting::S_JOINING_SERVER } );
+	QAA_StoreU32( addr::CLS_KEYCATCHERS, QAA_LoadU32( addr::CLS_KEYCATCHERS ) & ~static_cast<uint32_t>( KEYCATCH_UI ) );
+	hosting::pending = true;
+}
+
+void PollHostStart() {
+	if ( !hosting::pending ) {
+		return;
+	}
+	hosting::pending = false;
+	UiCall( hosting::FIRE_EVENT, { hosting::S_WAIT_END } );
+	UiCall( hosting::START_SERVER, {} );
 }
 
 /* -- R_GetCommandBuffer --------------------------------------------------------------- */
@@ -2068,6 +2109,7 @@ const HookEntry hookTable[] = {
 	{ hook::S_STARTLOCALSOUND, H_S_StartLocalSound },
 	{ hook::S_STARTBACKGROUNDTRACK, H_S_StartBackgroundTrack },
 	{ hook::S_REGISTERSOUND, H_S_RegisterSound },
+	{ hook::QNET_JOIN_WAIT, H_QnetJoinWait },
 	{ hook::LANGUAGE_CODE, H_LanguageCode },
 	{ hook::COUNTRY_CODE, H_CountryCode },
 	{ hook::SYS_MILLISECONDS, H_Sys_Milliseconds },
@@ -2240,19 +2282,31 @@ void PublishClientState() {
  * Whichever side changed since the last merge wins, the guest's first: the
  * update thread may change it between the host's merges (it runs until it
  * waits for its next frame), and copying the host's value over the guest's
- * would undo a restorePlayerInput. */
+ * would undo a restorePlayerInput.
+ * Key_SetCatcher releases the keys held at the change through CL_KeyEvent
+ * before it stores the new catchers, and the front end takes those releases
+ * (QAA_UI_KeyEvent), which merges again on its way out. That merge is
+ * skipped: the change is already being applied. (Run, it saw the guest's
+ * change still pending and applied it again, without end: Escape held down
+ * while the in-game menu opened overflowed the stack.) */
 void SyncKeyCatchers() {
 	static int synced = -1;
+	static bool applying;
+	if ( applying ) {
+		return;
+	}
 	const int guest = static_cast<int>( QAA_LoadU32( addr::CLS_KEYCATCHERS ) ) & 0xF;
 	const int host = Key_GetCatcher();
 	if ( synced >= 0 && guest != synced ) {
+		synced = guest;
 		if ( ( host & 0xF ) != guest ) {
 			if ( qaa_uiTrace && qaa_uiTrace->integer ) {
 				Com_Printf( "QAA ui: key catchers %X -> %X\n", host, ( host & ~0xF ) | guest );
 			}
+			applying = true;
 			Key_SetCatcher( ( host & ~0xF ) | guest );
+			applying = false;
 		}
-		synced = guest;
 		return;
 	}
 	if ( ( host & 0xF ) != guest ) {
@@ -3155,6 +3209,7 @@ void QAA_UI_Frame( void ) {
 	PollDeviceSelection();
 	PollConfigOperation();
 	PollSessionEnd();
+	PollHostStart();
 	PollGameStartedBeforeTitle();
 	struct Collect {
 		~Collect() { CollectKeyCatchers(); }
