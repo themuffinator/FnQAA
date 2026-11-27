@@ -115,6 +115,11 @@ cycle (`python scripts/changelog.py clear-unreleased`).
   and so does its countdown when it runs out; both left you stuck on the
   results. The button is Start on a controller, and Escape or keypad Enter
   on the keyboard.
+- Starting the game with a map on the command line (`+map` or `+devmap`)
+  no longer leaves the menus and HUD dead for the whole session: Escape
+  opens the in-game menu again. The menus' background work could run
+  while the map load reset the game's files, and stopped for good when it
+  did.
 
 ### Documentation and Tooling
 - The setup checks for every tool the recompile needs before it starts, and

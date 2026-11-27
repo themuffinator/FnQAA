@@ -117,6 +117,16 @@ again. That is one iteration per 1/60 s of real time, at most four per
 frame. PC deviation: retail overlaps the update with the render thread;
 here the two never run at once, as FnQL is single-threaded.
 
+**code** SFUI's render (0x8218E5A8, through 0x82196E48) also sets the
+frame event as it ends (0x8219706C), letting the update thread work out
+the next frame while the render thread goes on. Left alone, that iteration
+ran beside the engine: with `+map` or `+devmap` on the command line it
+read images while `SV_SpawnServer` restarted the file system, and the
+thread died. So while `QAA_UI_Draw` runs the render, the frame event's
+slot holds a private event (the update thread is parked on the real one
+and does not read the slot then); if the render set it, the iteration it
+lets go runs as one step of the update thread before the draw goes on.
+
 Keys follow retail `CL_KeyEvent` (0x82106D20). While SFUI holds
 `KEYCATCH_UI` it gets every key, as (key, down, controller 0). Otherwise
 Escape (or Start) in a game sets `_global.uiValues[0] = 1`, which opens the
@@ -356,7 +366,7 @@ the bare name).
 | `exitGame` flags the Live session (bit 3 at +0x1FC); the session manager (0x82176370) ends it: disconnect, `gotoStackPath(..., "mainmenu")`, client state reset (0x82177AB0, 0x821779E0, 0x821771F0) | the flag is polled; FnQL's `disconnect`, then the same stack path and resets. The course-results path variant is not taken | |
 | `sys_titleFocused` from Guide focus notifications | follows the game window's focus; a windowless client is always focused | |
 | A game can only start from the menus, after the title | a game can also start from the command line (`+map`, `+devmap`) while the start-up movies play. The first snapshot's HUD request then finds no scene manager, and the title would load over the game. When the front end reaches the title (`setGameState(2)`, 0x82C01C48) with a game running, the HUD is requested again, and the title's music is not started over the game's | `PollGameStartedBeforeTitle`, `H_S_StartBackgroundTrack` |
-| Update and render overlap on two threads | one thread | |
+| Update and render overlap on two threads | one thread; the iteration the render lets go runs as a step | `QAA_UI_Frame`, `RenderMovies` |
 | GPU replay | software rasteriser | |
 | No mouse | the pointer selects, A on a click, B on the right button, the wheel as up and down; sliders take the pointer's place on the track ([the mouse](#frames-input-and-events)) | `RunPointerEvents`, `Key_GetPointerCatcher` |
 | The pad is the only bindable device; the front end binds it under JOY1..JOY10, MOUSE1/2 and the arrows, and its `unbindall` clears it | the front end's commands take the pad's PC key names, and its `unbindall` clears the pad's buttons only ([the menus' binds](#cvars-binds-and-commands-the-menus-use)) | `H_Cbuf_AddText`, `QAA_RewriteFrontEndCommands` |

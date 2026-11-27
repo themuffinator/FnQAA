@@ -72,6 +72,11 @@ constexpr uint32_t SFUI_FRAME_EVENT = 0x361ED8;		// +: the event the thread wait
 constexpr uint32_t SFUI_MOVIES = 0x21E4;			// +: GFxMovieView *[], the top one takes the input (0x82198698)
 constexpr uint32_t SFUI_MOVIE_COUNT = 0x21E8;		// +: how many
 
+// the title's Win32 wrappers over the kernel's events (recompiled with SFUI)
+constexpr uint32_t CREATE_EVENT = 0x821F1928;		// (attributes, manual reset, initially set, name): SFUI's start-up (0x82195ACC)
+constexpr uint32_t WAIT_FOR_OBJECT = 0x821D29D0;	// (handle, milliseconds): 0 when set, 0x102 on timeout
+constexpr uint32_t RESET_EVENT = 0x821F1A30;		// (handle)
+
 // GFx 2.x GFxMovieView (vtable 0x820B0490)
 constexpr uint32_t MOVIE_GET_VARIABLE = 0x30;		// vtable +: GetVariable(GFxValue *, path) (0x82655768)
 constexpr uint32_t MOVIE_INVOKE = 0x48;				// vtable +: Invoke(path, GFxValue *result, args, count) (0x82658590)
@@ -2946,6 +2951,57 @@ void UI_TestPointer_f( void ) {
 	CL_MouseAbsoluteEvent( atoi( Cmd_Argv( 1 ) ), atoi( Cmd_Argv( 2 ) ) );
 }
 
+bool updateStalled;	// the last step of the update thread did not finish
+
+/*
+ * SFUI's render (0x8218E5A8, through 0x82196E48) ends by setting the
+ * update thread's frame event (0x8219706C): on the console the render
+ * thread lets the update thread work out the next frame while it goes on.
+ * Here that iteration ran beside the engine, which is single-threaded:
+ * with a map on the command line it read the title's images while
+ * SV_SpawnServer restarted the filesystem, and the thread died (a host
+ * access violation in FS_Read), leaving the front end dead for the run.
+ * QAA: PC deviation (FnQL is single-threaded): while the render runs the
+ * frame event's slot (+0x361ED8) holds a private event, so the render sets
+ * that one; the update thread is parked on the real event then and does
+ * not read the slot. If the render set it, the iteration it lets go runs
+ * as one step of the update thread before the draw goes on, with the
+ * engine waiting. As before, each render lets one iteration go.
+ */
+bool RenderMovies() {
+	static uint32_t release;	// the event the render sets instead
+	const uint32_t slot = sfui + addr::SFUI_FRAME_EVENT;
+	const uint32_t thread = QAA_LoadU32( sfui + addr::SFUI_THREAD );
+	const uint32_t frame = QAA_LoadU32( slot );
+	if ( !release ) {
+		uint64_t handle = 0;
+		if ( UiCall( addr::CREATE_EVENT, { 0, 1, 0, 0 }, &handle ) ) {
+			release = static_cast<uint32_t>( handle );
+		}
+	}
+	const bool redirect = thread && frame && release
+		&& Api().qaa_guest_wait_thread_blocked( Guest(), thread, frame, updateStalled ? 0 : 5000 ) == QAA_OK;
+	if ( redirect ) {
+		QAA_StoreU32( slot, release );
+	}
+	const bool rendered = UiCall( addr::SFUI_RENDER, {} );
+	if ( !redirect ) {
+		return rendered;
+	}
+	QAA_StoreU32( slot, frame );
+	uint64_t set = 0;
+	if ( UiCall( addr::WAIT_FOR_OBJECT, { release, 0 }, &set ) && static_cast<uint32_t>( set ) == 0 ) {
+		UiCall( addr::RESET_EVENT, { release } );
+		const bool stalled = updateStalled;
+		updateStalled = Api().qaa_guest_step_thread( Guest(), thread, frame, 5000 ) != QAA_OK;
+		if ( updateStalled && !stalled ) {
+			Com_Printf( S_COLOR_YELLOW "QAA ui: the update thread did not finish the frame the render began (%s)\n",
+				Api().qaa_guest_last_error( Guest() ) );
+		}
+	}
+	return rendered;
+}
+
 } // namespace
 
 /* ==== public ================================================================================== */
@@ -3261,6 +3317,7 @@ void QAA_UI_Frame( void ) {
 		const int stepped = Api().qaa_guest_step_thread( Guest(), thread, frame, 5000 );
 		uiprof::Add( uiprof::UPDATE, stepStart );
 		uiprof::updates++;
+		updateStalled = stepped != QAA_OK;
 		if ( stepped != QAA_OK ) {
 			Com_Printf( S_COLOR_YELLOW "QAA ui: the update thread did not finish its frame (%s)\n",
 				Api().qaa_guest_last_error( Guest() ) );
@@ -3307,7 +3364,7 @@ void QAA_UI_Draw( void ) {
 	canvas.Resize( canvasW, canvasH );
 	canvas.Clear();
 	canvasDrawn = false;
-	if ( !UiCall( addr::SFUI_RENDER, {} ) ) {
+	if ( !RenderMovies() ) {
 		return;
 	}
 	uiprof::Add( uiprof::RENDER, stageStart );
