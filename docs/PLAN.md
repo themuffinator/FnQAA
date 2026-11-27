@@ -155,6 +155,10 @@ place of the rasteriser.
 audio, profile and settings saves, local achievements, display options.
 
 **M8 Multiplayer.** LAN and internet play in place of Xbox Live sessions.
+Retail's online path is recorded in [NETWORK.md](NETWORK.md): Quake III
+1.32's client-server protocol under a session layer (QNET) that hosts with
+`map` and joins with `connect` to the host's address on port 1010, so only
+the session layer needs replacing.
 
 ## Rules carried through every milestone
 

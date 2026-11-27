@@ -41,6 +41,7 @@ reimplemented that can be recompiled.
 | pak0.bpk entries under their names | `ref/baseq3/` (`python tools/bpk.py <bpk> extract -n ref/pak0.names -o ref/baseq3`); unnamed ones in `ref/baseq3/_unnamed/<hash>` |
 | Disassembly, function bounds, xrefs | `python tools/ppc.py <image.pe> funcs|xrefs|dis|strings ...` (capstone) |
 | Format facts | `docs/FORMATS.md` |
+| Retail online play (QNET, XNet, connect path) | `docs/NETWORK.md` |
 | Engine baseline | `E:\Repositories\FnQL` (engine only; see its `AGENTS.md`) |
 
 The tools need the native helpers built first:

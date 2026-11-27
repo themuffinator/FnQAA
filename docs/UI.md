@@ -349,7 +349,8 @@ synthetic data. It needs no retail files.
 ## Known gaps
 
 - Xbox Live: sessions, matchmaking, leaderboards and gamer cards answer
-  "none". Achievements and gamer pictures are partial.
+  "none". Achievements and gamer pictures are partial. Retail's session
+  layer is described in [NETWORK.md](NETWORK.md).
 - The map name in the scoreboard is "null" when a map is started from the
   console rather than from the menus.
 - Performance: the rasteriser is a CPU path. Each row is walked only over

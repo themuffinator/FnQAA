@@ -327,7 +327,8 @@ QAA-only cgame traps:
 132 do have sites (the cgame reaches them through a function pointer). The UI
 traps feed QAA's Scaleform menus: the client hands them to its front end, game
 48, 49, 65 and 69 as well ([UI.md](UI.md)). The Live traps can be stubbed on
-the PC as documented PC deviations.
+the PC as documented PC deviations. How the engine itself hosts and joins
+online matches is in [NETWORK.md](NETWORK.md).
 
 **Coverage.** Every number the dispatchers handle has an entry: 218 game, 135
 cgame. Shared traps are mapped to their Quake III/FnQL name with engine
