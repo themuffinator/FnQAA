@@ -151,31 +151,74 @@ static void TestFrontEndCommands(void) {
 	REWRITES("unbindall;", "unbindall;");
 }
 
-/* Quake Live's keyboard and mouse defaults, with QAA's commands. */
-static void TestPcBindings(void) {
-	CHECK(strstr(QAA_PC_BINDINGS, "bind w +forward\n") != NULL);
-	CHECK(strstr(QAA_PC_BINDINGS, "bind MOUSE1 +attack\n") != NULL);
-	CHECK(strstr(QAA_PC_BINDINGS, "bind MOUSE2 +zoom\n") != NULL);
-	CHECK(strstr(QAA_PC_BINDINGS, "bind f lastweap\n") != NULL);
-	CHECK(strstr(QAA_PC_BINDINGS, "bind KP_PGUP \"follow 9\"\n") != NULL);
-	CHECK(strstr(QAA_PC_BINDINGS, "bind PAD0_LEFTSTICK_UP +forward\n") != NULL);
-	CHECK(strstr(QAA_PC_BINDINGS, "PAD0_RIGHTSTICK") == NULL);	/* the look stick is unbound */
-	CHECK(strstr(QAA_PC_BINDINGS, "drop") == NULL);
-	CHECK(strstr(QAA_PC_BINDINGS, "weapon 14") == NULL);
-	CHECK(strstr(QAA_PC_BINDINGS, "JOY") == NULL);
-	CHECK(strstr(QAA_PC_BINDINGS, "ARROW +") == NULL);	// the arrows are the D-pad's
-	/* it binds the mouse, so it runs after the renaming, never through it */
-	CHECK(strstr(Rewrite(QAA_PC_BINDINGS), "bind PAD0_RIGHTTRIGGER +attack\n") != NULL);
+/* FnQAA's fnqaa.cfg (pkg/baseq3/fnqaa.cfg, the test's argument), its commands
+ * only: comments dropped, line endings LF. */
+static char pcConfig[8192];
+
+static int LoadPcConfig(const char *path) {
+	FILE *file = fopen(path, "rb");
+	size_t n = 0;
+	int c = 0, comment = 0;
+
+	if (!file) {
+		fprintf(stderr, "cannot open %s\n", path);
+		return 0;
+	}
+	while (n + 1 < sizeof(pcConfig) && (c = fgetc(file)) != EOF) {
+		if (c == '\r') {
+			continue;
+		}
+		if (c == '\n') {
+			comment = 0;
+		} else if (comment) {
+			continue;
+		} else if (c == '/' && n && pcConfig[n - 1] == '/') {
+			n--;
+			comment = 1;
+			continue;
+		}
+		pcConfig[n++] = (char)c;
+	}
+	pcConfig[n] = '\0';
+	CHECK(c == EOF);	/* the whole file fitted */
+	fclose(file);
+	return 1;
 }
 
-int main(void) {
+/* Quake Live's keyboard and mouse defaults, with QAA's commands. */
+static void TestPcBindings(const char *path) {
+	if (!LoadPcConfig(path)) {
+		failures++;
+		return;
+	}
+	CHECK(strstr(pcConfig, "bind w +forward\n") != NULL);
+	CHECK(strstr(pcConfig, "bind MOUSE1 +attack\n") != NULL);
+	CHECK(strstr(pcConfig, "bind MOUSE2 +zoom\n") != NULL);
+	CHECK(strstr(pcConfig, "bind f lastweap") != NULL);
+	CHECK(strstr(pcConfig, "bind KP_PGUP \"follow 9\"\n") != NULL);
+	CHECK(strstr(pcConfig, "bind PAD0_LEFTSTICK_UP +forward\n") != NULL);
+	CHECK(strstr(pcConfig, "PAD0_RIGHTSTICK") == NULL);	/* the look stick is unbound */
+	CHECK(strstr(pcConfig, "drop") == NULL);
+	CHECK(strstr(pcConfig, "weapon 14") == NULL);
+	CHECK(strstr(pcConfig, "JOY") == NULL);
+	CHECK(strstr(pcConfig, "ARROW +") == NULL);	// the arrows are the D-pad's
+	CHECK(strstr(pcConfig, "unbind") == NULL);	/* it adds to default.cfg's binds */
+	/* it binds the mouse, so it runs after the renaming, never through it */
+	CHECK(strstr(Rewrite(pcConfig), "bind PAD0_RIGHTTRIGGER +attack\n") != NULL);
+}
+
+int main(int argc, char **argv) {
 	TestPadConfigNames();
 	TestPadKeys();
 	TestUntouched();
 	TestCommandSplitting();
 	TestTruncation();
 	TestFrontEndCommands();
-	TestPcBindings();
+	if (argc < 2) {
+		fprintf(stderr, "usage: %s <fnqaa.cfg>\n", argv[0]);
+		return 2;
+	}
+	TestPcBindings(argv[1]);
 	if (failures) {
 		fprintf(stderr, "%d failure(s)\n", failures);
 		return 1;

@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tools" / "recomp"))
 
+import build_root_archive  # noqa: E402
 import changelog  # noqa: E402
 import fnqaa_meta  # noqa: E402
 import manual_release  # noqa: E402
@@ -189,6 +190,28 @@ class PackagingTests(TempDir):
             self.assertTrue(package_release.FORBIDDEN.search(name), name)
         for name in package_release.setup_kit():
             self.assertFalse(package_release.FORBIDDEN.search("d/setup/" + name), name)
+
+    def test_root_archive_holds_the_pc_config_and_builds_the_same_bytes(self):
+        first, second = self.tmp / "a" / "FnQAA-pkg.fnz", self.tmp / "b" / "FnQAA-pkg.fnz"
+        build_root_archive.write(first, build_root_archive.PKG_ROOT)
+        build_root_archive.write(second, build_root_archive.PKG_ROOT)
+        self.assertEqual(first.read_bytes(), second.read_bytes())
+        build_root_archive.check_archive(first)
+        with zipfile.ZipFile(first) as zf:
+            self.assertIn("baseq3/fnqaa.cfg", zf.namelist())
+            self.assertNotIn(b"\r\n", zf.read("baseq3/fnqaa.cfg"))
+        self.assertIn(package_release.ROOT_ARCHIVE, package_release.expected_files("windows"))
+        self.assertIn(package_release.ROOT_ARCHIVE, package_release.expected_files("linux"))
+        self.assertFalse(package_release.FORBIDDEN.search("d/" + package_release.ROOT_ARCHIVE))
+
+    def test_root_archive_without_the_pc_config_fails(self):
+        pkg = self.tmp / "pkg" / "baseq3"
+        pkg.mkdir(parents=True)
+        (pkg / "other.cfg").write_text("set a 1\n")
+        with self.assertRaises(ValueError):
+            build_root_archive.write(self.tmp / "out" / "FnQAA-pkg.fnz", self.tmp / "pkg")
+        with self.assertRaises(ValueError):
+            build_root_archive.member_name(Path("../x"))
 
     def test_checksums_and_manifest(self):
         archive = self.tmp / "fnqaa-0.0.2.41-20261126-3f80a8a1-linux-x86_64.tar.gz"

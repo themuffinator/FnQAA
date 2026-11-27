@@ -57,9 +57,9 @@ static void R_LoadGlobalFogForWorld( void )
 		return;
 	}
 
-	/* Use the normal FS_ReadFile contract: an engine-owned maps/<map>.fog entry in
-	 * FnQL-pkg.fnz has deterministic source-port precedence, then the ordinary
-	 * active-game/pack/loose search order provides the fallback. */
+	/* Use the normal FS_ReadFile contract: the active-game/pack/loose search
+	 * order finds maps/<map>.fog. (FnQL also shipped Quake Live's in its root
+	 * archive; FnQAA's ships none.) */
 	Com_sprintf( filename, sizeof( filename ), "maps/%s.fog", s_worldData.baseName );
 	size = ri.FS_ReadFile( filename, NULL );
 	if ( size <= 0 ) {

@@ -931,6 +931,20 @@ if build_client
   )
 endif
 
+# FnQAA's own data beside the client: pkg/ packed as FnQAA-pkg.fnz, the PC
+# defaults (baseq3/fnqaa.cfg) the client runs after the package's default.cfg
+# (scripts/build_root_archive.py). It holds no retail data.
+if build_client
+  root_archive = custom_target('FnQAA-pkg.fnz',
+    input: files('scripts/build_root_archive.py', 'pkg/baseq3/fnqaa.cfg'),
+    output: 'FnQAA-pkg.fnz',
+    command: [python, '@INPUT0@', '--package-root', meson.current_source_dir() / 'pkg', '--output', '@OUTPUT@'],
+    build_by_default: true,
+    install: true,
+    install_dir: '.',
+  )
+endif
+
 if build_server
   server_exe = executable(server_binary_name,
     q3_platform_src + qcommon_src + server_src + platform_asm_src,
@@ -1108,7 +1122,7 @@ qaa_binds_tests = executable('fnqaa_qaa_binds_tests',
   include_directories: include_directories('code/qcommon'),
   c_args: common_c_args,
 )
-test('fnqaa_qaa_binds', qaa_binds_tests)
+test('fnqaa_qaa_binds', qaa_binds_tests, args: [files('pkg/baseq3/fnqaa.cfg')])
 
 cvar_retail_bounds_tests = executable('fnqaa_cvar_retail_bounds_tests',
   'tests/cvar_retail_bounds_tests.c',
@@ -1251,7 +1265,7 @@ endif
 if build_client and build_server
   test('fnqaa_headless', python,
     args: [files('tests/headless_tests.py'), client_exe, server_exe],
-    depends: renderer_targets,
+    depends: renderer_targets + [root_archive],
     env: {'MESON_BUILD_ROOT': meson.current_build_dir()},
     is_parallel: false,
     timeout: 300,

@@ -360,6 +360,7 @@ the bare name).
 | GPU replay | software rasteriser | |
 | No mouse | the pointer selects, A on a click, B on the right button, the wheel as up and down; sliders take the pointer's place on the track ([the mouse](#frames-input-and-events)) | `RunPointerEvents`, `Key_GetPointerCatcher` |
 | The pad is the only bindable device; the front end binds it under JOY1..JOY10, MOUSE1/2 and the arrows, and its `unbindall` clears it | the front end's commands take the pad's PC key names, and its `unbindall` clears the pad's buttons only ([the menus' binds](#cvars-binds-and-commands-the-menus-use)) | `H_Cbuf_AddText`, `QAA_RewriteFrontEndCommands` |
+| `default.cfg` binds the pad only; there is no keyboard or mouse | after `default.cfg` the client runs FnQAA's `fnqaa.cfg` from `FnQAA-pkg.fnz` beside it (`pkg/baseq3/fnqaa.cfg`): Quake Live's keyboard and mouse binds and the move stick's. Saved configs run after both | `Cmd_Exec_f` |
 | The move stick is read without binds | it drives `PAD0_LEFTSTICK_*` (whichever stick moves); the look stick is read without binds, as retail | `IN_GamepadMove`, `CL_PadLookMove` |
 
 ## Testing

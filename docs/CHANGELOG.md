@@ -56,11 +56,16 @@ cycle (`python scripts/changelog.py clear-unreleased`).
 - The engine's settings start at the console's values: the controller is
   on (`in_joystick 1`), sound volume is full, matches default to 10 frags
   and 60 minutes, bots think as often as on the console
-  (`bot_thinktime 300`), and flares, the sun, shadows, model detail and
+  (`bot_thinktime 300`), the frame rate is capped at 300 (`com_maxfps`)
+  instead of 125, and flares, the sun, shadows, model detail and
   the near clip plane match it. A config you saved earlier keeps the
   values it holds; `reset <cvar>` now restores the console's value.
 
 ### Rendering and Display
+- Where the game's shader script defines a surface twice (two dozen,
+  among them the menu backgrounds, some player skins and a few map
+  textures), the first definition is used, as on the console; the last one
+  was.
 - The menus and HUD show at any resolution. Above 2048 pixels wide (for
   example 2560x1440) the screen used to stay black, or freeze on one menu
   over the game after starting a map.
@@ -73,8 +78,14 @@ cycle (`python scripts/changelog.py clear-unreleased`).
 ### Builds and Packaging
 - Releases are built for Windows x86_64 and Linux x86_64 and hold the engine
   and a setup kit only, never game data or game code.
+- The PC's default keyboard, mouse and move-stick binds now ship as a
+  config file in `FnQAA-pkg.fnz` beside the engine, run right after the
+  game's own `default.cfg`. Keep the file beside `fnqaa`; without it those
+  keys start unbound and the console says so.
 
 ### Fixes
+- The console has the game's own background again: it was drawn with a
+  Quake Live shader whose file FnQAA never shipped.
 - The menus are many times faster: the title and menus no longer crawl at
   a few frames a second. They are drawn on every core, and only the parts
   of the screen that changed are drawn again: the main menu runs at full

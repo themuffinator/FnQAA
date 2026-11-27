@@ -2,8 +2,10 @@
 """Package and verify FnQAA release archives (.github/workflows/release.yml).
 
 A release archive holds only FnQAA's own files: the client, the dedicated
-server, the renderer modules, README.md, LICENSE, CREDITS.md, a generated
-INSTALL.txt, and the setup kit: setup.cmd or setup.sh and, under setup/,
+server, the renderer modules, FnQAA-pkg.fnz (FnQAA's PC defaults,
+pkg/baseq3/fnqaa.cfg, which the client runs after the package's own
+default.cfg), README.md, LICENSE, CREDITS.md, a generated INSTALL.txt, and
+the setup kit: setup.cmd or setup.sh and, under setup/,
 FnQAA's recompile tooling (tools/recomp/build.py and what it uses, the
 guest runtime's source, the LZX decoder's source). setup.cmd / setup.sh
 recompile the game modules on the user's machine from their own package
@@ -40,10 +42,16 @@ import time
 import zipfile
 from pathlib import Path, PurePosixPath
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import build_root_archive  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 ARCH = "x86_64"
 RENDERERS = ("glx", "vk", "rtx")
 DOCS = ("README.md", "LICENSE", "CREDITS.md")
+# FnQAA's own data archive, built by meson (scripts/build_root_archive.py)
+# and staged beside the engine, where the client looks for it.
+ROOT_ARCHIVE = build_root_archive.ARCHIVE_NAME
 # The setup kit, shipped under setup/ with the repository's layout (git-tracked
 # and new, not ignored, files under these paths).
 SETUP_KIT = (
@@ -101,7 +109,7 @@ def setup_kit() -> list[str]:
 
 def expected_files(platform: str) -> list[str]:
     kit = ["setup/" + f for f in setup_kit()]
-    return binaries(platform) + list(DOCS) + ["INSTALL.txt", launcher(platform)] + kit
+    return binaries(platform) + [ROOT_ARCHIVE] + list(DOCS) + ["INSTALL.txt", launcher(platform)] + kit
 
 
 def default_prefix() -> str:
@@ -179,6 +187,14 @@ def package(platform: str, stage: Path, output: Path, prefix: str) -> Path:
         if not path.is_file():
             raise SystemExit(f"{path} is missing: meson install did not stage it")
         sources[name] = path
+    archive_path = stage / ROOT_ARCHIVE
+    if not archive_path.is_file():
+        raise SystemExit(f"{archive_path} is missing: meson install did not stage it")
+    try:
+        build_root_archive.check_archive(archive_path)
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        raise SystemExit(f"{archive_path}: {exc}")
+    sources[ROOT_ARCHIVE] = archive_path
     for name in DOCS:
         sources[name] = ROOT / name
     sources["INSTALL.txt"] = install_text(platform, ver).encode()
@@ -292,6 +308,10 @@ def verify(archive: Path, prefix: str | None = None) -> None:
     expected = set(expected_files(platform))
     if names != expected:
         raise SystemExit(f"{archive.name}: unexpected {sorted(names - expected)}, missing {sorted(expected - names)}")
+    try:
+        build_root_archive.check_archive(io.BytesIO(files[f"{base}/{ROOT_ARCHIVE}"]), f"{archive.name}: {ROOT_ARCHIVE}")
+    except (ValueError, zipfile.BadZipFile) as exc:
+        raise SystemExit(str(exc))
 
     system32 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
     for name in binaries(platform):

@@ -36,6 +36,7 @@ reimplemented that can be recompiled.
 | The user's package (zip) | `ref/Quake Arena Arcade (World) (XBLA).zip` |
 | The STFS package | `ref/package/584108C8/000D0000/0ED9DD87783BD72BA56ED67ACD52BBFF1F47F08458` |
 | Files from the package | `ref/extract/` (`python tools/stfs.py <pkg> extract -o ref/extract`) |
+| FnQAA's own shipped data (PC defaults, `fnqaa.cfg`) | `pkg/`, built into `FnQAA-pkg.fnz` beside the client (`scripts/build_root_archive.py`) |
 | Decoded PE images | `ref/pe/<name>.pe` (`python tools/xex.py <xex> image -o ...`) |
 | pak0.bpk name list (generated, never committed) | `ref/pak0.names` (`python tools/bpk_names.py <bpk> --images ref/pe/*.pe -o ref/pak0.names`) |
 | pak0.bpk entries under their names | `ref/baseq3/` (`python tools/bpk.py <bpk> extract -n ref/pak0.names -o ref/baseq3`); unnamed ones in `ref/baseq3/_unnamed/<hash>` |

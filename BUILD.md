@@ -12,6 +12,7 @@ A build produces:
 | `fnqaa` (`fnqaa.exe`) | the client |
 | `fnqaa-ded` (`fnqaa-ded.exe`) | the dedicated server |
 | `fnqaa_glx_<arch>`, `fnqaa_vk_<arch>`, `fnqaa_rtx_<arch>` | renderer modules loaded by the client (`cl_renderer glx/vk/rtx`) |
+| `FnQAA-pkg.fnz` | FnQAA's own data, `pkg/` zipped by `scripts/build_root_archive.py`: `baseq3/fnqaa.cfg`, the PC defaults (keyboard, mouse and move-stick binds) the client runs right after the package's `default.cfg`. It belongs beside the client, and releases ship it; without it the client warns and those keys stay unbound |
 | `fnqaa_*_tests` | unit tests, run by `meson test` |
 
 ## Dependencies

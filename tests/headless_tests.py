@@ -275,7 +275,8 @@ class HeadlessTests(unittest.TestCase):
         self.assertEqual(binds.get("PAD0_LEFTSTICK_UP"), "+forward")
         # the look stick is read unbound, as retail reads it
         self.assertFalse([k for k in binds if k.startswith("PAD0_RIGHTSTICK_") and k != "PAD0_RIGHTSTICK_CLICK"], binds)
-        # Quake Live's keyboard and mouse
+        # Quake Live's keyboard and mouse, from fnqaa.cfg in FnQAA-pkg.fnz beside the client
+        self.assertNotIn("fnqaa.cfg not found", out)
         self.assertEqual(binds.get("MOUSE1"), "+attack")
         self.assertEqual(binds.get("MOUSE2"), "+zoom")
         self.assertEqual(binds.get("w"), "+forward")

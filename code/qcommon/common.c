@@ -4107,7 +4107,9 @@ void Com_Init( char *commandLine ) {
 	// (CV_RETAIL_BOUNDED): retail configs set "250x", which retail stores
 	// verbatim with integer 0, so the limiter below is off; the cgame's
 	// 30..250 registration then keeps that value. CV_INTEGER reset it to 125.
-	com_maxfps = Cvar_Get( "com_maxfps", "125",
+	// QAA: retail Com_Init registers com_maxfps "300" (0x8211E568); neither
+	// QAA module nor its configs set it. The flags stay FnQL's.
+	com_maxfps = Cvar_Get( "com_maxfps", "300",
 		CVAR_ARCHIVE | CVAR_PROTECTED | CVAR_CLOUD );
 	Cvar_CheckRange( com_maxfps, "0", "1000", CV_RETAIL_BOUNDED );
 	Cvar_SetDescription( com_maxfps, "Sets maximum frames per second." );

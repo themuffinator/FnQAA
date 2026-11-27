@@ -219,11 +219,14 @@ or configs will never get loaded from disk!
 #define MAX_FILEHASH_SIZE	4096
 #define IDPAKHEADER			0x4b434150u
 
-#define FNQL_ROOT_ARCHIVE_NAME			"FnQL-pkg.fnz"
-#define FNQL_ROOT_ARCHIVE_RENDERER_SHADER "scripts/fnql.shader"
-#define FNQL_ROOT_ARCHIVE_WEAPON_SOUNDS	"sound/fnql-weapon-sounds.sndshd"
-#define FNQL_ROOT_ARCHIVE_MAX_PATHS		8
-#define FNQL_ROOT_ARCHIVE_MAX_ENTRIES	64
+// QAA: FnQAA's own data archive beside the engine (pkg/, built by
+// scripts/build_root_archive.py). FnQL's FnQL-pkg.fnz held Quake Live
+// sidecars (map fog and audio zones, weapon sounds, a console shader); QAA
+// needs none of them, and its console is retail's "console" shader.
+#define FNQAA_ROOT_ARCHIVE_NAME			"FnQAA-pkg.fnz"
+#define FNQAA_ROOT_ARCHIVE_PC_CONFIG	"fnqaa.cfg"
+#define FNQAA_ROOT_ARCHIVE_MAX_PATHS	8
+#define FNQAA_ROOT_ARCHIVE_MAX_ENTRIES	64
 
 
 typedef struct fileInPack_s {
@@ -2613,29 +2616,9 @@ static pack_t *FS_LoadArchiveFile( const char *archivefile )
 }
 
 
-static qboolean FS_RootArchiveAllowsMapSidecar( const char *qpath )
-{
-	static const char mapsPrefix[] = "maps/";
-
-	if ( qpath == NULL ) {
-		return qfalse;
-	}
-
-	if ( Q_stricmpn( qpath, mapsPrefix, (int) sizeof( mapsPrefix ) - 1 ) ) {
-		return qfalse;
-	}
-
-	return COM_CompareExtension( qpath, ".azb" ) ||
-		COM_CompareExtension( qpath, ".fog" );
-}
-
-
 static qboolean FS_RootArchiveAllowsFile( const char *qpath )
 {
-	return qpath != NULL &&
-		( !FS_FilenameCompare( qpath, FNQL_ROOT_ARCHIVE_RENDERER_SHADER ) ||
-			!FS_FilenameCompare( qpath, FNQL_ROOT_ARCHIVE_WEAPON_SOUNDS ) ||
-			FS_RootArchiveAllowsMapSidecar( qpath ) );
+	return qpath != NULL && !FS_FilenameCompare( qpath, FNQAA_ROOT_ARCHIVE_PC_CONFIG );
 }
 
 
@@ -2753,7 +2736,7 @@ static int FS_RootArchiveAddArchivePath(
 		return archivePathCount;
 	}
 
-	archivePath = FS_BuildOSPath( basePath, FNQL_ROOT_ARCHIVE_NAME, NULL );
+	archivePath = FS_BuildOSPath( basePath, FNQAA_ROOT_ARCHIVE_NAME, NULL );
 	if ( strlen( archivePath ) >= MAX_OSPATH ) {
 		return archivePathCount;
 	}
@@ -2808,8 +2791,8 @@ static int FS_RootArchiveBuildArchivePaths(
 =================
 FS_ReadFileFromRootArchive
 
-Read compatibility-safe source-port assets from a fixed archive next to the executable.
-Restricted to explicitly owned renderer, audio-zone, global-fog, and sound-shader sidecars so it doesn't widen the general data search path.
+Read FnQAA's own files from a fixed archive next to the executable.
+Restricted to the allow-list above (the PC config) so it doesn't widen the general data search path.
 =================
 */
 static int FS_ReadFileFromRootArchive( const char *qpath, void **buffer )
@@ -2819,8 +2802,8 @@ static int FS_ReadFileFromRootArchive( const char *qpath, void **buffer )
 	unzFile archive;
 	unz_file_info fileInfo;
 	byte *buf;
-	char archivePaths[ FNQL_ROOT_ARCHIVE_MAX_PATHS ][ MAX_OSPATH ];
-	char candidates[ FNQL_ROOT_ARCHIVE_MAX_ENTRIES ][ MAX_ZPATH ];
+	char archivePaths[ FNQAA_ROOT_ARCHIVE_MAX_PATHS ][ MAX_OSPATH ];
+	char candidates[ FNQAA_ROOT_ARCHIVE_MAX_ENTRIES ][ MAX_ZPATH ];
 	int archivePathCount;
 	int archivePathIndex;
 	int candidateCount;
@@ -2836,7 +2819,7 @@ static int FS_ReadFileFromRootArchive( const char *qpath, void **buffer )
 	archivePathCount = FS_RootArchiveBuildArchivePaths( archivePaths, ARRAY_LEN( archivePaths ) );
 	if ( archivePathCount == 0 ) {
 		if ( fs_debug->integer ) {
-			Com_Printf( "FS_ReadFile: %s (%s has no candidate paths)\n", qpath, FNQL_ROOT_ARCHIVE_NAME );
+			Com_Printf( "FS_ReadFile: %s (%s has no candidate paths)\n", qpath, FNQAA_ROOT_ARCHIVE_NAME );
 		}
 		return -1;
 	}
@@ -2844,7 +2827,7 @@ static int FS_ReadFileFromRootArchive( const char *qpath, void **buffer )
 	candidateCount = FS_RootArchiveBuildCandidates( qpath, candidates, ARRAY_LEN( candidates ) );
 	if ( candidateCount == 0 ) {
 		if ( fs_debug->integer ) {
-			Com_Printf( "FS_ReadFile: %s (%s has no candidate entries)\n", qpath, FNQL_ROOT_ARCHIVE_NAME );
+			Com_Printf( "FS_ReadFile: %s (%s has no candidate entries)\n", qpath, FNQAA_ROOT_ARCHIVE_NAME );
 		}
 		return -1;
 	}
@@ -2857,7 +2840,7 @@ static int FS_ReadFileFromRootArchive( const char *qpath, void **buffer )
 		if ( archive == NULL ) {
 			if ( fs_debug->integer ) {
 				Com_Printf( "FS_ReadFile: %s (%s not opened: '%s')\n",
-					qpath, FNQL_ROOT_ARCHIVE_NAME, archivePaths[ archivePathIndex ] );
+					qpath, FNQAA_ROOT_ARCHIVE_NAME, archivePaths[ archivePathIndex ] );
 			}
 			continue;
 		}
@@ -2886,7 +2869,7 @@ static int FS_ReadFileFromRootArchive( const char *qpath, void **buffer )
 
 	if ( archiveEntry == NULL ) {
 		if ( fs_debug->integer ) {
-			Com_Printf( "FS_ReadFile: %s (not found in %s; tried", qpath, FNQL_ROOT_ARCHIVE_NAME );
+			Com_Printf( "FS_ReadFile: %s (not found in %s; tried", qpath, FNQAA_ROOT_ARCHIVE_NAME );
 			for ( candidateIndex = 0; candidateIndex < candidateCount; candidateIndex++ ) {
 				Com_Printf( "%s%s", candidateIndex == 0 ? " " : ", ", candidates[ candidateIndex ] );
 			}
@@ -2903,7 +2886,7 @@ static int FS_ReadFileFromRootArchive( const char *qpath, void **buffer )
 
 	if ( fileInfo.compression_method != 0 && fileInfo.compression_method != 8 /* Z_DEFLATED */ ) {
 		Com_Printf( S_COLOR_YELLOW "%s|%s: unsupported compression method %i\n",
-			FNQL_ROOT_ARCHIVE_NAME, archiveEntry, (int) fileInfo.compression_method );
+			FNQAA_ROOT_ARCHIVE_NAME, archiveEntry, (int) fileInfo.compression_method );
 		unzClose( archive );
 		return -1;
 	}
@@ -3040,8 +3023,8 @@ int FS_ReadFile( const char *qpath, void **buffer ) {
 		}
 	}
 
-	// FnQL source-port package assets are intentionally higher priority than
-	// normal game data while staying limited to the fixed allowlist above.
+	// FnQAA's own archive is intentionally higher priority than normal game
+	// data while staying limited to the fixed allowlist above.
 	len = FS_ReadFileFromRootArchive( qpath, buffer );
 	if ( len >= 0 ) {
 		return len;
@@ -4626,40 +4609,7 @@ FS_ListFiles
 */
 char **FS_ListFiles( const char *path, const char *extension, int *numfiles ) 
 {
-	char **files;
-	char **expanded;
-	int count;
-	int i;
-
-	files = FS_ListFilteredFiles( path, extension, NULL, numfiles, FS_MATCH_ANY );
-	count = *numfiles;
-
-	/* The root archive is deliberately not a general search path. Expose its
-	 * single owned renderer shader only for the exact list operation used by
-	 * renderer startup, then let the normal allowlisted read path serve it. */
-	if ( Q_stricmp( path, "scripts" ) || Q_stricmp( extension, ".shader" ) ||
-		FS_ReadFileFromRootArchive( FNQL_ROOT_ARCHIVE_RENDERER_SHADER, NULL ) < 0 ) {
-		return files;
-	}
-
-	for ( i = 0; i < count; i++ ) {
-		if ( !FS_FilenameCompare( files[i], "fnql.shader" ) ) {
-			return files;
-		}
-	}
-
-	expanded = Z_Malloc( ( count + 2 ) * sizeof( expanded[0] ) );
-	for ( i = 0; i < count; i++ ) {
-		expanded[i] = files[i];
-	}
-	expanded[count] = CopyString( "fnql.shader" );
-	expanded[count + 1] = NULL;
-	// no mounted match at all leaves the list NULL, which Z_Free rejects
-	if ( files ) {
-		Z_Free( files );
-	}
-	*numfiles = count + 1;
-	return expanded;
+	return FS_ListFilteredFiles( path, extension, NULL, numfiles, FS_MATCH_ANY );
 }
 
 

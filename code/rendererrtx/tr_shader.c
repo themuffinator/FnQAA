@@ -4884,6 +4884,16 @@ static void ScanAndLoadShaderFiles( void )
 		hashMem = ((char *) hashMem) + ((shaderTextHashTableSizes[i] + 1) * sizeof(char *));
 	}
 
+	// QAA: retail ScanAndLoadShaderFiles fills each hash chain in text order,
+	// table[hash][count[hash]++] with the counts zeroed first (0x8215C3D4 to
+	// 0x8215C400), so the first of master.shader's duplicate definitions wins
+	// ("console", "mainmenu-bg", some player skins: 24 in all). FnQ3 fills the
+	// chains backwards so a later file overrides an earlier one; other shader
+	// lists keep that.
+	if ( qaaShaderList ) {
+		Com_Memset( shaderTextHashTableSizes, 0, sizeof( shaderTextHashTableSizes ) );
+	}
+
 	p = s_shaderText;
 	// look for shader names
 	while ( 1 ) {
@@ -4894,7 +4904,11 @@ static void ScanAndLoadShaderFiles( void )
 		}
 
 		hash = generateHashValue(token, MAX_SHADERTEXT_HASH);
-		shaderTextHashTable[hash][--shaderTextHashTableSizes[hash]] = (char*)oldp;
+		if ( qaaShaderList ) {
+			shaderTextHashTable[hash][shaderTextHashTableSizes[hash]++] = (char*)oldp;
+		} else {
+			shaderTextHashTable[hash][--shaderTextHashTableSizes[hash]] = (char*)oldp;
+		}
 
 		SkipBracedSection(&p, 0);
 	}

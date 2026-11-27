@@ -25,7 +25,9 @@ extern "C" {
  * (controlschemes/*.cfg) name them. The PC reports the pad under its own keys
  * (PAD0_*), so the engine renames those keys in the bind and unbind commands
  * of QAA's default.cfg and control schemes as it executes them. The keyboard
- * and the mouse then take Quake Live's defaults (QAA_PC_BINDINGS).
+ * and the mouse then take Quake Live's defaults, from FnQAA's fnqaa.cfg
+ * (pkg/baseq3/fnqaa.cfg, shipped in FnQAA-pkg.fnz), which the engine runs
+ * after default.cfg without renaming its keys.
  */
 
 /* True for a file whose binds are QAA's pad binds: default.cfg and
@@ -48,10 +50,6 @@ size_t QAA_RewritePadConfig( const char *text, char *out, size_t outSize );
  * the mouse and the sticks keep theirs.
  */
 size_t QAA_RewriteFrontEndCommands( const char *text, char *out, size_t outSize );
-
-/* What default.cfg runs after QAA's own text: Quake Live's keyboard and mouse
- * defaults, and the pad's move stick (the look stick is read unbound). */
-extern const char QAA_PC_BINDINGS[];
 
 #ifdef __cplusplus
 }

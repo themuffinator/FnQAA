@@ -467,18 +467,35 @@ static void Cmd_Exec_f( void ) {
 
 #ifndef DEDICATED
 	// QAA: PC deviation: QAA's configs bind its pad under the Xbox 360's key
-	// names; they run with the PC's, and default.cfg then binds the keyboard
-	// and the mouse as Quake Live's does (qaa_binds.h).
+	// names; they run with the PC's (qaa_binds.h). After default.cfg come
+	// FnQAA's PC defaults, fnqaa.cfg from FnQAA-pkg.fnz beside the engine:
+	// the keyboard and the mouse as Quake Live binds them, and the move stick.
 	if ( QAA_IsPadConfig( filename ) ) {
 		const qboolean defaults = !Q_stricmp( filename, "default.cfg" ) ? qtrue : qfalse;
 		const size_t len = QAA_RewritePadConfig( f.c, NULL, 0 );
-		const size_t size = len + ( defaults ? 1 + strlen( QAA_PC_BINDINGS ) : 0 ) + 1;
-		char *text = Z_Malloc( (int)size );
+		union {
+			char *c;
+			void *v;
+		} pc = { NULL };
+		size_t size;
+		char *text;
 
-		QAA_RewritePadConfig( f.c, text, len + 1 );
 		if ( defaults ) {
+			FS_BypassPure();
+			FS_ReadFile( "fnqaa.cfg", &pc.v );
+			FS_RestorePure();
+			if ( pc.v == NULL ) {
+				Com_Printf( S_COLOR_YELLOW "WARNING: fnqaa.cfg not found (FnQAA-pkg.fnz belongs beside the engine): "
+					"the keyboard, the mouse and the move stick have no default binds\n" );
+			}
+		}
+		size = len + ( pc.c ? 1 + strlen( pc.c ) : 0 ) + 1;
+		text = Z_Malloc( (int)size );
+		QAA_RewritePadConfig( f.c, text, len + 1 );
+		if ( pc.c ) {
 			Q_strcat( text, (int)size, "\n" );
-			Q_strcat( text, (int)size, QAA_PC_BINDINGS );
+			Q_strcat( text, (int)size, pc.c );
+			FS_FreeFile( pc.v );
 		}
 		Cbuf_InsertText( text );
 		Z_Free( text );
