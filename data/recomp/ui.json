@@ -42,7 +42,8 @@
     "0x821D9748": "CRT start-up: heap",
     "0x821DF7B0": "CRT start-up: _mtinit",
     "0x821D9520": "CRT start-up: pre-C initializers",
-    "0x821D9440": "CRT start-up: _cinit"
+    "0x821D9440": "CRT start-up: _cinit",
+    "0x821894F0": "feeder column count (FgApi.getFeederColumnCount): a table of the feeders' columns, no engine state"
   },
   "hooks": {},
   "switches": {

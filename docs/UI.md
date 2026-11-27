@@ -40,7 +40,14 @@ ranges are followed and the rest of the engine is not. About 6,350 of the
 image's 17,558 functions are kept. Every engine function the kept code
 calls becomes a **hook**: a stub that calls the host. The host implements
 the ones SFUI needs (below) and returns 0 from the rest, logging each
-once (`unhandled engine call`).
+once (`unhandled engine call`). An engine function that only computes from
+its arguments and the image's own tables is recompiled instead (the
+`recompile` list in `ui.json`): the feeders' column count (0x821894F0,
+**code**: 3 for the model heads, 6 for the maps, 1 for most) behind
+`FgApi.getFeederColumnCount`. As a hook it returned 0, so every feeder list
+had no columns and never asked for its rows' text (**observed**: the model
+selector's grid stayed empty and the map selector's rows kept their
+authoring text, "WWWW").
 
 The module is loaded at 0x82000000 (the image base) into the same guest as
 qagame (0x88000000) and cgame (0x86000000). The three share one address
@@ -52,7 +59,7 @@ initializers). Then `SFUI_Init` runs on the client's thread.
 
 | Function | Address | Host |
 |---|---|---|
-| ui syscalls (`CL_UISystemCalls`) | 0x8210F988 | QAA's numbering: Quake III's up to 0x1D, +1 from 0x1F (0x1F `S_RegisterSound` ... 0x2C `GETGLCONFIG`); floats return as bits |
+| ui syscalls (`CL_UISystemCalls`) | 0x8210F988 | QAA's numbering: Quake III's up to 0x1D, +1 from 0x1F (0x1F `S_RegisterSound` ... 0x2C `GETGLCONFIG`, 0x33 `CVAR_REGISTER`, 0x34 `CVAR_UPDATE`); floats return as bits |
 | `Cvar_FindVar/Get/Set2/SetValue` | 0x8211F548, 6C8, 908, BE8 | FnQL cvars, mirrored into guest `cvar_t` (Quake III layout, 0x2C bytes) |
 | `Cbuf_AddText`, `Cmd_AddCommand` | 0x82119708, 0x8211A158 | FnQL; guest commands are called back |
 | `Z_*`, `Hunk_*Temp` | 0x8211B258.., 0x8211C180.. | the guest CRT heap (malloc 0x821DDBA8) |
@@ -65,6 +72,17 @@ initializers). Then `SFUI_Init` runs on the client's thread.
 | `R_GetCommandBuffer` | 0x821408A8 | unused by the replay; returns a scratch block |
 | SFUI-Backend constructor | 0x821687F0 | a host object (below) |
 | licence, profile, storage, config | see [PC deviations](#pc-deviations) | |
+
+**code** The menus' lists come from `ui_main`: `FgApi.getFeederCount`,
+`getFeederText`, `getFeederIndexByCvar` and `getMapValueForKey` read its
+`uiInfo` (0x82D04DE0: the arenas from `scripts/arenas.txt`, the game types,
+the characters) and the cvars it registers at start-up (`UI_RegisterCvars`
+0x821A2680, 114 of them: `ui_mapIndex`, `ui_currentMap`, `ui_gametype`,
+`ui_modelIndex` with its default of 22...). Until `CVAR_REGISTER` was
+handled none of them existed, the movies read their indices as "" and
+asked for row NaN (**observed**). Feeders that are not `ui_main`'s (the
+Live lists, e.g. 17) go to the engine through traps 0x6F and 0x70
+(0x821897E8, 0x821895A0), which the host does not implement.
 
 SFUI also reads engine globals in place. The host publishes them before
 every update and every key event:
@@ -251,7 +269,8 @@ the bare name).
 
 | Retail | PC | Where |
 |---|---|---|
-| The licence (`XamContentGetLicenseMask` bit 0, cached at 0x82CD9D6C) decides full game or trial | always the full game: the user's own package | 0x821856C8; 0x821859B8 (may play) |
+| The licence (`XamContentGetLicenseMask` bit 0, cached at 0x82CD9D6C) decides full game or trial | always the full game: the user's own package | 0x821856C8; 0x821859B8 (may play); xam import 614 itself, which ui_main's model count (0x821A2FB8) asks |
+| `CL_InitUI` (0x8218E490) sets `ui_ethernetActive` from `XNetGetEthernetLinkStatus`; System Link needs it | the link is FnQL's networking: 1 unless `net_enabled` is 0 | `QAA_UI_Init` |
 | Sign-in through the Guide; profile records filled by XAM | controller 0 is signed in, gamertag = `name` | 0x821869D8, profile records |
 | `XShowDeviceSelectorUI`, completed by the frame poll 0x8218C890 | one device (the home path), chosen at once; `DeviceSelectionComplete` is queued from the next frame | 0x8218CA70 |
 | Profile settings in a save container (`startLoad` 0x8218BCE8, `startSave` 0x8218BDB0, completion `ConfigLoadComplete`/`ConfigSaveComplete`) | the settings are the engine's cvars and config; the container operations succeed with nothing to read or write | |
@@ -313,6 +332,16 @@ Every run is headless (`com_headless 2`, no sound, no input grab).
    game, and the menu reopens.
 6. Exit Game, then Yes in the confirmation: disconnect, then the Practice
    menu.
+7. Help & Options, Settings, Player Settings, Select Model: the grid of
+   the characters' portraits, 68 of them on two pages (`datasource._rowCount`
+   68, 3 columns), with the default model (James) selected.
+8. Multiplayer, System Link, Host Match, Change Arena/Gametype: the arenas
+   of the game type by name, 32 for Free For All (as many as `uiInfo` holds
+   with that type), and the selected one's level shot, suggested players
+   and items.
+
+Items 7 and 8 were checked at 2560×1440 (`qaa_uiGet
+_global.sceneManager.movies.4.scene.selectionArray.0.datasource._rowCount`).
 
 `tests/qaa_ui_raster_tests.cpp` covers the rasteriser and the decoders on
 synthetic data. It needs no retail files.
@@ -342,6 +371,5 @@ synthetic data. It needs no retail files.
   FnQAA runs it with the engine waiting. A GPU replay would replace the
   rasteriser.
 - Rumble (`stopVibration`) and XAM import 752 are unimplemented.
-- **observed**: the model selector (Player Settings, Select Model) shows
-  an empty grid, and the map selector (Host Match, Change Arena/Gametype)
-  shows its rows as placeholder text, from the keyboard as from the mouse.
+- The engine's own feeders (traps 0x6F and 0x70: the Live lists) answer
+  nothing.

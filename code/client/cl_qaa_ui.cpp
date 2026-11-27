@@ -29,6 +29,7 @@ Structure:
 #include "cl_qaa_ui_raster.h"
 
 #include "../qaa/qaa_guest_host.h"
+#include "../qaa/qaa_structs.h"
 
 #include <algorithm>
 #include <limits>
@@ -637,6 +638,18 @@ constexpr int GAMERTAG_SIZE = 16;
  * game, so the licence is always held. */
 void H_IsFullVersion( void *, qaa_hook_call *c ) {
 	c->r[0] = 1;
+}
+
+/* XamContentGetLicenseMask (xam.xex ordinal 614)(mask *, overlapped): the
+ * title's licence. 0x821856C8 above caches it, and ui_main's model count
+ * (0x821A2FB8) asks it itself: without the full licence only the
+ * characters free in the trial are listed. PC deviation, as above: bit 0,
+ * the full game, is held. */
+void H_XamContentGetLicenseMask( void *, qaa_hook_call *c ) {
+	if ( R( c, 0 ) ) {
+		QAA_StoreU32( R( c, 0 ), 1 );
+	}
+	c->r[0] = 0;	// ERROR_SUCCESS
 }
 
 /* 0x821859B8(controller): may this controller play, i.e. the full licence
@@ -1827,6 +1840,7 @@ enum {
 	UIT_KEY_GETBINDINGBUF, UIT_KEY_SETBINDING, UIT_KEY_ISDOWN, UIT_KEY_GETOVERSTRIKEMODE, UIT_KEY_SETOVERSTRIKEMODE,
 	UIT_KEY_CLEARSTATES, UIT_KEY_GETCATCHER, UIT_KEY_SETCATCHER, UIT_GETCLIPBOARDDATA, UIT_GETGLCONFIG,
 	UIT_GETCLIENTSTATE, UIT_GETCONFIGSTRING,
+	UIT_CVAR_REGISTER = 0x33, UIT_CVAR_UPDATE,
 };
 
 std::set<int> warnedTraps;
@@ -1871,6 +1885,26 @@ void H_UiSyscall( void *, qaa_hook_call *c ) {
 	case UIT_CVAR_CREATE:
 		MirrorCvar( Cvar_Get( str( 1 ).c_str(), str( 2 ).c_str(), static_cast<int>( arg( 3 ) ) & 0x7FF ) );
 		return;
+	case UIT_CVAR_REGISTER: {
+		// QAA: retail 0x82120A40: Cvar_Get, then the vmCvar_t (Quake III's
+		// layout) from it. ui_main registers its cvar table this way
+		// (UI_RegisterCvars 0x821A2680: ui_mapIndex, ui_currentMap,
+		// ui_modelIndex...) and reads g_arenasFile and g_botsFile.
+		QAAVmCvar vc( arg( 1 ) );
+		Cvar_RegisterLegacy( vc.Host(), str( 2 ).c_str(), str( 3 ).c_str(), static_cast<int>( arg( 4 ) ) & 0x7FF, 0 );
+		vc.WriteBack();
+		MirrorCvar( Cvar_Get( str( 2 ).c_str(), str( 3 ).c_str(), 0 ) );
+		return;
+	}
+	case UIT_CVAR_UPDATE: {
+		// QAA: retail 0x82120AA8
+		QAAVmCvar vc( arg( 1 ) );
+		if ( vc.Host() ) {
+			Cvar_UpdateLegacy( vc.Host(), 0 );
+			vc.WriteBack();
+		}
+		return;
+	}
 	case UIT_CVAR_INFOSTRINGBUFFER:
 		GStrcpy( arg( 2 ), Cvar_InfoString( static_cast<int>( arg( 1 ) ), nullptr ), static_cast<int>( arg( 3 ) ) );
 		return;
@@ -2045,6 +2079,7 @@ void InstallHooks() {
 	qaa_guest *g = Guest();
 	Api().qaa_guest_set_default_hook( g, DefaultHook, nullptr );
 	Api().qaa_guest_set_default_import_hook( g, DefaultImportHook, nullptr );
+	Api().qaa_guest_set_import_hook( g, "xam.xex", 614, H_XamContentGetLicenseMask, nullptr );
 	for ( const HookEntry &h : hookTable ) {
 		Api().qaa_guest_set_hook( g, h.address, h.fn, nullptr );
 	}
@@ -2898,6 +2933,11 @@ bool QAA_UI_Init( void ) {
 		return false;
 	}
 	Com_Printf( "QAA ui: Scaleform front end started (SFUI %08X, renderer %08X)\n", sfui, sfuiRenderer );
+	// QAA: retail CL_InitUI (0x8218E490) sets ui_ethernetActive from
+	// XNetGetEthernetLinkStatus; System Link refuses to start without it
+	// (ui_main registers it as "0"). PC deviation: the link is FnQL's
+	// networking, up unless net_enabled turns it off.
+	Cvar_Set( "ui_ethernetActive", Cvar_VariableIntegerValue( "net_enabled" ) ? "1" : "0" );
 	uiReady = true;
 	QAA_SV_GameUiTrap = QAA_UI_GameTrap;
 	return true;

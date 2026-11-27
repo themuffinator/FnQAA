@@ -69,6 +69,10 @@ cycle (`python scripts/changelog.py clear-unreleased`).
   the same time.
 - The console no longer opens over the menus at start-up and stays stuck
   there; it starts closed and opens and closes with the console key.
+- Select Model now shows every character's portrait, and Change
+  Arena/Gametype lists the arenas by name with their level shots,
+  suggested players and items; both lists were empty. Run setup again
+  after updating so the menus are recompiled with the fix.
 
 ### Documentation and Tooling
 - The setup checks for every tool the recompile needs before it starts, and
